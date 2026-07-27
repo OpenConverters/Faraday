@@ -102,6 +102,47 @@ sits slightly lower, which is what finite copper thickness does. `Z0 = sqrt(L/C)
 and `v = 1/sqrt(LC)` are internally consistent to machine precision, and a
 vacuum-only solve reproduces `1/sqrt(L*C0) = c0` to 1e-9.
 
+## Against measured hardware — consistent, but NOT yet validated
+
+Antmicro's [signal-integrity-test-board](https://github.com/antmicro/signal-integrity-test-board)
+ships VNA measurements with the [gerber2ems](https://github.com/antmicro/gerber2ems)
+examples, and its `meander_tight` example publishes an exact stackup: 35 um
+copper, a 0.12 mm core, **eps_r = 4.18**, reference plane on In1.Cu.
+
+Solving that cross-section:
+
+| source | Z0 | eps_eff |
+|---|---|---|
+| this solver (w = 0.20 mm) | 53.8 ohm | 3.03 |
+| Hammerstad, same geometry | 55.7 ohm | 3.15 |
+| board design target | 50 ohm | — |
+| VNA, extrema-median estimate | ~55 ohm | — |
+
+Everything lands in 48–56 ohm. **That is consistency, not validation, and the
+difference matters.** Two reasons to distrust the last row:
+
+1. **The extraction is method-dependent.** Taking the geometric mean of the
+   resonant extremes gives ~55 ohm; the log-average estimator over the same
+   sweep gives 67 ohm from 200 MHz and 96 ohm from 3 GHz. An estimator that
+   drifts by 40% with its start frequency is not measuring what it assumes.
+2. **The measurement is not of a uniform line.** It is one-port S11 of a
+   *meander* with probe launches, so `Zin` carries the launch discontinuity and
+   the meander's own corners. The resonance spacings confirm it — 1202, 244,
+   255, 255, 105, 523, 697 MHz, nowhere near the regular comb a clean half-wave
+   resonator would give.
+
+Extracting a trustworthy Z0 here needs the probe/launch de-embedded, which needs
+calibration data the repo does not publish. **So the honest status is: the
+solver agrees with closed-form theory and with SPICE to a fraction of a dB, and
+sits inside the plausible band of a real measurement — but it has not been
+checked against hardware.**
+
+The route that would close it: the `filter` example ships `s11.s1p` and
+`s21.s1p` Touchstone files. A through-path S21 over a known length yields the
+propagation constant directly, giving eps_eff with no impedance assumption and
+no de-embedding — a far better anchor than a one-port meander. That is the next
+piece of work, not a claim already banked.
+
 ## Calibration of the screening tier — a real finding
 
 Sweeping separation at fixed geometry (w = 0.3 mm, h = 0.2 mm, eps_r 4.4):
