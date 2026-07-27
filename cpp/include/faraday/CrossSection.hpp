@@ -90,6 +90,115 @@ struct CrossSection {
         return out;
     }
 
+    // Optional non-uniform node coordinates. Empty => the uniform nx/ny grid.
+    // A GRADED axis puts small cells at the conductor surfaces (where the skin
+    // effect crowds the current and where the charge singularity lives) and
+    // lets them grow geometrically away, so GHz solves become affordable: a
+    // uniform grid fine enough for a 2 um skin depth over a 3 mm section would
+    // need millions of cells, while grading needs thousands.
+    std::vector<double> xs, ys;
+
+    // Build a graded 1-D axis over [lo,hi] with `fine` spacing at each feature
+    // coordinate, growing by `growth` per cell away from it, capped at n_max.
+    static std::vector<double> graded_axis(std::vector<double> features,
+                                           double lo, double hi, double fine,
+                                           double growth, size_t n_max) {
+        if (!(hi > lo)) throw BoardError("graded_axis: empty interval");
+        if (fine <= 0 || growth <= 1.0)
+            throw BoardError("graded_axis: need fine > 0 and growth > 1");
+        std::sort(features.begin(), features.end());
+        features.erase(std::unique(features.begin(), features.end(),
+                                   [&](double a, double b) {
+                                       return std::abs(a - b) < fine * 0.25;
+                                   }),
+                       features.end());
+        // Local target size = fine, relaxed geometrically with distance to the
+        // nearest feature. March across the interval placing nodes at that size.
+        // Cell size as a function of distance from the nearest feature. Growing
+        // geometrically PER CELL means that after k cells the size is
+        // fine*growth^k and the distance covered is fine*(growth^k-1)/(growth-1);
+        // eliminating k gives the closed form
+        //     size(d) = fine + d*(growth-1)
+        // which is linear and well behaved. Writing it as growth^(d/fine)
+        // instead overflows immediately — d/fine is in the hundreds — and
+        // collapses to whatever clamp follows, which is how a "graded" mesh
+        // came out at 19x19 cells.
+        auto target = [&](double x) {
+            double d = 1e300;
+            for (double f : features) d = std::min(d, std::abs(x - f));
+            return fine + d * (growth - 1.0);
+        };
+        std::vector<double> nodes{lo};
+        while (nodes.back() < hi && nodes.size() < n_max) {
+            const double x = nodes.back();
+            nodes.push_back(x + std::max(target(x), fine * 0.5));
+        }
+        if (nodes.size() >= n_max)
+            throw BoardError("graded_axis: " + std::to_string(n_max) +
+                             " nodes were not enough to span the section at " +
+                             std::to_string(fine * 1e6) +
+                             " um resolution — coarsen `fine` or raise the cap");
+        nodes.back() = hi;
+        // BOUNDARY LAYER. The march arrives at a feature with a partly-grown
+        // cell, so the cell touching a conductor ends up ~2x `fine` — which is
+        // exactly the cell that has to resolve the skin depth. Insert nodes at
+        // fixed `fine` steps either side of every feature so the surface cells
+        // really are `fine`, and put a node ON the feature so material
+        // boundaries land on a cell edge rather than being smeared across one.
+        const int layers = 6;
+        for (double f : features) {
+            for (int k = -layers; k <= layers; ++k) {
+                const double x = f + k * fine;
+                if (x > lo && x < hi) nodes.push_back(x);
+            }
+        }
+        std::sort(nodes.begin(), nodes.end());
+        // drop duplicates and slivers (a node closer than a tenth of `fine` to
+        // its neighbour only makes the matrix worse)
+        std::vector<double> out{nodes.front()};
+        for (double x : nodes)
+            if (x - out.back() > fine * 0.1) out.push_back(x);
+        if (out.back() < hi) out.back() = hi;
+        if (out.size() >= n_max)
+            throw BoardError("graded_axis: boundary layers pushed the node count "
+                             "past the cap — coarsen `fine` or raise it");
+        return out;
+    }
+
+    // Largest cell that touches any conductor boundary, in metres. This is what
+    // actually limits a skin-effect solve — NOT the size that was requested, so
+    // callers should check the mesh they got rather than the one they asked for.
+    double max_cell_at_conductors() const {
+        std::vector<double> X = xs, Y = ys;
+        if (X.empty()) { X.resize(nx + 1); for (int i = 0; i <= nx; ++i) X[i] = width * i / nx; }
+        if (Y.empty()) { Y.resize(ny + 1); for (int j = 0; j <= ny; ++j) Y[j] = height * j / ny; }
+        double worst = 0.0;
+        auto scan = [&](const std::vector<double>& A, double f) {
+            for (size_t i = 0; i + 1 < A.size(); ++i)
+                if (f >= A[i] && f <= A[i + 1])
+                    worst = std::max(worst, A[i + 1] - A[i]);
+        };
+        for (const auto& c : conductors) {
+            scan(X, c.x0); scan(X, c.x1);
+            scan(Y, c.y0); scan(Y, c.y1);
+        }
+        return worst;
+    }
+
+    // Grade both axes so cells at conductor boundaries are `fine` metres.
+    void grade_for(double fine, double growth = 1.25, size_t n_max = 4000) {
+        std::vector<double> fx, fy;
+        for (const auto& c : conductors) {
+            fx.push_back(c.x0); fx.push_back(c.x1);
+            fy.push_back(c.y0); fy.push_back(c.y1);
+        }
+        for (const auto& s : slabs) { fy.push_back(s.y0); fy.push_back(s.y1); }
+        xs = graded_axis(fx, 0.0, width, fine, growth, n_max);
+        ys = graded_axis(fy, 0.0, height, fine, growth, n_max);
+        nx = (int)xs.size() - 1;
+        ny = (int)ys.size() - 1;
+    }
+
     // gmsh 2.2 quad mesh with named physical groups (MFEM reads those as
     // attribute sets, which is how the formulation finds its electrodes).
     // `eddy` switches the conductor region names to the turn_* convention the
@@ -106,13 +215,18 @@ struct CrossSection {
             names.push_back(n);
             return (int)names.size();
         };
-        std::vector<int> tag((size_t)nx * ny);
-        const double dx = width / nx, dy = height / ny;
+        // node coordinates: graded when grade_for() was called, else uniform
+        std::vector<double> X = xs, Y = ys;
+        if (X.empty()) { X.resize(nx + 1); for (int i = 0; i <= nx; ++i) X[i] = width * i / nx; }
+        if (Y.empty()) { Y.resize(ny + 1); for (int j = 0; j <= ny; ++j) Y[j] = height * j / ny; }
+        const int NX = (int)X.size() - 1, NY = (int)Y.size() - 1;
+        std::vector<int> tag((size_t)NX * NY);
         std::vector<int> cells_per_conductor(conductors.size(), 0);
-        for (int j = 0; j < ny; ++j)
-            for (int i = 0; i < nx; ++i) {
-                const std::string r = region_at((i + 0.5) * dx, (j + 0.5) * dy);
-                tag[(size_t)j * nx + i] = region_id(emit(r));
+        for (int j = 0; j < NY; ++j)
+            for (int i = 0; i < NX; ++i) {
+                const std::string r = region_at(0.5 * (X[i] + X[i + 1]),
+                                                0.5 * (Y[j] + Y[j + 1]));
+                tag[(size_t)j * NX + i] = region_id(emit(r));
                 for (size_t c = 0; c < conductors.size(); ++c)
                     if (conductors[c].name == r) ++cells_per_conductor[c];
             }
@@ -134,16 +248,16 @@ struct CrossSection {
         for (size_t i = 0; i < names.size(); ++i)
             os << "2 " << (i + 1) << " \"" << names[i] << "\"\n";
         os << "$EndPhysicalNames\n";
-        const int nvx = nx + 1, nvy = ny + 1;
+        const int nvx = NX + 1, nvy = NY + 1;
         os << "$Nodes\n" << (nvx * nvy) << "\n";
         for (int j = 0; j < nvy; ++j)
             for (int i = 0; i < nvx; ++i)
-                os << (j * nvx + i + 1) << " " << (i * dx) << " " << (j * dy) << " 0\n";
+                os << (j * nvx + i + 1) << " " << X[i] << " " << Y[j] << " 0\n";
         os << "$EndNodes\n";
-        os << "$Elements\n" << (nx * ny) << "\n";
-        for (int j = 0; j < ny; ++j)
-            for (int i = 0; i < nx; ++i) {
-                const int e = j * nx + i, v0 = j * nvx + i + 1;
+        os << "$Elements\n" << (NX * NY) << "\n";
+        for (int j = 0; j < NY; ++j)
+            for (int i = 0; i < NX; ++i) {
+                const int e = j * NX + i, v0 = j * nvx + i + 1;
                 os << (e + 1) << " 3 2 " << tag[e] << " " << tag[e] << " " << v0
                    << " " << (v0 + 1) << " " << (v0 + nvx + 1) << " " << (v0 + nvx)
                    << "\n";

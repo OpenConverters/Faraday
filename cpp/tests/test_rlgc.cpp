@@ -198,3 +198,49 @@ TEST_CASE("rlgc: crosstalk peaks are read as excursions from quiescent",
                       Catch::Matchers::ContainsSubstring("empty waveform"));
     CHECK_THROWS(crosstalk_from_waveforms({0.1}, {0.1}, 0.0));
 }
+
+TEST_CASE("cross-section: graded axis puts fine cells at every feature",
+          "[crosssection][graded]") {
+    const double fine = 2e-6;
+    auto ax = CrossSection::graded_axis({0.001, 0.002}, 0.0, 0.003, fine, 1.25, 4000);
+    REQUIRE(ax.size() > 10);
+    CHECK(ax.front() == Approx(0.0));
+    CHECK(ax.back() == Approx(0.003));
+    // strictly increasing
+    for (size_t i = 1; i < ax.size(); ++i) CHECK(ax[i] > ax[i - 1]);
+    // the cell straddling each feature is ~fine, not a partly-grown one
+    auto cell_at = [&](double f) {
+        for (size_t i = 0; i + 1 < ax.size(); ++i)
+            if (f >= ax[i] && f <= ax[i + 1]) return ax[i + 1] - ax[i];
+        return 1e30;
+    };
+    CHECK(cell_at(0.001) == Approx(fine).epsilon(0.3));
+    CHECK(cell_at(0.002) == Approx(fine).epsilon(0.3));
+    // and cells grow away from the features, so the count stays affordable:
+    // a uniform mesh at this resolution would need 1500 cells
+    CHECK(ax.size() < 400);
+    double mid = cell_at(0.0005);          // far from both features
+    CHECK(mid > 5 * fine);
+}
+
+TEST_CASE("cross-section: grading reports the cell size it ACTUALLY achieved",
+          "[crosssection][graded]") {
+    // The guard that protects a skin-effect solve must measure the mesh it got,
+    // not the one it asked for — requesting `fine` does not by itself deliver
+    // `fine` cells at a conductor.
+    CrossSection cs = make_coupled_section(0.3, 0.3, 0.5, 0.2, 0.035, 4.4);
+    const double fine = 3e-6;
+    cs.grade_for(fine);
+    CHECK(cs.max_cell_at_conductors() == Approx(fine).epsilon(0.35));
+    CHECK(cs.nx > 100);
+    CHECK(cs.ny > 60);
+    // a graded mesh of a few 10k cells replaces a uniform one of millions
+    CHECK((size_t)cs.nx * cs.ny < 200000);
+    const std::string path = std::string(FARADAY_FIXTURE_DIR) + "/../.tmp_graded.msh";
+    cs.write_gmsh(path);            // still a valid mesh with all electrodes
+    std::ifstream in(path);
+    REQUIRE(in.good());
+    std::stringstream ss; ss << in.rdbuf();
+    CHECK(ss.str().find("\"conductor_gnd\"") != std::string::npos);
+    std::remove(path.c_str());
+}

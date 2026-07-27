@@ -140,10 +140,36 @@ The 50→100 MHz step matches √f to **1.4%**. The 25→50 step runs high becau
 25 MHz δ = 13 µm against 35 µm copper, so skin effect is not yet fully
 developed and the asymptotic √f law does not apply there.
 
-**Known limit:** a uniform grid runs out at roughly 100–200 MHz for 35 µm
-copper. Reaching GHz needs a **graded mesh** that refines only at conductor
-surfaces — that is the missing piece, and until it exists the tool refuses those
-frequencies instead of guessing.
+### The graded mesh
+
+A uniform grid ran out at roughly 100–200 MHz for 35 µm copper. The eddy solve
+now uses a **graded** tensor-product mesh: cell size grows with distance from
+the nearest conductor surface, plus an explicit **boundary layer** of nodes at
+fixed `fine` steps either side of every surface.
+
+Two things had to be right, and neither was at first:
+
+* **The growth law.** `size(d) = fine · growth^(d/fine)` overflows immediately —
+  `d/fine` runs into the hundreds — and collapses onto whatever clamp follows,
+  which is how a "graded" mesh came out at 19×19 cells. Growing geometrically
+  *per cell* and eliminating the cell index gives the closed form
+  `size(d) = fine + d·(growth−1)`, which is linear and well behaved.
+* **The boundary layer.** Marching outward arrives at a feature with a
+  partly-grown cell, so the cell *touching* a conductor came out ~2× `fine` —
+  and that is precisely the cell that has to resolve the skin depth. Explicit
+  nodes at `f ± k·fine` fix it.
+
+The guard now measures `max_cell_at_conductors()` — **the mesh it got, not the
+one it asked for**. Requesting `fine` does not by itself deliver `fine`.
+
+Result: GHz solves in ~20–40 k cells instead of millions, and R_ac follows √f
+across a 40× span:
+
+| f | R_ac/R_dc | step | expected |
+|---|---|---|---|
+| 0.1 GHz | 4.45 | — | — |
+| 1 GHz | 13.95 | 3.13× | 3.16× (√10) |
+| 4 GHz | 27.91 | **2.00×** | 2.00× (√4) |
 
 ## Against measured hardware — consistent, but NOT yet validated
 

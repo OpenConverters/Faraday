@@ -157,11 +157,15 @@ int main(int argc, char** argv) {
             // up to what a uniform grid can afford. (A graded mesh refining
             // only at conductor surfaces is the real answer and is not built.)
             faraday::CrossSection ecs = cs;
-            const int ny_needed = (int)std::ceil(ecs.height / (delta / 2.0));
-            const int ny_cap = (int)arg_num(argc, argv, "--eddy-ny-max", 1600);
-            ecs.ny = std::min(std::max(ecs.ny, ny_needed), ny_cap);
-            ecs.nx = std::min(std::max(ecs.nx, (int)(ecs.nx * 1.0)), 900);
-            const double cell_y = ecs.height / ecs.ny;
+            // GRADE the mesh: fine cells hugging the conductor surfaces where
+            // the current crowds, growing geometrically away. A uniform grid
+            // fine enough for a GHz skin depth over a 3 mm section would need
+            // millions of cells; grading needs thousands.
+            const double fine = delta / 3.0;   // 3 cells across one skin depth
+            ecs.grade_for(fine, arg_num(argc, argv, "--growth", 1.25),
+                          (size_t)arg_num(argc, argv, "--eddy-n-max", 4000));
+            // measure the mesh we GOT, not the one we asked for
+            const double cell_y = ecs.max_cell_at_conductors();
             const double per_delta = delta / cell_y;
             if (per_delta < 2.0) {
                 std::fprintf(stderr,
