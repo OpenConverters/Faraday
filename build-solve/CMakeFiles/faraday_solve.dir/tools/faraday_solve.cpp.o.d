@@ -345,4 +345,5 @@ CMakeFiles/faraday_solve.dir/tools/faraday_solve.cpp.o: \
  /home/alf/OpenMagnetics/OMFEM/include/omfem/PostProcess.hpp \
  /home/alf/OpenMagnetics/OMFEM/include/omfem/Materials.hpp \
  /home/alf/OpenMagnetics/OMFEM/include/omfem/Problem.hpp \
+ /home/alf/OpenMagnetics/OMFEM/include/omfem/HarmonicEddy.hpp \
  /usr/include/c++/14/iostream

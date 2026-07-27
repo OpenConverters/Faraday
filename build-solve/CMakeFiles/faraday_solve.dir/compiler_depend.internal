@@ -53,9 +53,9 @@ CMakeFiles/faraday_solve.dir/tools/faraday_solve.cpp.o
  /home/alf/OpenConverters/Faraday/cpp/include/faraday/CrossSection.hpp
  /home/alf/OpenConverters/Faraday/cpp/include/faraday/Rlgc.hpp
  /home/alf/OpenConverters/Faraday/cpp/include/faraday/Tline.hpp
- /home/alf/OpenConverters/Kirchhoff/src/NgspiceRunner.hpp
  /home/alf/OpenMagnetics/OMFEM/include/omfem/ElectrostaticCartesian.hpp
  /home/alf/OpenMagnetics/OMFEM/include/omfem/Formulation.hpp
+ /home/alf/OpenMagnetics/OMFEM/include/omfem/HarmonicEddy.hpp
  /home/alf/OpenMagnetics/OMFEM/include/omfem/Materials.hpp
  /home/alf/OpenMagnetics/OMFEM/include/omfem/PostProcess.hpp
  /home/alf/OpenMagnetics/OMFEM/include/omfem/Problem.hpp

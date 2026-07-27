@@ -17,6 +17,8 @@
 #include <faraday/Tline.hpp>
 
 #include <omfem/ElectrostaticCartesian.hpp>
+#include <omfem/HarmonicEddy.hpp>
+#include <omfem/Materials.hpp>
 #include <omfem/Problem.hpp>
 
 
@@ -112,6 +114,8 @@ int main(int argc, char** argv) {
 
         faraday::Rlgc p_ul =
             faraday::rlgc_from_maxwell(C, C0, names.size(), ref);
+        // R is filled in below only if --rf asks for the eddy solve; otherwise
+        // it stays ZERO and the deck is lossless, which is stated, not hidden.
 
         print_matrix("L", p_ul.L, p_ul.n, "nH/m", 1e9);
         print_matrix("C", p_ul.C, p_ul.n, "pF/m", 1e12);
@@ -130,10 +134,95 @@ int main(int argc, char** argv) {
                         20.0 * std::log10(kb) - 20.0 * std::log10(kb_screen));
         }
 
+        // ---- R(f): harmonic eddy-current solve on the same geometry --------
+        // Drive the aggressor with 1 A and return it through the plane; the
+        // victim carries no NET current (polarity 0) but still develops the
+        // proximity currents that make R rise with frequency. Total dissipation
+        // gives R via P = 0.5 R I_peak^2.
+        std::vector<double> r_dc_per_m;
+        const double f_hz = arg_num(argc, argv, "--rf", 0.0);
+        if (f_hz > 0.0) {
+            const double sigma = arg_num(argc, argv, "--sigma", 5.8e7);
+            const double delta =
+                std::sqrt(2.0 / (2.0 * M_PI * f_hz * (4e-7 * M_PI) * sigma));
+            // The eddy solve is only as good as the mesh's ability to resolve
+            // the skin depth. This mesher is UNIFORM, so once delta drops below
+            // a cell the current cannot crowd where physics puts it and R comes
+            // out too low — silently. Refuse rather than report a number that
+            // looks fine and is not. (Caught by a sqrt(f) scaling check: 0.25 ->
+            // 1 GHz scaled correctly at 2.13x, 1 -> 4 GHz only reached 1.43x.)
+            // Refine the eddy mesh until a cell fits inside the skin depth,
+            // up to what a uniform grid can afford. (A graded mesh refining
+            // only at conductor surfaces is the real answer and is not built.)
+            faraday::CrossSection ecs = cs;
+            const int ny_needed = (int)std::ceil(ecs.height / (delta / 2.0));
+            const int ny_cap = (int)arg_num(argc, argv, "--eddy-ny-max", 1600);
+            ecs.ny = std::min(std::max(ecs.ny, ny_needed), ny_cap);
+            ecs.nx = std::min(std::max(ecs.nx, (int)(ecs.nx * 1.0)), 900);
+            const double cell_y = ecs.height / ecs.ny;
+            const double per_delta = delta / cell_y;
+            if (per_delta < 2.0) {
+                std::fprintf(stderr,
+                    "faraday_solve: at %.3f GHz the skin depth is %.2f um but the "
+                    "mesh cell is %.2f um (%.1f cells per skin depth). A uniform "
+                    "mesh cannot resolve the current crowding and R would come "
+                    "out too LOW. Raise the mesh density or solve at a lower "
+                    "frequency; a graded mesh is the real fix and is not built "
+                    "yet.\n", f_hz / 1e9, delta * 1e6, cell_y * 1e6, per_delta);
+                return 1;
+            }
+            std::printf("\neddy mesh %d x %d: %.2f cells per skin depth "
+                        "(delta %.2f um, cell %.2f um)\n", ecs.nx, ecs.ny,
+                        per_delta, delta * 1e6, cell_y * 1e6);
+            const std::string emesh = "/tmp/faraday_section_eddy.msh";
+            ecs.write_gmsh(emesh, /*eddy=*/true);
+            auto loss_at = [&](double f) {
+                omfem::Problem q;
+                q.coordinate_system = omfem::CoordinateSystem::Cartesian;
+                q.conductor_model = omfem::ConductorModel::Massive;  // let current redistribute
+                q.frequency = f;
+                q.I_peak = 1.0;
+                q.component_depth = 1.0;                             // per metre of run
+                q.wire.sigma = sigma;   // annealed copper
+                q.turn_polarity_by_role["sig"] = 1.0;
+                q.turn_polarity_by_role["ret"] = 1.0;
+                q.turn_polarity_by_role["vic"] = 0.0;   // victim: induced current only
+                omfem::HarmonicEddy he(q);
+                he.load_mesh(emesh);
+                he.assemble();
+                he.solve();
+                omfem::SolveResults sr = he.compute_results();
+                double total = 0.0;
+                for (const auto& [name, w] : sr.P_cu_per_body) total += w;
+                return total;
+            };
+            // DC reference: the same solve at a frequency low enough that the
+            // current is uniform. Taking the ratio cancels every geometric
+            // factor, so R_ac/R_dc is trustworthy even where the absolute
+            // value depends on how much of the plane the section captures.
+            const double p_dc = loss_at(1.0);
+            const double p_ac = loss_at(f_hz);
+            const double r_dc = 2.0 * p_dc;      // P = 0.5 R I^2, I_peak = 1 A
+            const double r_ac = 2.0 * p_ac;
+            std::printf("\nR(f) from the eddy-current solve (sigma %.2e S/m):\n",
+                        sigma);
+            std::printf("   R_dc = %8.2f mohm/m\n", r_dc * 1e3);
+            std::printf("   R_ac = %8.2f mohm/m at %.3f GHz   (R_ac/R_dc = %.2f)\n",
+                        r_ac * 1e3, f_hz / 1e9, r_dc > 0 ? r_ac / r_dc : 0.0);
+            std::printf("   skin depth %.2f um vs %.0f um copper — %s\n",
+                        delta * 1e6, t * 1e3,
+                        delta * 1e3 < t ? "current is confined to the surface"
+                                        : "copper is thin compared with the skin depth");
+            r_dc_per_m.assign(p_ul.n, r_ac);
+            std::remove(emesh.c_str());
+        }
+
         faraday::DeckOptions o;
         o.length_m = len_mm * 1e-3;
         o.rise_s = arg_num(argc, argv, "--tr", o.rise_s);
         o.amplitude_v = arg_num(argc, argv, "--vdd", o.amplitude_v);
+        for (size_t i = 0; i < p_ul.n && i < r_dc_per_m.size(); ++i)
+            p_ul.R[i * p_ul.n + i] = r_dc_per_m[i];
         const std::string deck = faraday::spice_ladder_deck(p_ul, o);
         if (!deck_path.empty()) {
             std::ofstream os(deck_path);

@@ -52,9 +52,9 @@ CMakeFiles/faraday_solve.dir/tools/faraday_solve.cpp.o: /home/alf/OpenConverters
   /home/alf/OpenConverters/Faraday/cpp/include/faraday/CrossSection.hpp \
   /home/alf/OpenConverters/Faraday/cpp/include/faraday/Rlgc.hpp \
   /home/alf/OpenConverters/Faraday/cpp/include/faraday/Tline.hpp \
-  /home/alf/OpenConverters/Kirchhoff/src/NgspiceRunner.hpp \
   /home/alf/OpenMagnetics/OMFEM/include/omfem/ElectrostaticCartesian.hpp \
   /home/alf/OpenMagnetics/OMFEM/include/omfem/Formulation.hpp \
+  /home/alf/OpenMagnetics/OMFEM/include/omfem/HarmonicEddy.hpp \
   /home/alf/OpenMagnetics/OMFEM/include/omfem/Materials.hpp \
   /home/alf/OpenMagnetics/OMFEM/include/omfem/PostProcess.hpp \
   /home/alf/OpenMagnetics/OMFEM/include/omfem/Problem.hpp \
@@ -822,8 +822,6 @@ _deps/json-src/include/nlohmann/detail/iterators/internal_iterator.hpp:
 
 /usr/include/c++/14/debug/assertions.h:
 
-/home/alf/OpenConverters/Kirchhoff/src/NgspiceRunner.hpp:
-
 /usr/include/c++/14/algorithm:
 
 /usr/include/c++/14/istream:
@@ -892,11 +890,13 @@ _deps/json-src/include/nlohmann/detail/conversions/from_json.hpp:
 
 /usr/include/c++/14/locale:
 
-/usr/include/c++/14/bits/nested_exception.h:
-
 _deps/json-src/include/nlohmann/detail/iterators/primitive_iterator.hpp:
 
 _deps/json-src/include/nlohmann/detail/macro_unscope.hpp:
+
+/usr/include/c++/14/bits/nested_exception.h:
+
+/usr/include/c++/14/bits/range_access.h:
 
 /usr/include/x86_64-linux-gnu/bits/mathcalls-narrow.h:
 
@@ -1040,8 +1040,6 @@ _deps/json-src/include/nlohmann/detail/iterators/iter_impl.hpp:
 
 /usr/include/c++/14/bits/quoted_string.h:
 
-/usr/include/c++/14/bits/range_access.h:
-
 /usr/include/c++/14/bits/ranges_base.h:
 
 /usr/include/c++/14/bits/requires_hosted.h:
@@ -1119,6 +1117,8 @@ _deps/json-src/include/nlohmann/detail/conversions/to_json.hpp:
 /usr/include/c++/14/bits/stl_raw_storage_iter.h:
 
 /usr/include/c++/14/bits/stl_tempbuf.h:
+
+/home/alf/OpenMagnetics/OMFEM/include/omfem/HarmonicEddy.hpp:
 
 /usr/include/c++/14/bits/stl_tree.h:
 

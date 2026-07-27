@@ -52,6 +52,17 @@ struct CrossSection {
         return 1.0;   // above the board: air
     }
 
+    // The eddy-current formulation names conductors turn_<role>_<leg>, with the
+    // leg fixing the current's sign: the driven trace is the forward path, the
+    // reference plane the return, and the victim carries no NET current but
+    // still develops proximity currents (which is exactly what makes R(f) rise).
+    static std::string eddy_name(const std::string& electrostatic_name) {
+        if (electrostatic_name == "conductor_a") return "turn_sig_plus";
+        if (electrostatic_name == "conductor_b") return "turn_vic_plus";
+        if (electrostatic_name == "conductor_gnd") return "turn_ret_minus";
+        return electrostatic_name;
+    }
+
     // Which region a point belongs to. Conductors win over dielectric.
     std::string region_at(double x, double y) const {
         for (const auto& c : conductors)
@@ -81,11 +92,14 @@ struct CrossSection {
 
     // gmsh 2.2 quad mesh with named physical groups (MFEM reads those as
     // attribute sets, which is how the formulation finds its electrodes).
-    void write_gmsh(const std::string& path) const {
+    // `eddy` switches the conductor region names to the turn_* convention the
+    // harmonic eddy-current solver expects; the geometry is identical.
+    void write_gmsh(const std::string& path, bool eddy = false) const {
+        auto emit = [&](const std::string& n) { return eddy ? eddy_name(n) : n; };
         // conductor names are registered first so their physical-group ids are
         // stable regardless of which cell happens to be visited first
         std::vector<std::string> names;
-        for (const auto& c : conductors) names.push_back(c.name);
+        for (const auto& c : conductors) names.push_back(emit(c.name));
         auto region_id = [&](const std::string& n) {
             for (size_t i = 0; i < names.size(); ++i)
                 if (names[i] == n) return (int)i + 1;
@@ -98,7 +112,7 @@ struct CrossSection {
         for (int j = 0; j < ny; ++j)
             for (int i = 0; i < nx; ++i) {
                 const std::string r = region_at((i + 0.5) * dx, (j + 0.5) * dy);
-                tag[(size_t)j * nx + i] = region_id(r);
+                tag[(size_t)j * nx + i] = region_id(emit(r));
                 for (size_t c = 0; c < conductors.size(); ++c)
                     if (conductors[c].name == r) ++cells_per_conductor[c];
             }

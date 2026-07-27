@@ -102,6 +102,49 @@ sits slightly lower, which is what finite copper thickness does. `Z0 = sqrt(L/C)
 and `v = 1/sqrt(LC)` are internally consistent to machine precision, and a
 vacuum-only solve reproduces `1/sqrt(L*C0) = c0` to 1e-9.
 
+## R(f) and skin effect
+
+`--rf <Hz>` adds a harmonic eddy-current solve on the same geometry: the
+aggressor is driven with 1 A returning through the plane, the victim carries no
+*net* current but still develops the proximity currents that make R rise, and
+the total dissipation gives R via `P = 0.5 R I²`. The resulting R is fed into
+the ladder as series elements. **Without `--rf` the deck is lossless and R is
+reported as zero — stated, never guessed.**
+
+```
+eddy mesh 274 x 1600: 2.00 cells per skin depth (delta 6.61 um, cell 3.30 um)
+R_dc =  1841 mohm/m        (analytic for 0.3 x 0.035 mm copper: 1640 mohm/m,
+R_ac =  8131 mohm/m         the rest is the plane's share of the return)
+   at 100 MHz, R_ac/R_dc = 4.58
+```
+
+**A uniform mesh cannot resolve the skin depth at GHz frequencies, and this
+nearly shipped a wrong answer.** A √f scaling check exposed it: 0.25→1 GHz
+scaled at 2.13× (close to the expected 2×, so it looked fine) but 1→4 GHz only
+reached 1.43×. The cause was that the mesh had **0.18 cells per skin depth** at
+1 GHz — the current could not crowd where physics puts it, so R came out low.
+The first result was as unresolved as the second; it just happened to look
+right.
+
+The tool now refines the eddy mesh until a cell fits inside δ, and **refuses
+outright** below 2 cells per skin depth rather than printing a plausible wrong
+number. In the valid regime the scaling is correct:
+
+| f | R_ac/R_dc | step | expected √2 |
+|---|---|---|---|
+| 25 MHz | 2.14 | — | — |
+| 50 MHz | 3.29 | 1.54× | 1.41× |
+| 100 MHz | 4.58 | **1.39×** | 1.41× |
+
+The 50→100 MHz step matches √f to **1.4%**. The 25→50 step runs high because at
+25 MHz δ = 13 µm against 35 µm copper, so skin effect is not yet fully
+developed and the asymptotic √f law does not apply there.
+
+**Known limit:** a uniform grid runs out at roughly 100–200 MHz for 35 µm
+copper. Reaching GHz needs a **graded mesh** that refines only at conductor
+surfaces — that is the missing piece, and until it exists the tool refuses those
+frequencies instead of guessing.
+
 ## Against measured hardware — consistent, but NOT yet validated
 
 Antmicro's [signal-integrity-test-board](https://github.com/antmicro/signal-integrity-test-board)
