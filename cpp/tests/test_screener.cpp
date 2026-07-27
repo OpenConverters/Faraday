@@ -546,6 +546,116 @@ TEST_CASE("screener: decoupling cap far from its IC pin is flagged; near is not"
     CHECK((*far)["confidence"] == "heuristic");
 }
 
+TEST_CASE("screener: a signal pour couples through its boundary",
+          "[screener][pour]") {
+    // POWER is routed as a pour, not tracks. A victim track runs 0.4 mm from
+    // its edge: before polygon-aware coupling this was invisible.
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "POWER") (net 2 "VICTIM") (net 3 "GND")
+      (segment (start 5 14.4) (end 25 14.4) (width 0.3) (layer "F.Cu") (net 2))
+      (zone (net 1) (net_name "POWER") (layer "F.Cu")
+        (filled_polygon (layer "F.Cu") (pts (xy 5 10) (xy 25 10) (xy 25 14) (xy 5 14))))
+      (zone (net 3) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 40 0) (xy 40 40) (xy 0 40))))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
+    nlohmann::json report = analyze_board(b);
+    const auto* cr = find_rule(report["findings"], "coupled-run");
+    REQUIRE(cr != nullptr);
+    CHECK((*cr)["detail"].get<std::string>().find("copper-pour boundary")
+          != std::string::npos);
+    CHECK((*cr)["coupledLenMm"].get<double>() == Approx(20.0).margin(0.5));
+    // "3x trace width" is meaningless against a pour edge
+    CHECK(find_rule(report["findings"], "3w") == nullptr);
+    // the pour-routed net is still listed so the reader knows how it was judged
+    CHECK(report["meta"]["polygonOnlyNets"].size() == 1);
+    CHECK(report["meta"]["polygonOnlyNets"][0] == "POWER");
+}
+
+TEST_CASE("screener: a large pour is a return conductor, not a crosstalk victim",
+          "[screener][pour]") {
+    // Same geometry, but the pour covers most of the board and is named like a
+    // supply/return. Coupling to the return path is not crosstalk, and on
+    // plane-less boards (Fomu, ULX3S) this produced "GND <-> SPI_IO3 -12 dB"
+    // as a HIGH finding until large pours were excluded.
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "GND") (net 2 "VICTIM")
+      (segment (start 2 34.4) (end 38 34.4) (width 0.3) (layer "F.Cu") (net 2))
+      (zone (net 1) (net_name "GND") (layer "F.Cu")
+        (filled_polygon (layer "F.Cu") (pts (xy 0 0) (xy 40 0) (xy 40 34) (xy 0 34))))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
+    nlohmann::json report = analyze_board(b);
+    CHECK(find_rule(report["findings"], "coupled-run") == nullptr);
+}
+
+TEST_CASE("screener: many hard breaks on one plane roll up into one finding",
+          "[screener][planes]") {
+    // 12 nets all crossing the same uncovered region. Individually that is 12
+    // rows of the same problem (HackRF One produced 129); rolled up it is one
+    // plane-coverage finding naming its worst offenders.
+    std::string full =
+        "(kicad_pcb"
+        " (layers (0 \"F.Cu\" signal) (31 \"B.Cu\" signal))"
+        " (net 0 \"\") (net 99 \"GND\")"
+        " (zone (net 99) (net_name \"GND\") (layer \"B.Cu\")"
+        "   (filled_polygon (layer \"B.Cu\")"
+        "     (pts (xy 0 0) (xy 20 0) (xy 20 60) (xy 0 60))))";
+    for (int i = 1; i <= 12; ++i) {
+        std::string y = std::to_string(3.0 + i * 4.0);
+        std::string n = std::to_string(i);
+        full += " (net " + n + " \"N" + n + "\")"
+                " (segment (start 10 " + y + ") (end 34 " + y + ")"
+                " (width 0.3) (layer \"F.Cu\") (net " + n + "))";
+    }
+    full += ")";
+    BoardIR b = import_kicad(full, builtin_stackup("default-2layer"));
+    nlohmann::json report = analyze_board(b);
+    int rows = 0;
+    const nlohmann::json* roll = nullptr;
+    for (const auto& f : report["findings"])
+        if (f["rule"] == "plane-crossing") { ++rows; roll = &f; }
+    REQUIRE(rows == 1);                            // one roll-up, not twelve
+    CHECK((*roll)["title"].get<std::string>().find("12 nets") != std::string::npos);
+    CHECK((*roll)["severityLabel"] == "high");
+    CHECK((*roll)["detail"].get<std::string>().find("Worst:") != std::string::npos);
+    CHECK((*roll)["coupledLenMm"].get<double>() > 100.0);   // summed detour
+}
+
+TEST_CASE("screener: asynchronous buck — the freewheel diode closes the loop",
+          "[screener][switchnode]") {
+    // Q1 + D1 on the switch node (no synchronous low-side FET). The diode
+    // carries half the commutation current, so it belongs in the loop; the
+    // LibreSolar mppt-2420-lc taught this.
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SW") (net 2 "GND") (net 3 "VIN")
+      (segment (start 10 10) (end 20 10) (width 2.0) (layer "F.Cu") (net 1))
+      (segment (start 10 20) (end 20 20) (width 2.0) (layer "F.Cu") (net 3))
+      (footprint "L" (layer "F.Cu") (at 24 10) (property "Reference" "L1")
+        (pad "1" smd rect (at 0 0) (size 2 2) (layers "F.Cu") (net 1 "SW")))
+      (footprint "Q" (layer "F.Cu") (at 10 10) (property "Reference" "Q1")
+        (pad "1" smd rect (at 0 0) (size 2 2) (layers "F.Cu") (net 1 "SW"))
+        (pad "2" smd rect (at 0 3) (size 2 2) (layers "F.Cu") (net 3 "VIN")))
+      (footprint "D" (layer "F.Cu") (at 18 10) (property "Reference" "D1")
+        (pad "1" smd rect (at 0 0) (size 2 2) (layers "F.Cu") (net 1 "SW"))
+        (pad "2" smd rect (at 0 3) (size 2 2) (layers "F.Cu") (net 2 "GND")))
+      (footprint "C" (layer "F.Cu") (at 14 24) (property "Reference" "C1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 3 "VIN"))
+        (pad "2" smd rect (at 1.5 0) (size 1 1) (layers "F.Cu") (net 2 "GND")))
+      (zone (net 2) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 40 0) (xy 40 40) (xy 0 40))))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
+    nlohmann::json report = analyze_board(b);
+    const auto* loop = find_rule(report["findings"], "commutation-loop");
+    REQUIRE(loop != nullptr);
+    CHECK((*loop)["detail"].get<std::string>().find("C1") != std::string::npos);
+    CHECK((*loop)["coupledLenMm"].get<double>() > 0.0);
+}
+
 TEST_CASE("screener: zone-only routed nets are reported as a blind spot",
           "[screener][coverage]") {
     // NETPOLY is routed purely as a polygon — invisible to segment coupling

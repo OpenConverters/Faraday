@@ -80,12 +80,17 @@ TEST_CASE("real: LibreSolar MPPT 2420 HC (KiCad v5, power converter) imports and
     CHECK(planes[3]["isPlane"] == true);   // Bottom: 76% pour
     // both planes carry fill geometry -> the void check ran everywhere
     CHECK(report["meta"]["crossingCheckSkippedPlanes"].empty());
-    // power-domain findings the 2026-07-27 review verified by hand:
-    // gate-drive / PWM return-path breaks and the VBUS <-> shunt-sense run
+    // power-domain findings the 2026-07-27 review verified by hand: the
+    // gate-drive return-path break (now inside the per-plane roll-up, since
+    // this board has more than max_individual_breaks of them) and the
+    // VBUS <-> shunt-sense coupled run.
     bool ls_drv = false, vbus_shunt = false;
     for (const auto& f : report["findings"]) {
         const std::string t = f["title"].get<std::string>();
-        if (f["rule"] == "plane-crossing" && t.find("LS_DRV") != std::string::npos)
+        const std::string d = f["detail"].get<std::string>();
+        if (f["rule"] == "plane-crossing" &&
+            (t.find("LS_DRV") != std::string::npos ||
+             d.find("LS_DRV") != std::string::npos))
             ls_drv = true;
         if (f["rule"] == "coupled-run" && t.find("VBUS") != std::string::npos &&
             t.find("SHUNT") != std::string::npos)

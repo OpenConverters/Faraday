@@ -132,8 +132,8 @@ function toggleRule(rule) {
       <span v-if="meta.switchNodes?.length" class="m sw" data-testid="meta-switchnodes">
         switch nodes: <b>{{ meta.switchNodes.join(', ') }}</b></span>
       <span v-if="meta.diffPairsRecognized" class="m">{{ meta.diffPairsRecognized }} diff pair(s) recognized</span>
-      <span v-if="meta.polygonOnlyNets?.length" class="m warn">
-        {{ meta.polygonOnlyNets.length }} zone-routed net(s) not coupling-checked</span>
+      <span v-if="meta.polygonOnlyNets?.length" class="m">
+        {{ meta.polygonOnlyNets.length }} zone-routed net(s) judged by pour outline</span>
       <span v-if="meta.crossingCheckSkippedPlanes?.length" class="m warn">
         void check skipped on {{ meta.crossingCheckSkippedPlanes.join(', ') }} (no fill)</span>
       <span v-if="meta.approximatedArcs" class="m warn">{{ meta.approximatedArcs }} arc(s) chord-approximated</span>

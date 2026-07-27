@@ -58,6 +58,8 @@ struct ScreenerParams {
     double min_via_stub_mm = 0.3;    // ignore stubs shorter than this
     double min_dangling_mm = 1.0;    // ignore dangling ends shorter than this
     double decoupling_far_mm = 6.0;  // beyond this a decoupling cap is "reaching"
+    size_t max_individual_breaks = 8;  // more hard breaks on one plane -> roll up
+    double return_pour_fraction = 0.2; // pour >= this share of the board = a return net
     size_t max_findings = 200;       // hard cap on emitted findings (dropped count reported)
 };
 
@@ -96,10 +98,15 @@ struct LayerModel {
 
 namespace detail {
 
+// A conductor edge the coupling engine can see: either a routed track or one
+// boundary edge of a copper pour. Pours carry the high-current paths on
+// converter boards, so leaving them out made those paths invisible.
 struct SegRef {
-    size_t idx;                      // index into BoardIR::segments
+    int net, cu;
     double x1, y1, x2, y2, w, len;
     double ux, uy;                   // unit direction
+    bool pour_edge = false;          // true => this is a zone outline edge
+    size_t id = 0;                   // index within its layer, for dedup
 };
 
 // Uniform grid per layer. Cell size = screening radius; a segment is inserted
@@ -198,6 +205,7 @@ class Screener {
         : b_(board), p_(params) {
         build_layer_models();
         build_sw_nets();
+        build_routed_lengths();
     }
 
     const std::vector<LayerModel>& layer_models() const { return layers_; }
@@ -271,8 +279,9 @@ class Screener {
         for (const auto& n : unverifiable_planes_) unverifiable.push_back(n);
         nlohmann::json sw = nlohmann::json::array();
         for (int n : sw_nets_) sw.push_back(b_.net_name(n));
-        // nets routed ONLY as zones/polygons: invisible to segment-based
-        // coupling — a stated blind spot, common on power boards
+        // nets routed ONLY as zones/polygons — now analysed at their pour
+        // boundaries, but still listed so the reader knows which nets were
+        // judged by outline rather than by track geometry
         nlohmann::json polyonly = nlohmann::json::array();
         {
             std::set<int> with_segments, with_zones;
@@ -360,9 +369,17 @@ class Screener {
                     break;
                 }
         }
-        // routed length per layer that the rules actually analysed — makes a
-        // "0 findings" verdict auditable instead of silently empty
-        routed_mm_.assign(n, 0.0);
+        // nets carrying a substantial pour anywhere (see is_pour_net)
+        std::map<int, double> pour_area;
+        for (const auto& z : b_.zones)
+            if (z.net > 0) pour_area[z.net] += std::abs(z.signed_area());
+        for (auto& [net, a] : pour_area)
+            if (a >= p_.return_pour_fraction * board_area) big_pour_nets_.insert(net);
+    }
+
+    // Called after build_sw_nets(), since is_pour_net() exempts switch nodes.
+    void build_routed_lengths() {
+        routed_mm_.assign(layers_.size(), 0.0);
         for (const auto& s : b_.segments)
             if (s.net > 0 && !is_pour_net(s.net))
                 routed_mm_[s.cu] += std::hypot(s.x2 - s.x1, s.y2 - s.y1);
@@ -392,7 +409,7 @@ class Screener {
         std::map<int, std::set<std::string>> prefixes;
         std::map<int, int> pad_count, q_pads;
         for (const auto& p : b_.pads) {
-            if (p.net <= 0 || p.component.empty() || is_pour_net(p.net)) continue;
+            if (p.net <= 0 || p.component.empty() || is_plane_net(p.net)) continue;
             std::string pre = ref_prefix(p.component);
             prefixes[p.net].insert(pre);
             ++pad_count[p.net];
@@ -431,11 +448,16 @@ class Screener {
     };
 
     std::optional<LoopResult> commutation_loop(int sw_net) const {
-        // FETs on the switch node
+        // Switching devices on the node. A synchronous converter has two FETs;
+        // an ASYNCHRONOUS one has a FET and a freewheel diode, and the diode
+        // carries half the commutation current — omitting it left the
+        // LibreSolar mppt-2420-lc (Q7 + D8) with no measurable loop.
         std::set<std::string> fets;
-        for (const auto& p : b_.pads)
-            if (p.net == sw_net && ref_prefix(p.component) == "Q")
-                fets.insert(p.component);
+        for (const auto& p : b_.pads) {
+            if (p.net != sw_net) continue;
+            std::string pre = ref_prefix(p.component);
+            if (pre == "Q" || pre == "D") fets.insert(p.component);
+        }
         if (fets.empty()) return std::nullopt;
 
         // rails those FETs also touch (excluding the switch node and pours)
@@ -444,7 +466,12 @@ class Screener {
         for (const auto& p : b_.pads) {
             if (!fets.count(p.component)) continue;
             pts.push_back({p.x, p.y});
-            if (p.net > 0 && p.net != sw_net && !is_pour_net(p.net)) rails.insert(p.net);
+            // is_plane_net, NOT is_pour_net: the input rail is very often a
+            // large pour on a power board (/DCDC_HV+ on the MPPT), and that
+            // rail is precisely what the loop closes through. Only the return
+            // plane itself is excluded here.
+            if (p.net > 0 && p.net != sw_net && !is_plane_net(p.net))
+                rails.insert(p.net);
         }
         if (pts.empty()) return std::nullopt;
         double cx = 0, cy = 0;
@@ -604,9 +631,30 @@ class Screener {
         return 0.0;
     }
 
-    bool is_pour_net(int net) const {
+    // Nets that act as a RETURN/SUPPLY conductor rather than a victim or
+    // aggressor. Two ways to qualify:
+    //   * being the dominant pour of a layer classified as a plane, or
+    //   * carrying a large pour anywhere, even on a layer that did not reach
+    //     the plane threshold. Without the second test, a board with no
+    //     classified plane (Fomu, ULX3S) reported "GND <-> SPI_IO3, -12 dB"
+    //     as high-severity crosstalk once pour edges entered the engine —
+    //     but coupling to the return conductor is not crosstalk.
+    // A switch node is exempt: on a converter the SW pour is a genuine
+    // aggressor no matter how much copper it occupies.
+    // Narrow test: the dominant pour of a layer classified as a plane. Used by
+    // build_sw_nets(), which runs BEFORE sw_nets_ exists and so cannot use the
+    // full is_pour_net() without a circular dependency (that circularity ate
+    // VESC's three phase nodes, whose pours are large). A switch node is never
+    // the dominant pour of a plane layer, so this test is safe there.
+    bool is_plane_net(int net) const {
         for (const auto& lm : layers_)
             if (lm.is_plane && lm.plane_net == net) return true;
+        return false;
+    }
+
+    bool is_pour_net(int net) const {
+        if (is_plane_net(net)) return true;
+        if (big_pour_nets_.count(net) && !sw_nets_.count(net)) return true;
         return false;
     }
 
@@ -649,6 +697,7 @@ class Screener {
         double max_w = 0;
         double worst_k = 0;
         bool have_h = false;
+        bool involves_pour = false;   // one side is a copper-pour boundary
         FindingGeom geom;
     };
 
@@ -670,25 +719,81 @@ class Screener {
         std::vector<detail::Grid> grids;
         grids.reserve(n_cu);
         for (size_t i = 0; i < n_cu; ++i) grids.emplace_back(std::max(1.0, max_radius));
-        for (size_t i = 0; i < b_.segments.size(); ++i) {
-            const Segment& s = b_.segments[i];
-            if (s.net <= 0 || is_pour_net(s.net)) continue;  // pour nets only
-            double dx = s.x2 - s.x1, dy = s.y2 - s.y1;
+        auto add_ref = [&](int net, int cu, double x1, double y1, double x2,
+                           double y2, double w, bool pour_edge) {
+            double dx = x2 - x1, dy = y2 - y1;
             double len = std::hypot(dx, dy);
-            if (len < 1e-6) continue;
-            SegRef r{i, s.x1, s.y1, s.x2, s.y2, s.width, len, dx / len, dy / len};
-            refs[s.cu].push_back(r);
+            // A parallel overlap can never exceed min(len_a, len_b), so an edge
+            // shorter than min_run_mm cannot contribute to ANY qualifying run.
+            // Dropping it is exact, not an approximation — and it matters:
+            // pour outlines are mostly tiny arc-approximation edges, which took
+            // ulx3s from 0.33 s to 2.4 s before this filter.
+            if (len < p_.min_run_mm) return;
+            refs[cu].push_back({net, cu, x1, y1, x2, y2, w, len,
+                                dx / len, dy / len, pour_edge, refs[cu].size()});
+        };
+        for (const Segment& s : b_.segments) {
+            if (s.net <= 0 || is_pour_net(s.net)) continue;  // pour nets only
+            add_ref(s.net, s.cu, s.x1, s.y1, s.x2, s.y2, s.width, false);
+        }
+        // A copper pour that is NOT the reference plane is a signal/power
+        // conductor, and its BOUNDARY is what couples to a nearby track. On
+        // converter boards the high-current paths ARE pours, so leaving them
+        // out made exactly the interesting nets invisible. Zero nominal width:
+        // the outline already sits at the conductor edge.
+        for (const auto& z : b_.zones) {
+            if (z.net <= 0 || is_pour_net(z.net)) continue;
+            for (size_t i = 0, n = z.pts.size(); i < n; ++i) {
+                const Point& a = z.pts[i];
+                const Point& c = z.pts[(i + 1) % n];
+                add_ref(z.net, z.cu, a.x, a.y, c.x, c.y, 0.0, true);
+            }
         }
         for (size_t cu = 0; cu < n_cu; ++cu)
             for (size_t k = 0; k < refs[cu].size(); ++k) grids[cu].insert(refs[cu][k], k);
 
         std::map<PairKey, PairAccum> pairs;
 
+        // A pour's outline has many edges, and a nearby track is usually
+        // parallel to SEVERAL of them (both sides of a rectangle, for
+        // instance). Summing all of them counts the same physical coupling
+        // repeatedly — and the far edge is shadowed by the pour's own copper
+        // anyway. So per (victim segment, pour net) keep only the CLOSEST
+        // edge, and accumulate that once.
+        struct PourHit {
+            double center_d = 1e30;
+            detail::Overlap ov;
+            int pour_net = 0, victim_net = 0, cu_v = 0, cu_p = 0;
+            double w_v = 0;
+            bool broadside = false;
+        };
+        std::map<std::tuple<int, size_t, int>, PourHit> pour_best;
+
+        auto accumulate = [&](int net_a, int net_b, int cu_a, int cu_b,
+                              double w_a, double w_b, const detail::Overlap& ov,
+                              double k, bool have_h, bool involves_pour) {
+            PairKey key{std::min(net_a, net_b), std::max(net_a, net_b),
+                        std::min(cu_a, cu_b), std::max(cu_a, cu_b)};
+            PairAccum& acc = pairs[key];
+            acc.len += ov.length;
+            acc.len_x_d += ov.length * ov.center_d;
+            acc.min_edge_sep = std::min(acc.min_edge_sep,
+                                        ov.center_d - 0.5 * (w_a + w_b));
+            acc.max_w = std::max({acc.max_w, w_a, w_b});
+            acc.worst_k = std::max(acc.worst_k, k);
+            acc.have_h = acc.have_h || have_h;
+            acc.involves_pour = acc.involves_pour || involves_pour;
+            Segment ga = ov.span_a; ga.net = net_a; ga.cu = cu_a;
+            Segment gb = ov.span_b; gb.net = net_b; gb.cu = cu_b;
+            acc.geom.lines.push_back(ga);
+            acc.geom.lines.push_back(gb);
+        };
+
         auto consider = [&](const SegRef& a, int cu_a, const SegRef& sb, int cu_b,
                             bool broadside) {
-            const Segment& sa = b_.segments[a.idx];
-            const Segment& sbg = b_.segments[sb.idx];
-            if (sa.net == sbg.net) return;
+            if (a.net == sb.net) return;
+            // two pour outlines meeting is a clearance question, not coupling
+            if (a.pour_edge && sb.pour_edge) return;
             auto ov = detail::parallel_overlap(a, sb, p_.min_run_mm, cos_tol);
             if (!ov) return;
             double h = 0.0;
@@ -706,20 +811,26 @@ class Screener {
                 have_h = true;
                 k = tline::next_sat_broadside(ov->center_d, h);
             }
-            PairKey key{std::min(sa.net, sbg.net), std::max(sa.net, sbg.net),
-                        std::min(cu_a, cu_b), std::max(cu_a, cu_b)};
-            PairAccum& acc = pairs[key];
-            acc.len += ov->length;
-            acc.len_x_d += ov->length * ov->center_d;
-            double edge_sep = ov->center_d - 0.5 * (sa.width + sbg.width);
-            acc.min_edge_sep = std::min(acc.min_edge_sep, edge_sep);
-            acc.max_w = std::max({acc.max_w, sa.width, sbg.width});
-            acc.worst_k = std::max(acc.worst_k, k);
-            acc.have_h = acc.have_h || have_h;
-            Segment ga = ov->span_a; ga.net = sa.net; ga.cu = sa.cu;
-            Segment gb = ov->span_b; gb.net = sbg.net; gb.cu = sbg.cu;
-            acc.geom.lines.push_back(ga);
-            acc.geom.lines.push_back(gb);
+            if (a.pour_edge || sb.pour_edge) {
+                const SegRef& victim = a.pour_edge ? sb : a;
+                const SegRef& pour = a.pour_edge ? a : sb;
+                auto key = std::make_tuple(victim.cu, victim.id, pour.net);
+                PourHit& h = pour_best[key];
+                if (ov->center_d >= h.center_d) return;   // a closer edge won
+                h.center_d = ov->center_d;
+                h.ov = a.pour_edge ? detail::Overlap{ov->length, ov->center_d,
+                                                     ov->span_b, ov->span_a}
+                                   : *ov;
+                h.victim_net = victim.net;
+                h.pour_net = pour.net;
+                h.cu_v = victim.cu;
+                h.cu_p = pour.cu;
+                h.w_v = victim.w;
+                h.broadside = broadside;
+                return;
+            }
+            accumulate(a.net, sb.net, cu_a, cu_b, a.w, sb.w, *ov, k, have_h,
+                       false);
         };
 
         for (size_t cu = 0; cu < n_cu; ++cu) {
@@ -740,6 +851,25 @@ class Screener {
             }
         }
 
+        // fold the deduplicated pour hits in, recomputing k at the kept distance
+        for (auto& [key, h] : pour_best) {
+            if (h.center_d > 1e29) continue;
+            double k = 0.0;
+            bool have_h = false;
+            if (!h.broadside) {
+                double hh = ref_height(h.cu_v);
+                if (hh > 0) { have_h = true; k = tline::next_sat_edge(h.center_d, hh); }
+            } else {
+                double hh, eps;
+                b_.stackup.dielectric_between(std::min(h.cu_v, h.cu_p),
+                                              std::max(h.cu_v, h.cu_p), hh, eps);
+                have_h = true;
+                k = tline::next_sat_broadside(h.center_d, hh);
+            }
+            accumulate(h.victim_net, h.pour_net, h.cu_v, h.cu_p, h.w_v, 0.0,
+                       h.ov, k, have_h, true);
+        }
+
         dropped_below_floor_ = 0;
         for (auto& [key, acc] : pairs) {
             double mean_d = acc.len_x_d / acc.len;
@@ -753,7 +883,8 @@ class Screener {
             f.coupled_len_mm = acc.len;
             f.min_sep_mm = acc.min_edge_sep;
             f.geom = std::move(acc.geom);
-            std::string kind = broadside ? "broadside" : "edge";
+            std::string kind = acc.involves_pour ? "pour-edge"
+                             : broadside ? "broadside" : "edge";
             std::string where = broadside
                 ? b_.copper_names[key.cu_a] + "/" + b_.copper_names[key.cu_b]
                 : b_.copper_names[key.cu_a];
@@ -815,8 +946,14 @@ class Screener {
             f.severity_label = f.severity > 0.66 ? "high"
                               : f.severity > 0.33 ? "medium"
                               : f.severity > 0.1  ? "low" : "info";
-            // 3W companion finding when violated (not for intentional pairs)
-            if (acc.min_edge_sep < 2.0 * acc.max_w && !broadside && !is_diff) {
+            if (acc.involves_pour)
+                f.detail += " One side is a copper-pour boundary, so the "
+                            "coupling is to the edge of that pour.";
+            // 3W companion finding when violated (not for intentional pairs,
+            // and not against a pour edge — "3x trace width" is meaningless
+            // when one conductor has no width)
+            if (acc.min_edge_sep < 2.0 * acc.max_w && !broadside && !is_diff &&
+                !acc.involves_pour) {
                 // companion finding: ranks just BELOW its coupled-run (a dense
                 // board violates 3W everywhere — the quantified coupling must
                 // stay on top of the ranking, learned on HackRF One)
@@ -1185,8 +1322,58 @@ class Screener {
             for (const auto& pt : d.pts) f.geom.markers.push_back(pt);
             out.push_back(std::move(f));
         }
+        // Many hard breaks against the same plane is one systemic problem, not
+        // N independent ones (HackRF One produced 129 rows). Roll them up past
+        // a threshold, naming the worst offenders; keep them individual while
+        // the count is small enough to act on one by one.
+        std::map<std::pair<int, int>, std::vector<std::pair<double, int>>> by_pair;
+        for (auto& [net, g] : gaps) {
+            if (g.len < p_.sample_step_mm) continue;
+            by_pair[{g.cu, g.plane}].push_back({g.len, net});
+        }
+        std::set<int> rolled;
+        for (auto& [key, v] : by_pair) {
+            if (v.size() <= p_.max_individual_breaks) continue;
+            auto [cu, plane] = key;
+            std::sort(v.rbegin(), v.rend());
+            double total = 0;
+            for (auto& [l, n] : v) { total += l; rolled.insert(n); }
+            std::string names;
+            for (size_t i = 0; i < v.size() && i < 5; ++i)
+                names += (i ? ", " : "") + b_.net_name(v[i].second);
+            Finding f;
+            f.rule = "plane-crossing";
+            f.severity = std::clamp(0.6 + total / 400.0, 0.6, 1.0);
+            f.severity_label = "high";
+            f.confidence = "exact";
+            f.cu_a = cu;
+            f.cu_b = plane;
+            f.coupled_len_mm = total;
+            f.title = "Return-path breaks on " + b_.copper_names[cu] + ": " +
+                      std::to_string(v.size()) + " nets";
+            char buf[260];
+            std::snprintf(buf, sizeof buf,
+                          "%zu nets routed on %s cross places where NO plane "
+                          "covers, %.0f mm in total. %s is the nearest plane "
+                          "and it does not reach there. Worst: ",
+                          v.size(), b_.copper_names[cu].c_str(), total,
+                          b_.copper_names[plane].c_str());
+            f.detail = std::string(buf) + names +
+                       ". Each of these return currents must detour around the "
+                       "gap; at this count it is a plane-coverage problem "
+                       "rather than N routing mistakes.";
+            f.remediation = "Extend the pour to cover this region, or move the "
+                            "affected routing over solid plane.";
+            for (auto& [l, n] : v)
+                for (const auto& pt : gaps[n].pts) {
+                    if (f.geom.markers.size() >= 200) break;
+                    f.geom.markers.push_back(pt);
+                }
+            out.push_back(std::move(f));
+        }
         for (auto& [net, g] : gaps) {
             if (g.len < p_.sample_step_mm) continue;  // sub-pitch noise
+            if (rolled.count(net)) continue;          // covered by the roll-up
             Finding f;
             f.rule = "plane-crossing";
             f.severity = std::clamp(0.5 + g.len / 40.0, 0.5, 1.0);
@@ -1222,6 +1409,7 @@ class Screener {
     size_t diff_pairs_recognized_ = 0;
     std::set<std::string> unverifiable_planes_;
     std::set<int> sw_nets_;
+    std::set<int> big_pour_nets_;
     std::vector<double> routed_mm_;
 };
 
