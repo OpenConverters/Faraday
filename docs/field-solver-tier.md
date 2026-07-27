@@ -206,11 +206,40 @@ solver agrees with closed-form theory and with SPICE to a fraction of a dB, and
 sits inside the plausible band of a real measurement — but it has not been
 checked against hardware.**
 
-The route that would close it: the `filter` example ships `s11.s1p` and
-`s21.s1p` Touchstone files. A through-path S21 over a known length yields the
-propagation constant directly, giving eps_eff with no impedance assumption and
-no de-embedding — a far better anchor than a one-port meander. That is the next
-piece of work, not a claim already banked.
+### The S21 route was tried, and it does not work on this dataset
+
+The `filter` example is the only two-port data in the repo, and it is a
+**filter**: |S21| sits between −80 and −48 dB with a single −5.6 dB passband
+peak. Its group delay is dominated by the resonance, not by line propagation, so
+the phase slope gives no line constant. The uniform structures (meander, stub)
+ship only one-port |Z|.
+
+### What the data DOES give, and the one missing number
+
+`stub_short` yields a clean resonator comb — minima at 496, 746, 1001, 1262,
+1530, 1791, 2040 MHz, spacings 250–267 MHz, **coefficient of variation 3%**.
+`stub_long` reproduces the same first three minima before diverging where its
+longer stub starts resonating, so this is the shared main line measured twice.
+
+That is a solid measurement of **v / L = 2·Δf = 514 MHz·m**. Turning it into
+`eps_eff` needs one number the repo does not state: the **physical trace
+length**. What each hypothesis implies:
+
+| assumption | eps_eff | implied trace length |
+|---|---|---|
+| this solver (w = 0.20 mm) | 3.03 | **335 mm** |
+| Hammerstad | 3.15 | 329 mm |
+| bulk eps_r, upper bound | 4.18 | 285 mm |
+| vacuum, lower bound | 1.00 | 583 mm |
+
+So the loop closes the moment someone supplies L. A meandered 335 mm trace is
+entirely plausible on a board this size, but "plausible" is not a measurement,
+and the solver cannot be used to infer the length and then be validated by it.
+
+**To close it:** extract the main-line length from the board's Gerbers or KiCad
+source (both are in the repo) and compare against 335 mm. Anyone holding the
+board can settle it in a minute. Until then the status stands: **validated
+against theory and against SPICE to ~1%, not yet against hardware.**
 
 ## Calibration of the screening tier — a real finding
 
