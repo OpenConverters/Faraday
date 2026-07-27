@@ -1,0 +1,37 @@
+/* Faraday — copper on bare FR4. The board render is the hero; severity is
+   heat on copper. Everything else stays quiet: resin panels, silkscreen text. */
+
+:root {
+  --bare-fr4: #101613;   /* page: dark fiberglass green-black */
+  --resin: #171f1a;      /* panels */
+  --resin-edge: #243028;
+  --copper: #d98b5f;     /* brand + F.Cu render */
+  --tin: #9db4ad;        /* muted text: tinned-pad grey-green */
+  --silk: #e6ede8;       /* primary text: silkscreen */
+  --heat-high: #ff5d5d;
+  --heat-med: #ffb454;
+  --heat-low: #58c79a;
+  --mono: 'IBM Plex Mono', ui-monospace, monospace;
+  --sans: 'IBM Plex Sans', system-ui, sans-serif;
+  --display: 'Rajdhani', var(--sans);
+}
+
+* { margin: 0; padding: 0; box-sizing: border-box; }
+
+html, body, #app { height: 100%; }
+
+body {
+  background: var(--bare-fr4);
+  color: var(--silk);
+  font-family: var(--sans);
+  font-size: 14px;
+  line-height: 1.45;
+}
+
+button { font: inherit; color: inherit; background: none; border: none; cursor: pointer; }
+
+:focus-visible { outline: 2px solid var(--copper); outline-offset: 2px; }
+
+@media (prefers-reduced-motion: reduce) {
+  * { transition: none !important; animation: none !important; }
+}

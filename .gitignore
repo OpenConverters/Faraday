@@ -1,0 +1,10 @@
+build/
+build-wasm/
+web/node_modules/
+web/dist/
+web/public/faraday.js
+web/public/faraday.wasm
+web/test-results/
+__pycache__/
+*.o
+*.a
