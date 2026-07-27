@@ -148,6 +148,177 @@ TEST_CASE("screener: orthogonal crossing is not a coupled run", "[screener]") {
     CHECK(find_rule(report["findings"], "coupled-run") == nullptr);
 }
 
+TEST_CASE("diff-pair name recognition", "[screener][diffpair]") {
+    CHECK(is_differential_pair_name("USB_DP", "USB_DM"));
+    CHECK(is_differential_pair_name("CAN_H", "CAN_L"));
+    CHECK(is_differential_pair_name("LVDS0_P", "LVDS0_N"));
+    CHECK(is_differential_pair_name("RX+", "RX-"));
+    CHECK(is_differential_pair_name("clk_p", "clk_n"));  // case-insensitive
+    // NOT pairs — these must keep producing real findings
+    CHECK_FALSE(is_differential_pair_name("PWM_HS", "PWM_LS"));  // differs at [-2]
+    CHECK_FALSE(is_differential_pair_name("SCL", "SDA"));
+    CHECK_FALSE(is_differential_pair_name("CLK", "CLK"));
+    CHECK_FALSE(is_differential_pair_name("D1", "D2"));
+    CHECK_FALSE(is_differential_pair_name("A_P", "AB_N"));    // different length
+    CHECK_FALSE(is_differential_pair_name("", ""));
+}
+
+TEST_CASE("screener: differential pair is info, not a defect, and gets no 3W",
+          "[screener][diffpair]") {
+    // two tightly coupled traces 0.15 mm apart — a 3W violation and a strong
+    // coupled run if they were unrelated nets
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "USB_DP") (net 2 "USB_DM") (net 3 "G")
+      (segment (start 5 10) (end 25 10) (width 0.2) (layer "F.Cu") (net 1))
+      (segment (start 5 10.35) (end 25 10.35) (width 0.2) (layer "F.Cu") (net 2))
+      (zone (net 3) (net_name "G") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 30))))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
+    nlohmann::json report = analyze_board(b);
+    const auto* dp = find_rule(report["findings"], "diff-pair");
+    REQUIRE(dp != nullptr);
+    CHECK((*dp)["severityLabel"] == "info");
+    CHECK((*dp)["confidence"] == "exact");
+    CHECK((*dp)["nextDb"].get<double>() < 0.0);   // the number is still reported
+    CHECK(find_rule(report["findings"], "3w") == nullptr);          // no defect
+    CHECK(find_rule(report["findings"], "coupled-run") == nullptr); // reclassified
+    CHECK(report["meta"]["diffPairsRecognized"].get<int>() == 1);
+}
+
+TEST_CASE("screener: hard break vs sparse reference — a farther plane counts",
+          "[screener][planes]") {
+    // 4 copper: F.Cu signal, In1/In2 planes, B.Cu signal.
+    // In1 is void on the left half; In2 covers the whole board EXCEPT a strip
+    // on the far left. So: x in [2,10] -> In1 void but In2 covers  = detour
+    //                      x in [0,2]  -> neither covers            = hard break
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (1 "In1.Cu" signal) (2 "In2.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SIG") (net 2 "GND")
+      (segment (start 0.5 10) (end 29 10) (width 0.2) (layer "F.Cu") (net 1))
+      (zone (net 2) (net_name "GND") (layer "In1.Cu")
+        (filled_polygon (layer "In1.Cu") (pts (xy 11 0) (xy 30 0) (xy 30 30) (xy 11 30))))
+      (zone (net 2) (net_name "GND") (layer "In2.Cu")
+        (filled_polygon (layer "In2.Cu") (pts (xy 2 0) (xy 30 0) (xy 30 30) (xy 2 30))))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-4layer"));
+    nlohmann::json report = analyze_board(b);
+
+    // hard break only over the ~1.5 mm where NO plane covers
+    const auto* hard = find_rule(report["findings"], "plane-crossing");
+    REQUIRE(hard != nullptr);
+    CHECK((*hard)["coupledLenMm"].get<double>() == Approx(1.5).margin(1.2));
+    // the ~9 mm In1-void-but-In2-covers stretch is the aggregated detour
+    const auto* sparse = find_rule(report["findings"], "sparse-reference");
+    REQUIRE(sparse != nullptr);
+    CHECK((*sparse)["coupledLenMm"].get<double>() == Approx(9.0).margin(1.5));
+    CHECK((*sparse)["severityLabel"] == "medium");
+    CHECK((*sparse)["title"].get<std::string>().find("Sparse reference") == 0);
+}
+
+TEST_CASE("screener: switch node found by connectivity; rails and LEDs are not",
+          "[screener][switchnode]") {
+    // SW: L1 + Q1, compact.  LEDNET: LED1 + Q2 (LED prefix must NOT match L).
+    // VRAIL: L2 + Q3 but 14 pads -> a rail, not a switch node.
+    std::string head = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SW") (net 2 "LEDNET") (net 3 "VRAIL") (net 4 "G")
+      (segment (start 5 5) (end 15 5) (width 1.0) (layer "F.Cu") (net 1))
+      (segment (start 5 9) (end 15 9) (width 0.3) (layer "F.Cu") (net 2))
+      (segment (start 5 13) (end 15 13) (width 0.5) (layer "F.Cu") (net 3))
+      (zone (net 4) (net_name "G") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 30))))
+      (footprint "L" (layer "F.Cu") (at 5 5)
+        (property "Reference" "L1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SW")))
+      (footprint "Q" (layer "F.Cu") (at 15 5)
+        (property "Reference" "Q1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SW")))
+      (footprint "LED" (layer "F.Cu") (at 5 9)
+        (property "Reference" "LED1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 2 "LEDNET")))
+      (footprint "Q" (layer "F.Cu") (at 15 9)
+        (property "Reference" "Q2")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 2 "LEDNET")))
+      (footprint "L" (layer "F.Cu") (at 5 13)
+        (property "Reference" "L2")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 3 "VRAIL")))
+      (footprint "Q" (layer "F.Cu") (at 15 13)
+        (property "Reference" "Q3")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 3 "VRAIL")))
+    )";
+    // 13 decoupling caps on VRAIL -> 15 pads total, over the sw_max_pads limit
+    std::string caps;
+    for (int i = 0; i < 13; ++i)
+        caps += "(footprint \"C\" (layer \"F.Cu\") (at " + std::to_string(20 + i) +
+                " 13) (property \"Reference\" \"C" + std::to_string(i) + "\")"
+                " (pad \"1\" smd rect (at 0 0) (size 1 1) (layers \"F.Cu\")"
+                " (net 3 \"VRAIL\")))";
+    BoardIR b = import_kicad(head + caps + ")", builtin_stackup("default-2layer"));
+    nlohmann::json report = analyze_board(b);
+
+    const auto& sw = report["meta"]["switchNodes"];
+    REQUIRE(sw.size() == 1);
+    CHECK(sw[0] == "SW");                     // L1 + Q1, compact
+    const auto* f = find_rule(report["findings"], "switch-node");
+    REQUIRE(f != nullptr);
+    CHECK((*f)["confidence"] == "heuristic");  // never claims certainty
+    CHECK((*f)["coupledLenMm"].get<double>() > 0.0);  // copper extent, mm^2
+}
+
+TEST_CASE("screener: switch-node aggressor boosts coupled-run severity",
+          "[screener][switchnode]") {
+    auto board = [](bool with_switch) {
+        std::string txt = R"((kicad_pcb
+          (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+          (net 0 "") (net 1 "AGG") (net 2 "FB") (net 3 "G")
+          (segment (start 5 10) (end 25 10) (width 0.3) (layer "F.Cu") (net 1))
+          (segment (start 5 12) (end 25 12) (width 0.3) (layer "F.Cu") (net 2))
+          (zone (net 3) (net_name "G") (layer "B.Cu")
+            (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 30))))
+          (footprint "L" (layer "F.Cu") (at 5 10)
+            (property "Reference" "L1")
+            (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "AGG")))
+        )";
+        if (with_switch)
+            txt += R"((footprint "Q" (layer "F.Cu") (at 25 10)
+                        (property "Reference" "Q1")
+                        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "AGG"))))";
+        return import_kicad(txt + ")", builtin_stackup("default-2layer"));
+    };
+    nlohmann::json plain = analyze_board(board(false));
+    nlohmann::json boosted = analyze_board(board(true));
+    const auto* a = find_rule(plain["findings"], "coupled-run");
+    const auto* c = find_rule(boosted["findings"], "coupled-run");
+    REQUIRE(a != nullptr);
+    REQUIRE(c != nullptr);
+    // identical geometry -> identical dB, but the SW-node case ranks higher
+    CHECK((*a)["nextDb"].get<double>() == Approx((*c)["nextDb"].get<double>()));
+    CHECK((*c)["severity"].get<double>() ==
+          Approx((*a)["severity"].get<double>() + 0.15));
+    CHECK((*c)["title"].get<std::string>().find("[SW aggressor]") != std::string::npos);
+}
+
+TEST_CASE("screener: zone-only routed nets are reported as a blind spot",
+          "[screener][coverage]") {
+    // NETPOLY is routed purely as a polygon — invisible to segment coupling
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SIG") (net 2 "NETPOLY") (net 3 "G")
+      (segment (start 5 10) (end 25 10) (width 0.3) (layer "F.Cu") (net 1))
+      (zone (net 2) (net_name "NETPOLY") (layer "F.Cu")
+        (filled_polygon (layer "F.Cu") (pts (xy 5 12) (xy 25 12) (xy 25 14) (xy 5 14))))
+      (zone (net 3) (net_name "G") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 30))))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
+    nlohmann::json report = analyze_board(b);
+    const auto& po = report["meta"]["polygonOnlyNets"];
+    REQUIRE(po.size() == 1);
+    CHECK(po[0] == "NETPOLY");
+}
+
 TEST_CASE("screener: broadside coupling across adjacent signal layers", "[screener]") {
     // 4-layer with NO pours: In1/In2 both signal; stacked runs on F.Cu/In1.Cu
     // separated by the 0.2 mm prepreg -> saturated broadside coupling.

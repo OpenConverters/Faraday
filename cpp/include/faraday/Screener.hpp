@@ -5,11 +5,23 @@
 //
 // Rules implemented (P0):
 //   coupled-run        parallel segments, same layer (edge) or adjacent signal
-//                      layers (broadside), scored by saturated-NEXT estimate
+//                      layers (broadside), scored by saturated-NEXT estimate;
+//                      switch-node aggressors get a severity boost
+//   diff-pair          a coupled run whose two nets form a differential pair
+//                      by name (P/N, +/-, H/L, DP/DM) — intentional coupling,
+//                      reported as info, never as a defect
 //   3w                 minimum edge separation < 2×width on the wider trace
-//   plane-crossing     signal run over a void/split in its reference plane
+//   plane-crossing     signal run over a spot where NO plane covers (hard
+//                      return-path break)
+//   sparse-reference   aggregated: runs whose NEAREST plane is void but a
+//                      farther plane covers — the return current detours,
+//                      one finding per (signal layer, nearest plane)
+//   switch-node        converter dv/dt aggressor found by CONNECTIVITY (net
+//                      touching an L-ref pad and a Q/D-ref pad); its copper
+//                      extent is the classic minimize-SW-area metric
 //   no-reference-plane copper layer carrying signals with no plane to return on
-//   coverage notes     approximated arcs, missing outline, dropped findings
+//   coverage notes     approximated arcs, missing outline, dropped findings,
+//                      zone-only routed nets invisible to segment coupling
 //                      (no silent caps: everything not analysed is reported)
 
 #include "BoardIR.hpp"
@@ -33,6 +45,7 @@ struct ScreenerParams {
     double sample_step_mm = 1.0;     // plane-coverage sampling pitch
     double report_floor_db = -40.0;  // coupled-run findings below this are dropped (counted)
     double plane_coverage_min = 0.5; // zone area / board area to call a layer a plane
+    int sw_max_pads = 12;            // above this a L+Q net is a rail, not a switch node
     size_t max_findings = 200;       // hard cap on emitted findings (dropped count reported)
 };
 
@@ -150,11 +163,29 @@ inline std::optional<Overlap> parallel_overlap(const SegRef& a, const SegRef& b,
 
 }  // namespace detail
 
+// Differential-pair recognition by net name: identical names except a final
+// P/N, +/-, H/L or P/M (DP/DM) designator. Conservative on purpose — a wrong
+// pairing silences a real finding, a missed pairing only leaves an info-grade
+// false positive (e.g. PWM_HS/PWM_LS differ in the second-to-last char and are
+// correctly NOT paired).
+inline bool is_differential_pair_name(const std::string& a, const std::string& b) {
+    if (a.size() != b.size() || a.empty()) return false;
+    size_t i = a.size() - 1;
+    if (a.compare(0, i, b, 0, i) != 0) return false;
+    char x = std::toupper(static_cast<unsigned char>(a[i]));
+    char y = std::toupper(static_cast<unsigned char>(b[i]));
+    if (x == y) return false;
+    if (x > y) std::swap(x, y);
+    return (x == 'N' && y == 'P') || (x == 'H' && y == 'L') ||
+           (x == 'M' && y == 'P') || (x == '+' && y == '-');
+}
+
 class Screener {
   public:
     Screener(const BoardIR& board, ScreenerParams params = {})
         : b_(board), p_(params) {
         build_layer_models();
+        build_sw_nets();
     }
 
     const std::vector<LayerModel>& layer_models() const { return layers_; }
@@ -162,6 +193,7 @@ class Screener {
     std::vector<Finding> run() {
         std::vector<Finding> out;
         find_no_reference_plane(out);
+        find_switch_nodes(out);
         find_coupled_runs(out);
         find_plane_crossings(out);
         // rank: severity desc, then coupled length desc
@@ -193,6 +225,20 @@ class Screener {
                               {"zoneCoverage", layers_[i].zone_coverage}});
         nlohmann::json unverifiable = nlohmann::json::array();
         for (const auto& n : unverifiable_planes_) unverifiable.push_back(n);
+        nlohmann::json sw = nlohmann::json::array();
+        for (int n : sw_nets_) sw.push_back(b_.net_name(n));
+        // nets routed ONLY as zones/polygons: invisible to segment-based
+        // coupling — a stated blind spot, common on power boards
+        nlohmann::json polyonly = nlohmann::json::array();
+        {
+            std::set<int> with_segments, with_zones;
+            for (const auto& s : b_.segments) with_segments.insert(s.net);
+            for (const auto& z : b_.zones)
+                if (z.net > 0 && !is_pour_net(z.net)) with_zones.insert(z.net);
+            for (int n : with_zones)
+                if (!with_segments.count(n) && polyonly.size() < 20)
+                    polyonly.push_back(b_.net_name(n));
+        }
         return {{"planes", planes},
                 {"approximatedArcs", b_.approximated_arcs},
                 {"bboxFromOutline", b_.bbox_from_outline},
@@ -200,7 +246,10 @@ class Screener {
                 {"droppedBelowFloorDb", dropped_below_floor_},
                 {"droppedByFindingCap", dropped_by_cap_},
                 {"reportFloorDb", p_.report_floor_db},
-                {"crossingCheckSkippedPlanes", unverifiable}};
+                {"crossingCheckSkippedPlanes", unverifiable},
+                {"diffPairsRecognized", diff_pairs_recognized_},
+                {"switchNodes", sw},
+                {"polygonOnlyNets", polyonly}};
     }
 
     // Z0 estimate for a trace of width w on copper layer cu — for tooltips.
@@ -261,6 +310,83 @@ class Screener {
                     b_.stackup.dielectric_between(i, j, layers_[i].h_dn, layers_[i].eps_dn);
                     break;
                 }
+        }
+    }
+
+    // ---- switch-node identification by CONNECTIVITY, not name-matching ----
+    // A converter switch node joins the FET(s) to the inductor. Criteria, all
+    // three required (each earned on real boards, 2026-07-27):
+    //   * an EXACT "L" reference prefix — not "LED" (LED1 matched a naive
+    //     first-char test on the MPPT board)
+    //   * an EXACT "Q" reference prefix — "T" is far more often a test point
+    //     than a European transistor (it produced 10 false hits on HackRF One)
+    //   * few pads — a switch node is deliberately kept compact. HackRF's VAA
+    //     rail has an inductor AND a load-switch FET but 75 pads; the MPPT
+    //     switch node has 6. This is what separates a rail from a SW node.
+    // Confidence stays "heuristic" and the finding asks the user to verify.
+    static std::string ref_prefix(const std::string& ref) {
+        std::string p;
+        for (char c : ref) {
+            if (!std::isalpha(static_cast<unsigned char>(c))) break;
+            p.push_back(static_cast<char>(std::toupper(static_cast<unsigned char>(c))));
+        }
+        return p;
+    }
+
+    void build_sw_nets() {
+        std::map<int, std::set<std::string>> prefixes;
+        std::map<int, int> pad_count;
+        for (const auto& p : b_.pads) {
+            if (p.net <= 0 || p.component.empty() || is_pour_net(p.net)) continue;
+            prefixes[p.net].insert(ref_prefix(p.component));
+            ++pad_count[p.net];
+        }
+        for (auto& [net, pre] : prefixes) {
+            if (!pre.count("L") || !pre.count("Q")) continue;
+            if (pad_count[net] > p_.sw_max_pads) continue;
+            sw_nets_.insert(net);
+        }
+    }
+
+    void find_switch_nodes(std::vector<Finding>& out) {
+        for (int net : sw_nets_) {
+            double x1 = 1e30, y1 = 1e30, x2 = -1e30, y2 = -1e30;
+            Finding f;
+            for (const auto& s : b_.segments)
+                if (s.net == net) {
+                    x1 = std::min({x1, s.x1, s.x2}); y1 = std::min({y1, s.y1, s.y2});
+                    x2 = std::max({x2, s.x1, s.x2}); y2 = std::max({y2, s.y1, s.y2});
+                    if (f.geom.lines.size() < 200) f.geom.lines.push_back(s);
+                }
+            for (const auto& p : b_.pads)
+                if (p.net == net) {
+                    x1 = std::min(x1, p.x - p.w / 2); y1 = std::min(y1, p.y - p.h / 2);
+                    x2 = std::max(x2, p.x + p.w / 2); y2 = std::max(y2, p.y + p.h / 2);
+                }
+            if (x1 > x2) continue;  // no geometry at all
+            double area = (x2 - x1) * (y2 - y1);
+            f.rule = "switch-node";
+            f.severity = std::clamp(0.25 + area / 500.0, 0.25, 0.6);
+            f.severity_label = f.severity > 0.33 ? "medium" : "low";
+            f.confidence = "heuristic";
+            f.net_a = net;
+            f.coupled_len_mm = area;  // mm^2 — the extent metric for this rule
+            char buf[200];
+            std::snprintf(buf, sizeof buf,
+                          "Net %s joins an inductor pad and a switch/diode pad — "
+                          "identified as a converter switch node (dv/dt "
+                          "aggressor). Copper extent %.0f mm^2.",
+                          b_.net_name(net).c_str(), area);
+            f.title = "Switch node: " + b_.net_name(net) + " (extent " +
+                      std::to_string((int)area) + " mm^2)";
+            f.detail = std::string(buf) +
+                       " Verify the identification; every mm^2 of SW copper "
+                       "radiates dv/dt — coupled runs involving this net are "
+                       "severity-boosted in this report.";
+            f.remediation = "Minimize SW copper area, keep it away from sense/"
+                            "feedback routing, and shield it with ground pour "
+                            "on the adjacent layer.";
+            out.push_back(std::move(f));
         }
     }
 
@@ -446,8 +572,9 @@ class Screener {
                               "geometric ranking only)",
                               acc.len, kind.c_str());
             }
-            f.title = b_.net_name(f.net_a) + " <-> " + b_.net_name(f.net_b) +
-                      " on " + where;
+            const std::string& na = b_.net_name(f.net_a);
+            const std::string& nb = b_.net_name(f.net_b);
+            f.title = na + " <-> " + nb + " on " + where;
             f.detail = std::string(buf) +
                        ". Worst-case (length-saturated) near-end coupling; the "
                        "estimate carries roughly +/-6 dB — treat as a rank, "
@@ -458,10 +585,34 @@ class Screener {
                   "layers, or move one net to a layer across a plane."
                 : "Increase the gap (3W rule), shorten the parallel run, or "
                   "drop a grounded guard trace with stitching vias.";
+
+            // differential pairs couple by DESIGN — reclassify to info, never
+            // a defect (USB DP/DM on HackRF One taught this)
+            bool is_diff = is_differential_pair_name(na, nb);
+            if (is_diff) {
+                ++diff_pairs_recognized_;
+                f.rule = "diff-pair";
+                f.severity = 0.05;
+                f.confidence = "exact";
+                f.title += " (differential pair)";
+                f.detail = "Recognized as a differential pair by name — this "
+                           "coupling is intentional. " + f.detail;
+                f.remediation = "Nothing to fix; keep gap and lengths symmetric "
+                                "along the whole run so the coupling stays "
+                                "common-mode balanced.";
+            } else if (sw_nets_.count(f.net_a) || sw_nets_.count(f.net_b)) {
+                // a switch node is the board's dv/dt aggressor: same geometry
+                // couples harder in practice than the quasi-static estimate
+                f.severity = std::min(1.0, f.severity + 0.15);
+                f.title += " [SW aggressor]";
+                f.detail += " One net is an identified switch node (dv/dt "
+                            "aggressor) — severity boosted.";
+            }
             f.severity_label = f.severity > 0.66 ? "high"
-                              : f.severity > 0.33 ? "medium" : "low";
-            // 3W companion finding when violated
-            if (acc.min_edge_sep < 2.0 * acc.max_w && !broadside) {
+                              : f.severity > 0.33 ? "medium"
+                              : f.severity > 0.1  ? "low" : "info";
+            // 3W companion finding when violated (not for intentional pairs)
+            if (acc.min_edge_sep < 2.0 * acc.max_w && !broadside && !is_diff) {
                 // companion finding: ranks just BELOW its coupled-run (a dense
                 // board violates 3W everywhere — the quantified coupling must
                 // stay on top of the ranking, learned on HackRF One)
@@ -513,19 +664,33 @@ class Screener {
             return false;
         };
 
-        // accumulate uncovered length per net (marker points capped per finding)
+        // planes that actually have fill geometry to test against
+        std::vector<int> testable;
+        for (size_t i = 0; i < layers_.size(); ++i)
+            if (layers_[i].is_plane && !zb[i].empty()) testable.push_back((int)i);
+
+        // hard break: NO plane covers (per net, actionable individually).
+        // detour: the NEAREST plane is void but a farther one covers — real
+        // but systemic, so aggregated per (signal layer, nearest plane):
+        // 135 individual rows on HackRF One taught this.
         struct Gap { double len = 0; std::vector<Point> pts; int cu = -1; int plane = -1; };
         std::map<int, Gap> gaps;
+        struct Detour {
+            double len = 0;
+            std::map<int, double> len_by_net;
+            std::vector<Point> pts;
+        };
+        std::map<std::pair<int, int>, Detour> detours;  // (signal cu, nearest plane)
         for (const auto& s : b_.segments) {
             if (s.net <= 0 || layers_[s.cu].is_plane || is_pour_net(s.net)) continue;
             const LayerModel& lm = layers_[s.cu];
-            int plane = lm.ref_up >= 0 ? lm.ref_up : lm.ref_dn;
-            if (plane < 0) continue;  // handled by no-reference-plane
+            int nearest = lm.ref_up >= 0 ? lm.ref_up : lm.ref_dn;
+            if (nearest < 0) continue;  // handled by no-reference-plane
             // a plane known only from its 'power' layer-type hint has no fill
             // geometry to test against — skipping is stated in meta, never
             // silently flagged (a zoneless plane would fail EVERY sample)
-            if (zb[plane].empty()) {
-                unverifiable_planes_.insert(b_.copper_names[plane]);
+            if (zb[nearest].empty()) {
+                unverifiable_planes_.insert(b_.copper_names[nearest]);
                 continue;
             }
             double len = std::hypot(s.x2 - s.x1, s.y2 - s.y1);
@@ -533,14 +698,58 @@ class Screener {
             for (int i = 0; i <= steps; ++i) {
                 double t = (double)i / steps;
                 double x = s.x1 + (s.x2 - s.x1) * t, y = s.y1 + (s.y2 - s.y1) * t;
-                if (!covered(plane, x, y)) {
+                if (covered(nearest, x, y)) continue;
+                bool any = false;
+                for (int p : testable)
+                    if (p != nearest && covered(p, x, y)) { any = true; break; }
+                if (any) {
+                    Detour& d = detours[{s.cu, nearest}];
+                    d.len += len / steps;
+                    d.len_by_net[s.net] += len / steps;
+                    if (d.pts.size() < 64) d.pts.push_back({x, y});
+                } else {
                     Gap& g = gaps[s.net];
                     g.len += len / steps;
                     g.cu = s.cu;
-                    g.plane = plane;
+                    g.plane = nearest;
                     if (g.pts.size() < 64) g.pts.push_back({x, y});
                 }
             }
+        }
+        for (auto& [key, d] : detours) {
+            if (d.len < p_.sample_step_mm) continue;
+            auto [cu, plane] = key;
+            Finding f;
+            f.rule = "sparse-reference";
+            f.severity = std::clamp(0.3 + d.len / 300.0, 0.3, 0.65);
+            f.severity_label = "medium";
+            f.confidence = "exact";
+            f.cu_a = cu;
+            f.cu_b = plane;
+            f.coupled_len_mm = d.len;
+            f.title = "Sparse reference: " + b_.copper_names[plane] + " under " +
+                      b_.copper_names[cu] + " (" +
+                      std::to_string(d.len_by_net.size()) + " nets)";
+            // worst offenders by detour length
+            std::vector<std::pair<double, int>> worst;
+            for (auto& [net, l] : d.len_by_net) worst.push_back({l, net});
+            std::sort(worst.rbegin(), worst.rend());
+            std::string names;
+            for (size_t i = 0; i < worst.size() && i < 5; ++i)
+                names += (i ? ", " : "") + b_.net_name(worst[i].second);
+            char buf[200];
+            std::snprintf(buf, sizeof buf,
+                          "%.0f mm of routing on %s runs where its nearest plane "
+                          "(%s) is void; a farther plane covers, so the return "
+                          "current detours through a larger loop. Worst nets: ",
+                          d.len, b_.copper_names[cu].c_str(),
+                          b_.copper_names[plane].c_str());
+            f.detail = std::string(buf) + names + ".";
+            f.remediation = "Densify the " + b_.copper_names[plane] +
+                            " pour under these runs, or accept the longer return "
+                            "path knowingly (state it in the EMC file).";
+            for (const auto& pt : d.pts) f.geom.markers.push_back(pt);
+            out.push_back(std::move(f));
         }
         for (auto& [net, g] : gaps) {
             if (g.len < p_.sample_step_mm) continue;  // sub-pitch noise
@@ -576,7 +785,9 @@ class Screener {
     std::vector<LayerModel> layers_;
     size_t dropped_below_floor_ = 0;
     size_t dropped_by_cap_ = 0;
+    size_t diff_pairs_recognized_ = 0;
     std::set<std::string> unverifiable_planes_;
+    std::set<int> sw_nets_;
 };
 
 // ---- findings → JSON (report payload for CLI/web) ----

@@ -46,15 +46,17 @@ TEST_CASE("real: HackRF One (KiCad v6, 4-layer RF) imports and screens", "[real]
     CHECK(planes[3]["isPlane"] == false);
     CHECK(report["findings"].size() == 200);  // cap reached — big board
     CHECK(report["meta"]["droppedByFindingCap"].get<int>() > 0);
-    // the USB differential pair surfaces as a coupled run (P1: diff-pair
-    // recognition will reclassify it — this pins the current behaviour)
-    bool usb_pair = false;
-    for (const auto& f : report["findings"])
-        if (f["rule"] == "coupled-run" &&
-            f["title"].get<std::string>().find("DM") != std::string::npos &&
-            f["title"].get<std::string>().find("DP") != std::string::npos)
-            usb_pair = true;
-    CHECK(usb_pair);
+    // Differential pairs (USB DP/DM and 9 others) are recognized as
+    // intentional coupling. They are info-grade, so on a board this dense
+    // they correctly rank BELOW the finding cap and never appear as defects —
+    // the count is still reported in meta so nothing is silently lost.
+    CHECK(report["meta"]["diffPairsRecognized"].get<int>() == 10);
+    for (const auto& f : report["findings"]) {
+        if (f["rule"] != "diff-pair") continue;
+        CHECK(f["severityLabel"] == "info");
+    }
+    // HackRF is not a converter: no inductor+FET switch node expected
+    CHECK(report["meta"]["switchNodes"].empty());
 }
 
 TEST_CASE("real: LibreSolar MPPT 2420 HC (KiCad v5, power converter) imports and screens",
@@ -91,4 +93,15 @@ TEST_CASE("real: LibreSolar MPPT 2420 HC (KiCad v5, power converter) imports and
     }
     CHECK(ls_drv);
     CHECK(vbus_shunt);
+
+    // switch-node identification: the literal /DC/DC/SW_NODE is found by
+    // CONNECTIVITY (inductor pad + FET pad, compact net) — not by its name
+    const auto& sw = report["meta"]["switchNodes"];
+    bool found_sw = false;
+    for (const auto& n : sw)
+        if (n.get<std::string>().find("SW_NODE") != std::string::npos) found_sw = true;
+    CHECK(found_sw);
+    CHECK(sw.size() <= 3);  // a converter has a handful, not dozens
+    // CAN_H/CAN_L recognized as a differential pair, not a defect
+    CHECK(report["meta"]["diffPairsRecognized"].get<int>() >= 1);
 }

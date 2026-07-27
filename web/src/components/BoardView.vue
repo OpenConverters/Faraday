@@ -18,6 +18,10 @@ const board = computed(() => props.report.board)
 const findings = computed(() => props.report.findings)
 
 const HEAT = { high: '#ff5d5d', medium: '#ffb454', low: '#58c79a', info: '#9db4ad' }
+// intentional coupling and identified aggressors read as their own thing, not
+// as heat: diff pairs cool blue-grey, switch nodes copper (the board's own hue)
+const RULE_COLOR = { 'diff-pair': '#6f9fc4', 'switch-node': '#d98b5f' }
+const colorFor = f => RULE_COLOR[f.rule] ?? HEAT[f.severityLabel] ?? HEAT.info
 const INNER_COLORS = ['#b8c24d', '#c778b8', '#5dc7b0', '#c7a15d']
 
 function layerColor(cu) {
@@ -144,7 +148,7 @@ function draw() {
   // risk overlays: heat on copper (the signature)
   if (overlaysOn.value) {
     for (const f of findings.value) {
-      const col = HEAT[f.severityLabel] ?? HEAT.info
+      const col = colorFor(f)
       const dim = props.selectedId && f.id !== props.selectedId
       ctx.globalAlpha = dim ? 0.18 : 0.95
       ctx.shadowColor = col
@@ -212,6 +216,7 @@ function tooltipFor(hit) {
     const f = hit.f
     const lines = [`${f.id} · ${f.severityLabel.toUpperCase()} · ${f.rule}`, f.title]
     if (f.nextDb !== undefined) lines.push(`NEXT (saturated) ${f.nextDb.toFixed(1)} dB · ${f.coupledLenMm.toFixed(1)} mm`)
+    else if (f.rule === 'switch-node') lines.push(`copper extent ${f.coupledLenMm.toFixed(0)} mm² · ${f.confidence}`)
     else if (f.coupledLenMm) lines.push(`${f.coupledLenMm.toFixed(1)} mm`)
     lines.push('click to inspect')
     return { findingId: f.id, lines }

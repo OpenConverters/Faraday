@@ -56,6 +56,23 @@ test('board without stackup gets the explicit stackup card, never a silent defau
   await expect(page.getByTestId('meta-strip')).toContainText('user:default-2layer')
 })
 
+test('power converter: switch node identified and shown in the meta strip', async ({ page }) => {
+  const consoleErrors = []
+  page.on('pageerror', e => consoleErrors.push(String(e)))
+
+  await page.goto('/')
+  // KiCad 5 power board, carries no stackup -> explicit card first
+  await page.getByTestId('file-input').setInputFiles(
+    path.join(here, '../../../cpp/tests/fixtures/real/mppt-2420-hc.kicad_pcb'))
+  await page.getByTestId('stackup-card').getByRole('button', { name: /4-layer/ }).click()
+
+  await expect(page.getByTestId('finding-count')).toBeVisible()
+  // the converter's switch node, found by connectivity not by name
+  await expect(page.getByTestId('meta-switchnodes')).toContainText('SW_NODE')
+  await expect(page.getByTestId('meta-strip')).toContainText('user:default-4layer')
+  expect(consoleErrors).toEqual([])
+})
+
 test('tooltip appears when hovering routed copper', async ({ page }) => {
   await page.goto('/')
   await page.getByTestId('file-input').setInputFiles(FIXTURE)

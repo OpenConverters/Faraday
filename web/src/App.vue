@@ -109,6 +109,13 @@ const findings = computed(() => report.value?.findings ?? [])
         {{ p.layer }} <b>{{ p.isPlane ? 'plane' : 'signal' }}</b>
         <template v-if="p.zoneCoverage > 0"> · {{ Math.round(p.zoneCoverage * 100) }}% pour</template>
       </span>
+      <span v-if="meta.switchNodes?.length" class="m sw" data-testid="meta-switchnodes">
+        switch nodes: <b>{{ meta.switchNodes.join(', ') }}</b></span>
+      <span v-if="meta.diffPairsRecognized" class="m">{{ meta.diffPairsRecognized }} diff pair(s) recognized</span>
+      <span v-if="meta.polygonOnlyNets?.length" class="m warn">
+        {{ meta.polygonOnlyNets.length }} zone-routed net(s) not coupling-checked</span>
+      <span v-if="meta.crossingCheckSkippedPlanes?.length" class="m warn">
+        void check skipped on {{ meta.crossingCheckSkippedPlanes.join(', ') }} (no fill)</span>
       <span v-if="meta.approximatedArcs" class="m warn">{{ meta.approximatedArcs }} arc(s) chord-approximated</span>
       <span v-if="meta.droppedBelowFloorDb" class="m">{{ meta.droppedBelowFloorDb }} pairs below {{ meta.reportFloorDb }} dB floor</span>
       <span v-if="meta.droppedByFindingCap" class="m warn">{{ meta.droppedByFindingCap }} findings over cap — tighten scope</span>
@@ -185,4 +192,5 @@ const findings = computed(() => report.value?.findings ?? [])
 }
 .m b { color: var(--silk); font-weight: 500; }
 .m.warn { color: var(--heat-med); }
+.m.sw b { color: var(--copper); }
 </style>
