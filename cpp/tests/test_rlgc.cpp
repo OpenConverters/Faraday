@@ -1,0 +1,183 @@
+// RLGC extraction and the SPICE ladder. The physics here is checked against
+// closed-form results, not against recorded numbers.
+
+#include <catch2/catch_test_macros.hpp>
+#include <catch2/catch_approx.hpp>
+#include <catch2/matchers/catch_matchers_string.hpp>
+#include <faraday/CrossSection.hpp>
+#include <faraday/Rlgc.hpp>
+
+#include <cmath>
+#include <cstdio>
+#include <fstream>
+#include <sstream>
+
+using Catch::Approx;
+using namespace faraday;
+
+TEST_CASE("rlgc: matrix inverse round-trips", "[rlgc]") {
+    std::vector<double> a{4, 1, 0, 1, 3, 1, 0, 1, 2};
+    std::vector<double> inv = invert_matrix(a, 3);
+    for (size_t i = 0; i < 3; ++i)
+        for (size_t j = 0; j < 3; ++j) {
+            double s = 0;
+            for (size_t k = 0; k < 3; ++k) s += a[i * 3 + k] * inv[k * 3 + j];
+            CHECK(s == Approx(i == j ? 1.0 : 0.0).margin(1e-12));
+        }
+    CHECK_THROWS_WITH(invert_matrix({1, 2, 2, 4}, 2),
+                      Catch::Matchers::ContainsSubstring("singular"));
+}
+
+TEST_CASE("rlgc: a vacuum line propagates at c and has the textbook Z0",
+          "[rlgc]") {
+    // Two conductors, C = C0 (vacuum). Whatever the geometry, the extracted
+    // L and C must give v = c0 exactly — that is the check that the
+    // L = mu0 eps0 C0^-1 route is wired up correctly.
+    const double c_self = 1.0e-10;                  // 100 pF/m to the reference
+    std::vector<double> mx{c_self, -c_self, -c_self, c_self};
+    Rlgc p = rlgc_from_maxwell(mx, mx, 2, /*ref=*/1);
+    REQUIRE(p.n == 1);
+    const double c_light = 1.0 / std::sqrt(MU0_ * EPS0_);
+    CHECK(p.velocity(0) == Approx(c_light).epsilon(1e-12));
+    // Z0 = 1/(v C) is the standard identity
+    CHECK(p.z0(0) == Approx(1.0 / (c_light * c_self)).epsilon(1e-12));
+}
+
+TEST_CASE("rlgc: dielectric slows the line and lowers Z0 by sqrt(eps_eff)",
+          "[rlgc]") {
+    const double c0 = 1.0e-10, er = 4.0;
+    std::vector<double> vac{c0, -c0, -c0, c0};
+    std::vector<double> mx{c0 * er, -c0 * er, -c0 * er, c0 * er};
+    Rlgc p = rlgc_from_maxwell(mx, vac, 2, 1);
+    const double c_light = 1.0 / std::sqrt(MU0_ * EPS0_);
+    CHECK(p.velocity(0) == Approx(c_light / std::sqrt(er)).epsilon(1e-12));
+    Rlgc p0 = rlgc_from_maxwell(vac, vac, 2, 1);
+    CHECK(p.z0(0) == Approx(p0.z0(0) / std::sqrt(er)).epsilon(1e-12));
+    // the vacuum solve fixes L, so L must NOT change with the dielectric
+    CHECK(p.at(p.L, 0, 0) == Approx(p0.at(p0.L, 0, 0)).epsilon(1e-12));
+}
+
+TEST_CASE("rlgc: three-conductor extraction gives signed, coupled matrices",
+          "[rlgc]") {
+    // conductors 0,1 signal; 2 = reference. Maxwell matrix of a symmetric pair.
+    const double cs = 1.0e-10, cm = 8.0e-12;
+    std::vector<double> mx{
+        cs + cm, -cm,     -cs,
+        -cm,     cs + cm, -cs,
+        -cs,     -cs,     2 * cs + 0.0};
+    Rlgc p = rlgc_from_maxwell(mx, mx, 3, /*ref=*/2);
+    REQUIRE(p.n == 2);
+    // self capacitance to ground, mutual between the lines
+    CHECK(p.c_mutual(0, 1) == Approx(cm));
+    CHECK(p.c_to_ref(0) == Approx(cs));
+    CHECK(p.at(p.C, 0, 0) > 0.0);
+    // L symmetric and positive definite in the 2x2 sense
+    CHECK(p.at(p.L, 0, 1) == Approx(p.at(p.L, 1, 0)));
+    CHECK(p.at(p.L, 0, 0) > 0.0);
+    CHECK(p.at(p.L, 0, 0) * p.at(p.L, 1, 1) > p.at(p.L, 0, 1) * p.at(p.L, 0, 1));
+    CHECK(p.kb(0, 1) > 0.0);
+    CHECK(p.kb(0, 1) < 0.25);   // below the saturated bound the screener uses
+}
+
+TEST_CASE("rlgc: ladder deck is well formed and physical", "[rlgc][deck]") {
+    const double cs = 1.0e-10, cm = 8.0e-12;
+    std::vector<double> mx{cs + cm, -cm, -cs, -cm, cs + cm, -cs, -cs, -cs, 2 * cs};
+    Rlgc p = rlgc_from_maxwell(mx, mx, 3, 2);
+    DeckOptions o;
+    o.sections = 4;
+    o.length_m = 0.04;
+    std::string deck = spice_ladder_deck(p, o);
+
+    CHECK(deck.find("Vagg src 0 PWL") != std::string::npos);
+    CHECK(deck.find(".tran") != std::string::npos);
+    CHECK(deck.find(".end") != std::string::npos);
+    // one L and one C per line per section, plus the mutual pair
+    auto count = [&](const std::string& tok) {
+        size_t n = 0, pos = 0;
+        while ((pos = deck.find(tok, pos)) != std::string::npos) { ++n; ++pos; }
+        return n;
+    };
+    CHECK(count("\nL0_") == 4);
+    CHECK(count("\nL1_") == 4);
+    CHECK(count("\nCm01_") == 4);
+    CHECK(count("\nK01_") == 4);
+    // the victim is terminated at both ends so NEXT and FEXT are observable
+    CHECK(deck.find("Rnear1 n1_0 0") != std::string::npos);
+    CHECK(deck.find("Rfar1 n1_4 0") != std::string::npos);
+}
+
+TEST_CASE("rlgc: an unphysical inductance matrix is refused", "[rlgc][deck]") {
+    Rlgc p;
+    p.n = 2;
+    p.C = {1e-10, 0, 0, 1e-10};
+    p.L = {1e-7, 1e-7, 1e-7, 1e-7};   // k = 1 exactly: not physical for a deck
+    p.R = {0, 0, 0, 0};
+    CHECK_THROWS_WITH(spice_ladder_deck(p, DeckOptions{}),
+                      Catch::Matchers::ContainsSubstring("not physical"));
+}
+
+TEST_CASE("cross-section: coupled microstrip geometry is built correctly",
+          "[crosssection]") {
+    // 0.3 mm traces, 0.5 mm centre spacing, 0.2 mm above the plane, 35 um copper
+    CrossSection cs = make_coupled_section(0.3, 0.3, 0.5, 0.2, 0.035, 4.4);
+    REQUIRE(cs.conductors.size() == 3);
+    CHECK(cs.conductors[0].name == "conductor_gnd");
+    CHECK(cs.conductors[1].name == "conductor_a");
+    CHECK(cs.conductors[2].name == "conductor_b");
+    // the reference plane must be in the section, spanning it
+    CHECK(cs.conductors[0].x0 == Approx(0.0));
+    CHECK(cs.conductors[0].x1 == Approx(cs.width));
+    // traces sit one dielectric height above the plane
+    CHECK(cs.conductors[1].y0 == Approx(0.035e-3 + 0.2e-3));
+    // and are 0.5 mm apart, centre to centre
+    const double xa = 0.5 * (cs.conductors[1].x0 + cs.conductors[1].x1);
+    const double xb = 0.5 * (cs.conductors[2].x0 + cs.conductors[2].x1);
+    CHECK(xb - xa == Approx(0.5e-3));
+    // permittivity is the board's between plane and trace, air above
+    CHECK(cs.eps_at(0.035e-3 + 0.1e-3) == Approx(4.4));
+    CHECK(cs.eps_at(cs.height - 1e-6) == Approx(1.0));
+    // region lookup: inside a trace is that conductor, outside is dielectric
+    CHECK(cs.region_at(xa, 0.035e-3 + 0.2e-3 + 0.01e-3) == "conductor_a");
+    CHECK(cs.region_at(xa, 0.035e-3 + 0.1e-3).rfind("dielectric", 0) == 0);
+    CHECK(cs.nx > 100);
+    CHECK(cs.ny > 50);
+}
+
+TEST_CASE("cross-section: impossible geometry is refused", "[crosssection]") {
+    // separation smaller than the two half-widths means overlapping copper
+    CHECK_THROWS_WITH(make_coupled_section(0.3, 0.3, 0.2, 0.2, 0.035, 4.4),
+                      Catch::Matchers::ContainsSubstring("smaller than the two half-widths"));
+    CHECK_THROWS(make_coupled_section(0.0, 0.3, 0.5, 0.2, 0.035, 4.4));
+    CHECK_THROWS(make_coupled_section(0.3, 0.3, 0.5, 0.0, 0.035, 4.4));
+}
+
+TEST_CASE("cross-section: gmsh mesh round-trips through the region map",
+          "[crosssection]") {
+    CrossSection cs = make_coupled_section(0.3, 0.3, 0.5, 0.2, 0.035, 4.4);
+    const std::string path = std::string(FARADAY_FIXTURE_DIR) + "/../.tmp_section.msh";
+
+    // A mesh too coarse to resolve the 35 um copper would drop an electrode
+    // entirely and yield a capacitance matrix missing a conductor. Refused.
+    {
+        CrossSection coarse = cs;
+        coarse.nx = 40;
+        coarse.ny = 20;
+        CHECK_THROWS_WITH(coarse.write_gmsh(path),
+                          Catch::Matchers::ContainsSubstring("vanish from the mesh"));
+    }
+
+    cs.write_gmsh(path);
+    std::ifstream in(path);
+    REQUIRE(in.good());
+    std::stringstream ss;
+    ss << in.rdbuf();
+    const std::string m = ss.str();
+    CHECK(m.rfind("$MeshFormat", 0) == 0);
+    CHECK(m.find("$PhysicalNames") != std::string::npos);
+    CHECK(m.find("\"conductor_a\"") != std::string::npos);
+    CHECK(m.find("\"conductor_b\"") != std::string::npos);
+    CHECK(m.find("\"conductor_gnd\"") != std::string::npos);
+    CHECK(m.find("$Elements\n" + std::to_string(cs.nx * cs.ny) + "\n")
+          != std::string::npos);
+    std::remove(path.c_str());
+}

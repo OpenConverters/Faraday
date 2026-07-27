@@ -911,9 +911,13 @@ class Screener {
             const std::string& nb = b_.net_name(f.net_b);
             f.title = na + " <-> " + nb + " on " + where;
             f.detail = std::string(buf) +
-                       ". Worst-case (length-saturated) near-end coupling; the "
-                       "estimate carries roughly +/-6 dB — treat as a rank, "
-                       "confirm with the field-solver tier. Mean centre "
+                       ". Length-saturated near-end coupling. Measured against a "
+                       "2D field solve this closed form runs about 6.5 dB "
+                       "OPTIMISTIC and fairly uniformly so, which means the "
+                       "ranking is reliable but the absolute figure is not — "
+                       "real coupling here is likelier near " +
+                       std::to_string((int)std::lround(*f.next_db + 6.5)) +
+                       " dB. Confirm with the field-solver tier. Mean centre "
                        "separation " + std::to_string(mean_d).substr(0, 5) + " mm.";
             f.remediation = broadside
                 ? "Offset the runs laterally, route orthogonally on adjacent "

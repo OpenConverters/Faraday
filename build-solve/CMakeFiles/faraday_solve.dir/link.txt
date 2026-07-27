@@ -1,0 +1,1 @@
+/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/faraday_solve.dir/tools/faraday_solve.cpp.o -o faraday_solve  /home/alf/OpenMagnetics/OMFEM/build/libomfem.a /home/alf/OpenMagnetics/OMFEM/build/_deps/mfem-build/libmfem.a
