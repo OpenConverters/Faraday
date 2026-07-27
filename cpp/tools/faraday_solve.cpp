@@ -19,6 +19,7 @@
 #include <omfem/ElectrostaticCartesian.hpp>
 #include <omfem/Problem.hpp>
 
+
 #include <cstdio>
 #include <cstdlib>
 #include <fstream>
@@ -129,14 +130,25 @@ int main(int argc, char** argv) {
                         20.0 * std::log10(kb) - 20.0 * std::log10(kb_screen));
         }
 
+        faraday::DeckOptions o;
+        o.length_m = len_mm * 1e-3;
+        o.rise_s = arg_num(argc, argv, "--tr", o.rise_s);
+        o.amplitude_v = arg_num(argc, argv, "--vdd", o.amplitude_v);
+        const std::string deck = faraday::spice_ladder_deck(p_ul, o);
         if (!deck_path.empty()) {
-            faraday::DeckOptions o;
-            o.length_m = len_mm * 1e-3;
             std::ofstream os(deck_path);
-            os << faraday::spice_ladder_deck(p_ul, o);
+            os << deck;
             std::printf("\ndeck: %s (%d sections over %.1f mm)\n",
                         deck_path.c_str(), o.sections, len_mm);
         }
+
+// Time domain is a separate step: faraday_spice runs this deck through
+        // Kirchhoff's in-process libngspice. Linking MFEM and ngspice into one
+        // process segfaults, so the deck goes via a file.
+        if (!deck_path.empty() && p_ul.n >= 2)
+            std::printf("   run it: faraday_spice %s --victim 1 --sections %d "
+                        "--vdd %.1f\n", deck_path.c_str(), o.sections, o.amplitude_v);
+
         std::remove(mesh.c_str());
         return 0;
     } catch (const std::exception& e) {

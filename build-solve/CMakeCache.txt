@@ -255,6 +255,12 @@ CMAKE_VERBOSE_MAKEFILE:BOOL=FALSE
 //Build the Catch2 test binary
 FARADAY_BUILD_TESTS:BOOL=OFF
 
+//Kirchhoff build dir with libkirchhoff
+FARADAY_KIRCHHOFF_BUILD:PATH=/home/alf/OpenConverters/Kirchhoff/build-latest
+
+//Kirchhoff checkout
+FARADAY_KIRCHHOFF_ROOT:PATH=/home/alf/OpenConverters/Kirchhoff
+
 //OMFEM checkout with a built libomfem
 FARADAY_OMFEM_ROOT:PATH=/home/alf/OpenMagnetics/OMFEM
 
@@ -312,7 +318,13 @@ JSON_MultipleHeaders:BOOL=ON
 JSON_SystemInclude:BOOL=OFF
 
 //Path to a library.
+KIRCHHOFF_LIBRARY:FILEPATH=/home/alf/OpenConverters/Kirchhoff/build-latest/libkirchhoff.a
+
+//Path to a library.
 MFEM_LIBRARY:FILEPATH=/home/alf/OpenMagnetics/OMFEM/build/_deps/mfem-build/libmfem.a
+
+//Path to a library.
+NGSPICE_LIBRARY:FILEPATH=/usr/lib/x86_64-linux-gnu/libngspice.so
 
 //Path to a library.
 OMFEM_LIBRARY:FILEPATH=/home/alf/OpenMagnetics/OMFEM/build/libomfem.a

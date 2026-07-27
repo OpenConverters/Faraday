@@ -181,3 +181,20 @@ TEST_CASE("cross-section: gmsh mesh round-trips through the region map",
           != std::string::npos);
     std::remove(path.c_str());
 }
+
+TEST_CASE("rlgc: crosstalk peaks are read as excursions from quiescent",
+          "[rlgc][deck]") {
+    // near-end swings positive, far-end negative — the classic signature
+    std::vector<double> near{0, 0.01, 0.064, 0.03, 0};
+    std::vector<double> far{0, -0.005, -0.028, -0.01, 0};
+    faraday::CrosstalkPeaks p = crosstalk_from_waveforms(near, far, 1.69);
+    CHECK(p.next_v == Approx(0.064));
+    CHECK(p.fext_v == Approx(-0.028));    // sign preserved: direction matters
+    CHECK(p.next_db == Approx(20.0 * std::log10(0.064 / 1.69)).margin(0.01));
+    CHECK(p.fext_db < p.next_db);
+    // a node that never moved is a floor, not a nan
+    CHECK(crosstalk_from_waveforms({0, 0, 0}, {0, 0, 0}, 1.0).next_db == -300.0);
+    CHECK_THROWS_WITH(crosstalk_from_waveforms({}, {0.0}, 1.0),
+                      Catch::Matchers::ContainsSubstring("empty waveform"));
+    CHECK_THROWS(crosstalk_from_waveforms({0.1}, {0.1}, 0.0));
+}

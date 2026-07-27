@@ -49,7 +49,50 @@ screening estimate                   NEXT -29.2 dB  (delta 7.1 dB)
 ```
 
 `--deck` writes an N-section ngspice ladder with all-pairs `K` coupling (rather
-than ngspice's convergence-flaky `CPL` element) for a time-domain NEXT/FEXT run.
+than ngspice's convergence-flaky `CPL` element).
+
+## Time domain
+
+`faraday_spice` runs that deck through **Kirchhoff's in-process libngspice** —
+the external `ngspice` binary is never invoked:
+
+```sh
+./build-solve/faraday_spice xtalk.sp --victim 1 --sections 24 --vdd 3.3
+```
+
+It is a **separate binary on purpose**: linking MFEM and libngspice into one
+process segfaults, since ngspice's shared-library mode is not re-entrant and
+does not coexist with the solver runtime. Splitting the steps costs a file on
+disk and buys a pipeline that does not crash.
+
+Crosstalk is referenced to the voltage actually **launched onto the aggressor**,
+not the source's open-circuit swing. The driver impedance and the line's Z0 form
+a divider — 50 Ω into 55 Ω throws every dB figure off by 5.6 dB — so the tool
+reports the launched amplitude alongside the result.
+
+## The chain closes
+
+Same geometry, two coupled lengths, 3.3 V source with a 1 ns edge:
+
+| length | measured NEXT | expected |
+|---|---|---|
+| 200 mm | **−22.2 dB** | −22.2 dB — the field solve's k_b, saturated |
+| 40 mm | **−28.3 dB** | −28.6 dB — k_b de-rated by 2·T_d/t_r |
+
+At 200 mm the coupled length exceeds the saturation length (t_r·v/2 = 84 mm at
+this velocity), so the transient result must equal the quasi-static k_b — and it
+does, to 0.1 dB. At 40 mm the line is *below* saturation and the transient
+reproduces the textbook `2·T_d/t_r` de-rating to 0.3 dB.
+
+That is the whole tier validating itself end to end: electrostatic solve →
+Maxwell matrix → RLGC → SPICE ladder → transient → a NEXT figure that lands on
+the analytic prediction from the other end of the chain.
+
+**This is also why the screening tier's "length-saturated" wording matters.** It
+reports the saturated bound, which a real 40 mm run undershoots by 6 dB. Combined
+with the ~6.5 dB optimism measured below, the two errors happen to partly cancel
+on short runs and compound on long ones — another reason to treat the screening
+number as a rank, not a value.
 
 ## Sanity of the extraction
 

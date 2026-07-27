@@ -142,6 +142,19 @@ faraday_solve/fast:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/faraday_solve.dir/build.make CMakeFiles/faraday_solve.dir/build
 .PHONY : faraday_solve/fast
 
+#=============================================================================
+# Target rules for targets named faraday_spice
+
+# Build rule for target.
+faraday_spice: cmake_check_build_system
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/Makefile2 faraday_spice
+.PHONY : faraday_spice
+
+# fast build rule for target.
+faraday_spice/fast:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/faraday_spice.dir/build.make CMakeFiles/faraday_spice.dir/build
+.PHONY : faraday_spice/fast
+
 tools/faraday_cli.o: tools/faraday_cli.cpp.o
 .PHONY : tools/faraday_cli.o
 
@@ -190,6 +203,30 @@ tools/faraday_solve.cpp.s:
 	$(MAKE) $(MAKESILENT) -f CMakeFiles/faraday_solve.dir/build.make CMakeFiles/faraday_solve.dir/tools/faraday_solve.cpp.s
 .PHONY : tools/faraday_solve.cpp.s
 
+tools/faraday_spice.o: tools/faraday_spice.cpp.o
+.PHONY : tools/faraday_spice.o
+
+# target to build an object file
+tools/faraday_spice.cpp.o:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/faraday_spice.dir/build.make CMakeFiles/faraday_spice.dir/tools/faraday_spice.cpp.o
+.PHONY : tools/faraday_spice.cpp.o
+
+tools/faraday_spice.i: tools/faraday_spice.cpp.i
+.PHONY : tools/faraday_spice.i
+
+# target to preprocess a source file
+tools/faraday_spice.cpp.i:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/faraday_spice.dir/build.make CMakeFiles/faraday_spice.dir/tools/faraday_spice.cpp.i
+.PHONY : tools/faraday_spice.cpp.i
+
+tools/faraday_spice.s: tools/faraday_spice.cpp.s
+.PHONY : tools/faraday_spice.s
+
+# target to generate assembly for a file
+tools/faraday_spice.cpp.s:
+	$(MAKE) $(MAKESILENT) -f CMakeFiles/faraday_spice.dir/build.make CMakeFiles/faraday_spice.dir/tools/faraday_spice.cpp.s
+.PHONY : tools/faraday_spice.cpp.s
+
 # Help Target
 help:
 	@echo "The following are some of the valid targets for this Makefile:"
@@ -200,12 +237,16 @@ help:
 	@echo "... rebuild_cache"
 	@echo "... faraday_cli"
 	@echo "... faraday_solve"
+	@echo "... faraday_spice"
 	@echo "... tools/faraday_cli.o"
 	@echo "... tools/faraday_cli.i"
 	@echo "... tools/faraday_cli.s"
 	@echo "... tools/faraday_solve.o"
 	@echo "... tools/faraday_solve.i"
 	@echo "... tools/faraday_solve.s"
+	@echo "... tools/faraday_spice.o"
+	@echo "... tools/faraday_spice.i"
+	@echo "... tools/faraday_spice.s"
 .PHONY : help
 
 

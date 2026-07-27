@@ -38,6 +38,33 @@ if(FARADAY_OMFEM_ROOT)
         ${FARADAY_OMFEM_ROOT}/build/_deps/mfem-build)
     target_link_libraries(faraday_solve PRIVATE faraday ${OMFEM_LIBRARY} ${MFEM_LIBRARY})
     message(STATUS "Faraday: building faraday_solve against OMFEM at ${FARADAY_OMFEM_ROOT}")
+
+    # Optional time-domain run through Kirchhoff's IN-PROCESS libngspice. The
+    # external ngspice binary is never used — house rule, and prod must run
+    # without it installed.
+    #   -DFARADAY_KIRCHHOFF_ROOT=$HOME/OpenConverters/Kirchhoff
+    #   -DFARADAY_KIRCHHOFF_BUILD=<a build dir configured with ENABLE_NGSPICE=ON>
+    set(FARADAY_KIRCHHOFF_ROOT "" CACHE PATH "Kirchhoff checkout")
+    set(FARADAY_KIRCHHOFF_BUILD "" CACHE PATH "Kirchhoff build dir with libkirchhoff")
+    if(FARADAY_KIRCHHOFF_ROOT AND FARADAY_KIRCHHOFF_BUILD)
+        find_library(KIRCHHOFF_LIBRARY kirchhoff
+                     PATHS ${FARADAY_KIRCHHOFF_BUILD} NO_DEFAULT_PATH)
+        find_library(NGSPICE_LIBRARY ngspice)
+        if(NOT KIRCHHOFF_LIBRARY OR NOT NGSPICE_LIBRARY)
+            message(FATAL_ERROR
+                "FARADAY_KIRCHHOFF_* set but libkirchhoff/libngspice were not found "
+                "— build Kirchhoff with -DENABLE_NGSPICE=ON first")
+        endif()
+        # A SEPARATE binary: linking MFEM and libngspice into one process
+        # segfaults (ngspice's shared-library mode is not re-entrant and does
+        # not coexist with the solver runtime). faraday_solve writes the deck,
+        # faraday_spice runs it — still through Kirchhoff in-process, never the
+        # external ngspice binary.
+        add_executable(faraday_spice tools/faraday_spice.cpp)
+        target_include_directories(faraday_spice PRIVATE ${FARADAY_KIRCHHOFF_ROOT}/src)
+        target_link_libraries(faraday_spice PRIVATE faraday ${KIRCHHOFF_LIBRARY} ${NGSPICE_LIBRARY})
+        message(STATUS "Faraday: building faraday_spice (Kirchhoff in-process ngspice)")
+    endif()
 endif()
 
 if(FARADAY_BUILD_TESTS)

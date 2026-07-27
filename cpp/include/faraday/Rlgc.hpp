@@ -231,4 +231,40 @@ inline std::string spice_ladder_deck(const Rlgc& p, const DeckOptions& o) {
     return s.str();
 }
 
+// Peak crosstalk read off a transient run of the ladder above.
+//   near  = victim's driven end   (backward / NEXT)
+//   far   = victim's far end      (forward / FEXT)
+// Values are the peak EXCURSION from the quiescent level, signed so the
+// direction of the disturbance is preserved.
+struct CrosstalkPeaks {
+    double next_v = 0, fext_v = 0;
+    double next_db = 0, fext_db = 0;   // relative to the aggressor amplitude
+};
+
+inline CrosstalkPeaks crosstalk_from_waveforms(const std::vector<double>& near,
+                                               const std::vector<double>& far,
+                                               double aggressor_v) {
+    if (near.empty() || far.empty())
+        throw std::invalid_argument("crosstalk: empty waveform — the deck ran but "
+                                    "the victim node was not captured");
+    if (aggressor_v <= 0)
+        throw std::invalid_argument("crosstalk: aggressor amplitude must be > 0");
+    auto peak = [](const std::vector<double>& v) {
+        double best = 0.0;
+        for (double x : v) if (std::abs(x) > std::abs(best)) best = x;
+        return best;
+    };
+    CrosstalkPeaks p;
+    p.next_v = peak(near);
+    p.fext_v = peak(far);
+    // a genuinely zero excursion is -inf dB; report a floor rather than nan
+    auto db = [&](double v) {
+        const double r = std::abs(v) / aggressor_v;
+        return r > 0 ? 20.0 * std::log10(r) : -300.0;
+    };
+    p.next_db = db(p.next_v);
+    p.fext_db = db(p.fext_v);
+    return p;
+}
+
 }  // namespace faraday
