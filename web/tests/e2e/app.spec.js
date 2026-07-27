@@ -17,10 +17,11 @@ test('board loads, findings rank, selection links list and canvas', async ({ pag
 
   await page.getByTestId('file-input').setInputFiles(FIXTURE)
 
-  // findings appear, ranked (fixture: 3W, coupled-run, 2 plane crossings)
+  // findings appear, ranked (fixture: coupled-run first, its 3W companion
+  // just below it, then 2 plane crossings)
   await expect(page.getByTestId('finding-count')).toHaveText('4')
-  await expect(page.getByTestId('finding-F-0001')).toContainText('3W violation')
-  await expect(page.getByTestId('finding-F-0002')).toContainText('CLK')
+  await expect(page.getByTestId('finding-F-0001')).toContainText('CLK')
+  await expect(page.getByTestId('finding-F-0002')).toContainText('3W violation')
   await expect(page.getByTestId('board-canvas')).toBeVisible()
 
   // meta strip states the stackup source and plane classification
@@ -30,7 +31,7 @@ test('board loads, findings rank, selection links list and canvas', async ({ pag
   await expect(meta).toContainText('plane')
 
   // selecting a finding opens its detail with remediation
-  await page.getByTestId('finding-F-0002').click()
+  await page.getByTestId('finding-F-0001').click()
   await expect(page.getByTestId('finding-detail')).toContainText('NEXT')
   await expect(page.getByTestId('finding-detail')).toContainText('Fix:')
 

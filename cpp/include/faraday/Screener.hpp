@@ -459,10 +459,14 @@ class Screener {
                               : f.severity > 0.33 ? "medium" : "low";
             // 3W companion finding when violated
             if (acc.min_edge_sep < 2.0 * acc.max_w && !broadside) {
+                // companion finding: ranks just BELOW its coupled-run (a dense
+                // board violates 3W everywhere — the quantified coupling must
+                // stay on top of the ranking, learned on HackRF One)
                 Finding w3;
                 w3.rule = "3w";
-                w3.severity = std::min(1.0, f.severity + 0.1);
-                w3.severity_label = f.severity_label;
+                w3.severity = std::max(0.0, f.severity - 0.05);
+                w3.severity_label = w3.severity > 0.66 ? "high"
+                                   : w3.severity > 0.33 ? "medium" : "low";
                 w3.confidence = "exact";
                 w3.net_a = f.net_a; w3.net_b = f.net_b;
                 w3.cu_a = key.cu_a; w3.cu_b = key.cu_b;
