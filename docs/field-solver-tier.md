@@ -256,31 +256,38 @@ peak. Its group delay is dominated by the resonance, not by line propagation, so
 the phase slope gives no line constant. The uniform structures (meander, stub)
 ship only one-port |Z|.
 
-### What the data DOES give, and the one missing number
+### CORRECTION — the comb is the fixture, not the trace
 
-`stub_short` yields a clean resonator comb — minima at 496, 746, 1001, 1262,
-1530, 1791, 2040 MHz, spacings 250–267 MHz, **coefficient of variation 3%**.
-`stub_long` reproduces the same first three minima before diverging where its
-longer stub starts resonating, so this is the shared main line measured twice.
+An earlier revision of this document claimed `stub_short` gave "a solid
+measurement of v/L = 514 MHz·m" from its resonance comb (spacings 250–267 MHz,
+CV 3%), and inferred a 335 mm trace. **Reading the Gerber shows that was wrong.**
 
-That is a solid measurement of **v / L = 2·Δf = 514 MHz·m**. Turning it into
-`eps_eff` needs one number the repo does not state: the **physical trace
-length**. What each hypothesis implies:
+`si-simulation-test-board-F_Cu.gbr` for `stub_short` contains exactly four
+drawn segments, all with a 0.185 mm circular aperture:
 
-| assumption | eps_eff | implied trace length |
-|---|---|---|
-| this solver (w = 0.20 mm) | 3.03 | **335 mm** |
-| Hammerstad | 3.15 | 329 mm |
-| bulk eps_r, upper bound | 4.18 | 285 mm |
-| vacuum, lower bound | 1.00 | 583 mm |
+| segment | length |
+|---|---|
+| main line, straight | **37.60 mm** |
+| stub, three segments | 1.98 + 1.58 + 4.78 = **8.34 mm** |
 
-So the loop closes the moment someone supplies L. A meandered 335 mm trace is
-entirely plausible on a board this size, but "plausible" is not a measurement,
-and the solver cannot be used to infer the length and then be validated by it.
+So the trace is **37.6 mm**, not 335 mm. A 37.6 mm line at eps_eff ≈ 3 resonates
+with a spacing of `v/2L` ≈ **2.3 GHz** — an order of magnitude above the
+observed 257 MHz. Conversely, forcing L = 37.6 mm onto the measured comb gives
+v = 0.064 c, i.e. eps_eff ≈ 243, which is not a PCB.
 
-**To close it:** extract the main-line length from the board's Gerbers or KiCad
-source (both are in the repo) and compare against 335 mm. Anyone holding the
-board can settle it in a minute.
+The 257 MHz comb therefore belongs to something else in the measurement chain —
+a ~40 cm coax pigtail at 0.66 c gives 250–260 MHz spacing almost exactly. **It
+was measuring the test fixture.**
+
+The lesson is the one this project keeps re-learning: a clean, repeatable,
+low-variance signal (CV 3%, reproduced across two boards) is not evidence that
+it is the signal you think it is. The comb was real; the attribution was not.
+What settled it was an independent source of the same quantity — the Gerber —
+disagreeing by a factor of nine.
+
+Useful residue: the geometry IS now known — **w = 0.185 mm, main line 37.6 mm,
+stub 8.34 mm** — so if a future measurement resolves the ~2.3 GHz region
+cleanly, the comparison can be made properly.
 
 ### Searching for a better open dataset — none found
 
