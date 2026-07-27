@@ -83,9 +83,34 @@ struct Rlgc {
     }
     // characteristic impedance of line i with the others grounded
     double z0(size_t i) const { return std::sqrt(at(L, i, i) / at(C, i, i)); }
+    // NOTE: this is the velocity of line i with the others GROUNDED, not a
+    // modal velocity. For a coupled pair the signal travels as a mixture of
+    // the even and odd modes, and neither of them moves at this speed — use
+    // v_even()/v_odd() for anything a user will read.
     double velocity(size_t i) const {
         return 1.0 / std::sqrt(at(L, i, i) * at(C, i, i));
     }
+
+    // ---- even/odd modes of a symmetric pair ----
+    // The two eigenmodes of a two-line system: both lines driven together
+    // (even) and in opposition (odd). These are what actually propagate.
+    // In a HOMOGENEOUS medium L*C = mu0 eps0 eps_r * I makes both mode
+    // velocities exactly c0/sqrt(eps_r); in mixed media they differ, and that
+    // difference IS forward crosstalk.
+    void require_pair(const char* what) const {
+        if (n != 2)
+            throw std::invalid_argument(
+                std::string(what) + ": even/odd modes are defined for a pair of "
+                "lines, and this system has " + std::to_string(n));
+    }
+    double l_even() const { require_pair("l_even"); return at(L, 0, 0) + at(L, 0, 1); }
+    double l_odd() const { require_pair("l_odd"); return at(L, 0, 0) - at(L, 0, 1); }
+    double c_even() const { require_pair("c_even"); return at(C, 0, 0) + at(C, 0, 1); }
+    double c_odd() const { require_pair("c_odd"); return at(C, 0, 0) - at(C, 0, 1); }
+    double z_even() const { return std::sqrt(l_even() / c_even()); }
+    double z_odd() const { return std::sqrt(l_odd() / c_odd()); }
+    double v_even() const { return 1.0 / std::sqrt(l_even() * c_even()); }
+    double v_odd() const { return 1.0 / std::sqrt(l_odd() * c_odd()); }
     // Backward (near-end) coupling coefficient, Paul eq. 5: the average of the
     // normalised mutual inductance and mutual capacitance, quartered.
     double kb(size_t i, size_t j) const {

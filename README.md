@@ -49,6 +49,24 @@ cmake --build build -j
 ./build/faraday_cli board.xml --stackup default-4layer
 ```
 
+## The bench — field solve and transient, in the browser
+
+Any coupled-run finding offers **Solve this cross-section**. That opens a 2D
+boundary-element extraction of the actual geometry and a transient of the coupled pair,
+both running in the page:
+
+- the **field** of the real cross-section, computed in closed form from the panel charges
+  (no mesh, and the reference plane is exact by images rather than truncated);
+- **RLGC** — Z₀, Z even/odd, ε_eff, delay, mutual L and C, backward coupling;
+- the **victim's noise waveform**, NEXT and FEXT, against its receiver's threshold;
+- a **verdict in millivolts** against the DC input margin of a named logic family, and
+  the separation that would bring it back under budget.
+
+Extraction plus transient is a few milliseconds, so the sliders — separation, edge rate,
+coupled length, swing — re-solve the physics as they move. See
+[docs/browser-field-tier.md](docs/browser-field-tier.md) for the formulation, the
+validation table, and the modelling limits.
+
 ## Stackup policy
 
 Z₀ and coupling depend on the stackup. If the board file carries none, Faraday **refuses** rather
@@ -59,7 +77,10 @@ stackup card (GUI). Every report states the stackup it used.
 
 Hammerstad–Jensen microstrip synthesis; Cohn symmetric stripline; Johnson & Graham
 (*High-Speed Digital Design*) coupling estimate k = 1/(1+(s/h)²) with the saturated-NEXT bound.
-Formulas are cited at the point of use and pinned by tests against published values.
+The field tier follows Nabors & White's FastCap formulation (IEEE TCAD 1991) in 2D, and
+Paul's *Multiconductor Transmission Lines* for L = μ₀ε₀C₀⁻¹ and the backward-coupling
+coefficient. Formulas are cited at the point of use and pinned by tests against published
+values — including the exact identity L·C = μ₀ε₀ε_r·I, which holds to 2.6e-16.
 
 ## License
 

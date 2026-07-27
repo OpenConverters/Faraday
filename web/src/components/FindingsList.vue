@@ -7,7 +7,7 @@ const props = defineProps({
   hiddenRules: { type: Set, default: () => new Set() },
   total: { type: Number, default: 0 },
 })
-const emit = defineEmits(['select', 'toggleRule'])
+const emit = defineEmits(['select', 'toggleRule', 'bench'])
 
 const netName = id =>
   props.report.board.nets.find(n => n.id === id)?.name || (id >= 0 ? `net ${id}` : '')
@@ -53,6 +53,10 @@ const netName = id =>
             <span class="tag">{{ f.confidence }}</span>
             <span v-if="f.minSepMm < 1e29 && f.minSepMm > 0" class="tag">min gap {{ f.minSepMm.toFixed(2) }} mm</span>
           </p>
+          <button v-if="f.solve" class="bench" :data-testid="`bench-${f.id}`"
+                  @click.stop="emit('bench', f.id)">
+            Solve this cross-section →
+          </button>
         </div>
       </li>
     </ol>
@@ -73,6 +77,12 @@ const netName = id =>
   display: flex; align-items: baseline; gap: 8px;
 }
 .count { font-family: var(--mono); font-size: 13px; color: var(--copper); }
+.bench {
+  margin-top: 8px; width: 100%; text-align: left;
+  border: 1px solid var(--copper); border-radius: 4px;
+  padding: 6px 10px; font-size: 12.5px; color: var(--copper);
+}
+.bench:hover { background: var(--copper); color: var(--bare-fr4); }
 .of { font-family: var(--mono); font-size: 11px; color: var(--tin); letter-spacing: 0; }
 
 .filters { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 14px 10px; }

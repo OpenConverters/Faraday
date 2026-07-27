@@ -2,6 +2,7 @@
 import { ref, computed, onMounted } from 'vue'
 import BoardView from './components/BoardView.vue'
 import FindingsList from './components/FindingsList.vue'
+import BenchPanel from './components/BenchPanel.vue'
 
 const engine = ref(null)
 const boardText = ref('')
@@ -67,6 +68,16 @@ const ruleCounts = computed(() => {
 })
 const visibleFindings = computed(() =>
   findings.value.filter(f => !hiddenRules.value.has(f.rule)))
+// The bench: the deep tier, opened on one finding. Only findings that carry a
+// cross-section can be solved — a run with no reference plane has no
+// cross-section, and the list says so rather than offering a dead button.
+const benchId = ref('')
+const benchFinding = computed(() =>
+  findings.value.find(f => f.id === benchId.value && f.solve) ?? null)
+const netName = id =>
+  report.value?.board.nets.find(n => n.id === id)?.name || (id >= 0 ? `net ${id}` : '')
+const layerName = cu => report.value?.board.copperNames?.[cu] ?? `layer ${cu}`
+
 function toggleRule(rule) {
   const s = new Set(hiddenRules.value)
   s.has(rule) ? s.delete(rule) : s.add(rule)
@@ -112,8 +123,14 @@ function toggleRule(rule) {
       <FindingsList :findings="visibleFindings" :report="report" :selected-id="selectedId"
                     :rules="ruleCounts" :hidden-rules="hiddenRules" :total="findings.length"
                     @select="id => selectedId = selectedId === id ? '' : id"
-                    @toggle-rule="toggleRule" />
+                    @toggle-rule="toggleRule"
+                    @bench="id => benchId = id" />
     </main>
+
+    <BenchPanel v-if="benchFinding && engine" :engine="engine" :finding="benchFinding"
+                :title-a="netName(benchFinding.netA)" :title-b="netName(benchFinding.netB)"
+                :layer="layerName(benchFinding.cuA)"
+                @close="benchId = ''" />
 
     <div v-else-if="!needStackup" class="empty" :class="{ over: dragOver }">
       <div class="board-ghost" aria-hidden="true" />

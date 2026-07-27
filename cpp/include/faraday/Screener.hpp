@@ -84,6 +84,12 @@ struct Finding {
     int net_a = -1, net_b = -1;
     int cu_a = -1, cu_b = -1;
     FindingGeom geom;
+    // Everything the field solver needs to rebuild this pair's cross-section.
+    // Without it the deep tier would have to be re-parameterised by hand,
+    // which is exactly the transcription step a tool like this exists to
+    // remove. Absent when the layer has no reference plane, because then
+    // there is no cross-section to solve.
+    std::optional<nlohmann::json> solve;
 };
 
 // Per-copper-layer derived model: plane classification + reference geometry.
@@ -303,6 +309,59 @@ class Screener {
                 {"diffPairsRecognized", diff_pairs_recognized_},
                 {"switchNodes", sw},
                 {"polygonOnlyNets", polyonly}};
+    }
+
+    // The cross-section a coupled pair actually presents, in the form the
+    // field solver takes. This is the bridge between the two tiers: the
+    // screening pass already knows the widths, the separation, which layers
+    // are involved and where their reference planes are, so the deep solve
+    // should never have to be told any of it again.
+    //
+    // nullopt when the layer has no reference plane — there is then no
+    // cross-section to solve, and inventing a height would be worse than
+    // saying so.
+    std::optional<nlohmann::json> cross_section_for(int cu_a, int cu_b,
+                                                    double w_a, double w_b,
+                                                    double sep_mm,
+                                                    double len_mm) const {
+        const LayerModel& lm = layers_[cu_a];
+        const auto& cu_idx = b_.stackup.copper_indices();
+        const double t = b_.stackup.layers[cu_idx[cu_a]].thickness_mm;
+        if (w_a <= 0 || w_b <= 0) return std::nullopt;
+        nlohmann::json j;
+        j["w1Mm"] = w_a;
+        j["w2Mm"] = w_b;
+        j["tMm"] = t;
+        j["lengthMm"] = len_mm;
+        j["gapMm"] = std::max(sep_mm, 0.01);
+
+        if (cu_a != cu_b) {                       // broadside: adjacent layers
+            double hv = 0, eps = 0;
+            b_.stackup.dielectric_between(std::min(cu_a, cu_b), std::max(cu_a, cu_b),
+                                          hv, eps);
+            const double h = ref_height(cu_a);
+            if (!(h > 0) || !(hv > 0)) return std::nullopt;
+            j["mode"] = "broadside";
+            j["hMm"] = h;
+            j["hvMm"] = hv;
+            j["epsR"] = eps;
+            j["lateralMm"] = 0.0;
+            return j;
+        }
+        const bool up = lm.ref_up >= 0, dn = lm.ref_dn >= 0;
+        if (up && dn) {                           // buried between two planes
+            const double b = lm.h_up + lm.h_dn + t;
+            j["mode"] = "stripline";
+            j["bMm"] = b;
+            j["epsR"] = (lm.eps_up * lm.h_up + lm.eps_dn * lm.h_dn) /
+                        std::max(lm.h_up + lm.h_dn, 1e-9);
+            return j;
+        }
+        if (!up && !dn) return std::nullopt;
+        j["mode"] = "microstrip";
+        j["hMm"] = up ? lm.h_up : lm.h_dn;
+        j["epsR"] = up ? lm.eps_up : lm.eps_dn;
+        return j;
     }
 
     // Z0 estimate for a trace of width w on copper layer cu — for tooltips.
@@ -695,6 +754,7 @@ class Screener {
         double len = 0, len_x_d = 0;      // for length-weighted mean separation
         double min_edge_sep = 1e30;
         double max_w = 0;
+        double w_a = 0, w_b = 0;      // widths at the closest approach
         double worst_k = 0;
         bool have_h = false;
         bool involves_pour = false;   // one side is a copper-pour boundary
@@ -777,8 +837,9 @@ class Screener {
             PairAccum& acc = pairs[key];
             acc.len += ov.length;
             acc.len_x_d += ov.length * ov.center_d;
-            acc.min_edge_sep = std::min(acc.min_edge_sep,
-                                        ov.center_d - 0.5 * (w_a + w_b));
+            const double sep = ov.center_d - 0.5 * (w_a + w_b);
+            if (sep < acc.min_edge_sep) { acc.w_a = w_a; acc.w_b = w_b; }
+            acc.min_edge_sep = std::min(acc.min_edge_sep, sep);
             acc.max_w = std::max({acc.max_w, w_a, w_b});
             acc.worst_k = std::max(acc.worst_k, k);
             acc.have_h = acc.have_h || have_h;
@@ -883,6 +944,8 @@ class Screener {
             f.coupled_len_mm = acc.len;
             f.min_sep_mm = acc.min_edge_sep;
             f.geom = std::move(acc.geom);
+            f.solve = cross_section_for(key.cu_a, key.cu_b, acc.w_a, acc.w_b,
+                                        acc.min_edge_sep, acc.len);
             std::string kind = acc.involves_pour ? "pour-edge"
                              : broadside ? "broadside" : "edge";
             std::string where = broadside
@@ -1435,6 +1498,7 @@ inline nlohmann::json to_json(const Finding& f) {
                      {"cuA", f.cu_a},
                      {"cuB", f.cu_b}};
     if (f.next_db) j["nextDb"] = *f.next_db;
+    if (f.solve) j["solve"] = *f.solve;
     nlohmann::json lines = nlohmann::json::array();
     for (const auto& s : f.geom.lines)
         lines.push_back({{"cu", s.cu}, {"x1", s.x1}, {"y1", s.y1},

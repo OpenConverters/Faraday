@@ -3,11 +3,18 @@
 // built-in stackup ("" = use the board file's own; the importer refuses when
 // neither exists — the GUI surfaces that as the stackup card).
 //
+// solvePair() runs the deep tier on ONE cross-section: a 2D boundary-element
+// field extraction followed by a transient of the coupled pair. Both are
+// milliseconds, and both run HERE, in the page, on the same principle as the
+// screener — the board never leaves the machine and there is no server to be
+// down. It is the same code path the native CLI uses.
+//
 // Errors are returned as {"error": "..."} JSON rather than thrown across the
 // embind boundary, so the UI can show the exact refusal message.
 
 #include <emscripten/bind.h>
 
+#include <faraday/Bench.hpp>
 #include <faraday/Import.hpp>
 #include <faraday/Screener.hpp>
 
@@ -26,9 +33,24 @@ static std::string analyze(std::string board_text, std::string stackup_name) {
     }
 }
 
-static std::string version() { return "0.1.0"; }
+static std::string solve_pair(std::string request_json) {
+    try {
+        const nlohmann::json j = nlohmann::json::parse(request_json);
+        return faraday::bench::run(faraday::bench::request_from_json(j)).dump();
+    } catch (const std::exception& e) {
+        return nlohmann::json{{"error", e.what()}}.dump();
+    }
+}
+
+static std::string logic_families() {
+    return faraday::bench::families_json().dump();
+}
+
+static std::string version() { return "0.2.0"; }
 
 EMSCRIPTEN_BINDINGS(faraday) {
     emscripten::function("analyze", &analyze);
+    emscripten::function("solvePair", &solve_pair);
+    emscripten::function("logicFamilies", &logic_families);
     emscripten::function("version", &version);
 }
