@@ -84,6 +84,24 @@ inline double next_sat_broadside(double d_lat, double h_v) {
     return KB_SAT / (1.0 + r * r);
 }
 
+// ---- Resonance of an open-ended structure ----
+// An open stub of physical length L is a quarter-wave resonator at
+//   f = c / (4 L sqrt(eps_eff))
+// where it transforms the open into a short and the structure radiates /
+// loads the driver hardest. Length in mm, result in Hz.
+inline constexpr double C0 = 299792458.0;  // m/s
+
+inline double quarter_wave_hz(double len_mm, double eps_eff) {
+    if (len_mm <= 0 || eps_eff < 1)
+        throw std::invalid_argument("quarter_wave_hz: len > 0, eps_eff >= 1 required");
+    return C0 / (4.0 * (len_mm * 1e-3) * std::sqrt(eps_eff));
+}
+
+// Effective permittivity seen by a via barrel passing through the board: the
+// barrel is fully embedded in the laminate, so it is the bulk eps_r, not the
+// microstrip mixed-media value.
+inline double via_eps_eff(double eps_r) { return eps_r; }
+
 inline double to_db(double ratio) {
     if (ratio <= 0) throw std::invalid_argument("to_db: ratio must be > 0");
     return 20.0 * std::log10(ratio);

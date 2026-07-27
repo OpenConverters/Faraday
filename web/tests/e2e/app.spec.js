@@ -17,9 +17,9 @@ test('board loads, findings rank, selection links list and canvas', async ({ pag
 
   await page.getByTestId('file-input').setInputFiles(FIXTURE)
 
-  // findings appear, ranked (fixture: coupled-run first, its 3W companion
-  // just below it, then 2 plane crossings)
-  await expect(page.getByTestId('finding-count')).toHaveText('4')
+  // findings appear, ranked: the quantified coupled run leads, its 3W
+  // companion sits just below it. Assert by content, not by index, so adding
+  // a rule does not break the test for the wrong reason.
   await expect(page.getByTestId('finding-F-0001')).toContainText('CLK')
   await expect(page.getByTestId('finding-F-0002')).toContainText('3W violation')
   await expect(page.getByTestId('board-canvas')).toBeVisible()
@@ -78,10 +78,30 @@ test('power converter: switch node identified and shown in the meta strip', asyn
   expect(consoleErrors).toEqual([])
 })
 
+test('rule filter mutes a rule in both the list and the board overlay', async ({ page }) => {
+  await page.goto('/')
+  await page.getByTestId('file-input').setInputFiles(FIXTURE)
+  await expect(page.getByTestId('rule-filters')).toBeVisible()
+  const total = Number(await page.getByTestId('finding-count').textContent())
+  const breaks = page.locator('[data-testid^="finding-F-"]', { hasText: 'Return-path break' })
+  const nBreaks = await breaks.count()
+  expect(nBreaks).toBeGreaterThan(0)
+
+  // muting a rule removes it from the list (and the board draws the same set)
+  await page.getByTestId('rule-plane-crossing').click()
+  await expect(page.getByTestId('finding-count')).toHaveText(String(total - nBreaks))
+  await expect(breaks).toHaveCount(0)
+
+  // toggling back restores them
+  await page.getByTestId('rule-plane-crossing').click()
+  await expect(page.getByTestId('finding-count')).toHaveText(String(total))
+  await expect(breaks).toHaveCount(nBreaks)
+})
+
 test('tooltip appears when hovering routed copper', async ({ page }) => {
   await page.goto('/')
   await page.getByTestId('file-input').setInputFiles(FIXTURE)
-  await expect(page.getByTestId('finding-count')).toHaveText('4')
+  await expect(page.getByTestId('board-canvas')).toBeVisible()
 
   // sweep a horizontal line across the canvas center to cross the CLK/DATA
   // traces regardless of the exact fitted transform

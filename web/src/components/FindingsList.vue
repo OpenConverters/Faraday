@@ -3,8 +3,11 @@ const props = defineProps({
   findings: { type: Array, required: true },
   report: { type: Object, required: true },
   selectedId: { type: String, default: '' },
+  rules: { type: Array, default: () => [] },
+  hiddenRules: { type: Set, default: () => new Set() },
+  total: { type: Number, default: 0 },
 })
-const emit = defineEmits(['select'])
+const emit = defineEmits(['select', 'toggleRule'])
 
 const netName = id =>
   props.report.board.nets.find(n => n.id === id)?.name || (id >= 0 ? `net ${id}` : '')
@@ -15,7 +18,15 @@ const netName = id =>
     <h2 class="ptitle">
       Findings
       <span class="count" data-testid="finding-count">{{ findings.length }}</span>
+      <span v-if="findings.length !== total" class="of">of {{ total }}</span>
     </h2>
+    <div v-if="rules.length > 1" class="filters" data-testid="rule-filters">
+      <button v-for="[rule, n] in rules" :key="rule" class="rchip"
+              :class="{ off: hiddenRules.has(rule) }"
+              :data-testid="`rule-${rule}`"
+              :aria-pressed="!hiddenRules.has(rule)"
+              @click="emit('toggleRule', rule)">{{ rule }} <b>{{ n }}</b></button>
+    </div>
     <p v-if="!findings.length" class="clean">
       Nothing flagged at the screening tier. That is a rank, not a guarantee —
       review clock and switching nets by hand.
@@ -62,6 +73,18 @@ const netName = id =>
   display: flex; align-items: baseline; gap: 8px;
 }
 .count { font-family: var(--mono); font-size: 13px; color: var(--copper); }
+.of { font-family: var(--mono); font-size: 11px; color: var(--tin); letter-spacing: 0; }
+
+.filters { display: flex; flex-wrap: wrap; gap: 5px; padding: 0 14px 10px; }
+.rchip {
+  font-family: var(--mono); font-size: 10.5px;
+  padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--resin-edge); color: var(--tin);
+}
+.rchip b { color: var(--silk); font-weight: 500; }
+.rchip:hover { border-color: var(--copper); }
+.rchip.off { opacity: 0.4; border-style: dashed; }
+.rchip.off b { color: var(--tin); }
 .clean { padding: 4px 14px; color: var(--tin); font-size: 13px; }
 
 .list { list-style: none; }

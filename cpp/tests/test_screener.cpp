@@ -421,6 +421,131 @@ TEST_CASE("screener: finding cap gives every rule a fair share",
     }
 }
 
+TEST_CASE("tline: quarter-wave resonance of an open stub", "[tline]") {
+    // 1.5 mm stub in eps_r 4.5 laminate: c/(4*1.5e-3*sqrt(4.5)) = 23.6 GHz
+    CHECK(tline::quarter_wave_hz(1.5, 4.5) / 1e9 == Approx(23.55).margin(0.1));
+    // free space, 75 mm -> 1 GHz
+    CHECK(tline::quarter_wave_hz(74.95, 1.0) / 1e9 == Approx(1.0).margin(0.01));
+    // longer stub resonates lower
+    CHECK(tline::quarter_wave_hz(3.0, 4.5) < tline::quarter_wave_hz(1.5, 4.5));
+    CHECK_THROWS(tline::quarter_wave_hz(0.0, 4.5));
+}
+
+TEST_CASE("screener: via stubs aggregate per span and state the frequency",
+          "[screener][stubs]") {
+    // 4-layer: net routed only F.Cu->In1.Cu but stitched with through vias.
+    // The unused In1..B.Cu barrel is the stub; three such vias must produce
+    // ONE aggregated finding, not three.
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (1 "In1.Cu" signal) (2 "In2.Cu" power) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SIG") (net 2 "GND")
+      (segment (start 5 10) (end 10 10) (width 0.3) (layer "F.Cu") (net 1))
+      (segment (start 10 10) (end 15 10) (width 0.3) (layer "In1.Cu") (net 1))
+      (segment (start 5 14) (end 10 14) (width 0.3) (layer "F.Cu") (net 1))
+      (segment (start 10 14) (end 15 14) (width 0.3) (layer "In1.Cu") (net 1))
+      (segment (start 5 18) (end 10 18) (width 0.3) (layer "F.Cu") (net 1))
+      (segment (start 10 18) (end 15 18) (width 0.3) (layer "In1.Cu") (net 1))
+      (via (at 10 10) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
+      (via (at 10 14) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
+      (via (at 10 18) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
+      (zone (net 2) (net_name "GND") (layer "In2.Cu")
+        (filled_polygon (layer "In2.Cu") (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 30))))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-4layer"));
+    nlohmann::json report = analyze_board(b);
+    int n = 0;
+    const nlohmann::json* vs = nullptr;
+    for (const auto& f : report["findings"])
+        if (f["rule"] == "via-stub") { ++n; vs = &f; }
+    REQUIRE(n == 1);                                  // aggregated, not 3 rows
+    CHECK((*vs)["title"].get<std::string>().find("3 via(s)") != std::string::npos);
+    CHECK((*vs)["detail"].get<std::string>().find("GHz") != std::string::npos);
+    CHECK((*vs)["coupledLenMm"].get<double>() > 1.0);  // In1..B.Cu barrel
+    CHECK((*vs)["geom"]["markers"].size() == 3);       // every via still shown
+    // relevance is the reader's call: the rule never claims a band matters
+    CHECK((*vs)["detail"].get<std::string>().find("only if your edge rates")
+          != std::string::npos);
+}
+
+TEST_CASE("screener: a fully-used via barrel is not a stub", "[screener][stubs]") {
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SIG") (net 2 "GND")
+      (segment (start 5 10) (end 10 10) (width 0.3) (layer "F.Cu") (net 1))
+      (segment (start 10 10) (end 15 10) (width 0.3) (layer "B.Cu") (net 1))
+      (via (at 10 10) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
+      (zone (net 2) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 30))))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
+    nlohmann::json report = analyze_board(b);
+    CHECK(find_rule(report["findings"], "via-stub") == nullptr);
+}
+
+TEST_CASE("screener: dangling track end is an open stub; connected ends are not",
+          "[screener][stubs]") {
+    // SIG runs pad -> via (fine). STUB ends in mid-air after 8 mm.
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SIG") (net 2 "STUB") (net 3 "GND")
+      (segment (start 5 10) (end 15 10) (width 0.3) (layer "F.Cu") (net 1))
+      (segment (start 15 10) (end 15 20) (width 0.3) (layer "F.Cu") (net 1))
+      (segment (start 5 25) (end 13 25) (width 0.3) (layer "F.Cu") (net 2))
+      (via (at 15 20) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
+      (footprint "R" (layer "F.Cu") (at 5 10) (property "Reference" "R1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SIG")))
+      (footprint "R" (layer "F.Cu") (at 5 25) (property "Reference" "R2")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 2 "STUB")))
+      (zone (net 3) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 30))))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
+    nlohmann::json report = analyze_board(b);
+    int n = 0;
+    const nlohmann::json* d = nullptr;
+    for (const auto& f : report["findings"])
+        if (f["rule"] == "dangling-stub") { ++n; d = &f; }
+    REQUIRE(n == 1);                       // only STUB; SIG is pad->via anchored
+    CHECK((*d)["netA"] == 2);
+    CHECK((*d)["coupledLenMm"].get<double>() == Approx(8.0));
+    CHECK((*d)["title"].get<std::string>().find("MHz") != std::string::npos);
+    CHECK((*d)["geom"]["markers"].size() == 1);   // the open end is marked
+}
+
+TEST_CASE("screener: decoupling cap far from its IC pin is flagged; near is not",
+          "[screener][decoupling]") {
+    auto board = [](double cap_x) {
+        std::string txt = R"((kicad_pcb
+          (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+          (net 0 "") (net 1 "VDD") (net 2 "GND")
+          (segment (start 5 10) (end 40 10) (width 0.4) (layer "F.Cu") (net 1))
+          (footprint "U" (layer "F.Cu") (at 5 10) (property "Reference" "U1")
+            (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "VDD"))
+            (pad "2" smd rect (at 0 2) (size 1 1) (layers "F.Cu") (net 2 "GND")))
+          (footprint "C" (layer "F.Cu") (at )" + std::to_string(cap_x) + R"( 10)
+            (property "Reference" "C1")
+            (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "VDD"))
+            (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net 2 "GND")))
+          (zone (net 2) (net_name "GND") (layer "B.Cu")
+            (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 50 0) (xy 50 30) (xy 0 30))))
+        ))";
+        return analyze_board(import_kicad(txt, builtin_stackup("default-2layer")));
+    };
+    // NOTE: hold the reports in named values — find_rule returns a pointer
+    // INTO the json, so passing a temporary dangles.
+    const nlohmann::json near_report = board(7.0);
+    const nlohmann::json far_report = board(23.0);
+    // 2 mm away: good practice, no finding
+    CHECK(find_rule(near_report["findings"], "decoupling-distance") == nullptr);
+    // 18 mm away: flagged, and it names both parts
+    const auto* far = find_rule(far_report["findings"], "decoupling-distance");
+    REQUIRE(far != nullptr);
+    CHECK((*far)["coupledLenMm"].get<double>() == Approx(18.0).margin(0.5));
+    CHECK((*far)["title"].get<std::string>().find("C1") != std::string::npos);
+    CHECK((*far)["title"].get<std::string>().find("U1") != std::string::npos);
+    CHECK((*far)["confidence"] == "heuristic");
+}
+
 TEST_CASE("screener: zone-only routed nets are reported as a blind spot",
           "[screener][coverage]") {
     // NETPOLY is routed purely as a polygon — invisible to segment coupling

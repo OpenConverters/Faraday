@@ -3,6 +3,8 @@ import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 
 const props = defineProps({
   report: { type: Object, required: true },
+  // already filtered by the rule chips — the board shows exactly what the list shows
+  findings: { type: Array, required: true },
   selectedId: { type: String, default: '' },
 })
 const emit = defineEmits(['select'])
@@ -15,7 +17,7 @@ const overlaysOn = ref(true)
 const hover = ref(null) // { x, y, kind, lines: [...] , findingId? }
 
 const board = computed(() => props.report.board)
-const findings = computed(() => props.report.findings)
+const findings = computed(() => props.findings)
 
 const HEAT = { high: '#ff5d5d', medium: '#ffb454', low: '#58c79a', info: '#9db4ad' }
 // intentional coupling and identified aggressors read as their own thing, not
@@ -303,6 +305,7 @@ watch(() => props.selectedId, id => {
   else draw()
 })
 watch([layerVis, overlaysOn], () => draw())
+watch(() => props.findings, () => draw())
 </script>
 
 <template>

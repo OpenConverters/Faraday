@@ -56,6 +56,24 @@ function chooseStackup(name) {
 
 const meta = computed(() => report.value?.meta ?? null)
 const findings = computed(() => report.value?.findings ?? [])
+
+// Rule filter: dense boards render 200 overlapping overlays, so let the reader
+// mute whole rules. Muting hides them from BOTH the list and the board.
+const hiddenRules = ref(new Set())
+const ruleCounts = computed(() => {
+  const m = new Map()
+  for (const f of findings.value) m.set(f.rule, (m.get(f.rule) ?? 0) + 1)
+  return [...m.entries()].sort((a, b) => b[1] - a[1])
+})
+const visibleFindings = computed(() =>
+  findings.value.filter(f => !hiddenRules.value.has(f.rule)))
+function toggleRule(rule) {
+  const s = new Set(hiddenRules.value)
+  s.has(rule) ? s.delete(rule) : s.add(rule)
+  hiddenRules.value = s
+  if (selectedId.value && !visibleFindings.value.some(f => f.id === selectedId.value))
+    selectedId.value = ''
+}
 </script>
 
 <template>
@@ -89,10 +107,12 @@ const findings = computed(() => report.value?.findings ?? [])
     </div>
 
     <main class="work" v-if="report">
-      <BoardView :report="report" :selected-id="selectedId"
+      <BoardView :report="report" :findings="visibleFindings" :selected-id="selectedId"
                  @select="id => selectedId = id" />
-      <FindingsList :findings="findings" :report="report" :selected-id="selectedId"
-                    @select="id => selectedId = selectedId === id ? '' : id" />
+      <FindingsList :findings="visibleFindings" :report="report" :selected-id="selectedId"
+                    :rules="ruleCounts" :hidden-rules="hiddenRules" :total="findings.length"
+                    @select="id => selectedId = selectedId === id ? '' : id"
+                    @toggle-rule="toggleRule" />
     </main>
 
     <div v-else-if="!needStackup" class="empty" :class="{ over: dragOver }">

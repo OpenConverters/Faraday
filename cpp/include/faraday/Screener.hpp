@@ -22,6 +22,12 @@
 //                      motor is the inductance); copper extent is reported
 //   commutation-loop   the input-cap -> switch pair -> return loop whose
 //                      ENCLOSED AREA dominates converter radiated emissions
+//   via-stub           via barrel longer than the layers the net uses; the
+//                      unused length is a lambda/4 open-stub resonator
+//   dangling-stub      a track end reaching no pad, via or track — an open
+//                      stub that radiates and loads its driver
+//   decoupling-distance  a rail<->pour capacitor too far from the IC pin it
+//                      serves: the loop is then track/via inductance, not C
 //   no-reference-plane copper layer carrying signals with no plane to return on
 //   coverage notes     approximated arcs, missing outline, dropped findings,
 //                      zone-only routed nets invisible to segment coupling
@@ -49,6 +55,9 @@ struct ScreenerParams {
     double report_floor_db = -40.0;  // coupled-run findings below this are dropped (counted)
     double plane_coverage_min = 0.5; // zone area / board area to call a layer a plane
     int sw_max_pads = 12;            // above this a L+Q net is a rail, not a switch node
+    double min_via_stub_mm = 0.3;    // ignore stubs shorter than this
+    double min_dangling_mm = 1.0;    // ignore dangling ends shorter than this
+    double decoupling_far_mm = 6.0;  // beyond this a decoupling cap is "reaching"
     size_t max_findings = 200;       // hard cap on emitted findings (dropped count reported)
 };
 
@@ -200,6 +209,9 @@ class Screener {
         find_commutation_loops(out);
         find_coupled_runs(out);
         find_plane_crossings(out);
+        find_via_stubs(out);
+        find_dangling_stubs(out);
+        find_decoupling(out);
         // rank: severity desc, then coupled length desc
         std::sort(out.begin(), out.end(), [](const Finding& x, const Finding& y) {
             if (x.severity != y.severity) return x.severity > y.severity;
@@ -831,6 +843,236 @@ class Screener {
                 w3.geom = f.geom;  // same overlay
                 out.push_back(std::move(w3));
             }
+            out.push_back(std::move(f));
+        }
+    }
+
+    // ---- rule: via stubs ----
+    // A via spanning more layers than the net actually uses leaves an unused
+    // barrel: an open stub that resonates at lambda/4 and dumps energy there.
+    // "Used" layers are those where the same net has copper at the via site.
+    void find_via_stubs(std::vector<Finding>& out) {
+        auto cu_z = b_.stackup.copper_z();
+        struct Agg {
+            int count = 0;
+            double min_stub = 1e30, max_stub = 0, worst_stub = 0;
+            int worst_net = -1;
+            std::vector<Point> pts;
+        };
+        std::map<std::pair<int, int>, Agg> agg;
+        for (const auto& v : b_.vias) {
+            if (v.net <= 0 || is_pour_net(v.net)) continue;
+            if (v.cu_to <= v.cu_from) continue;
+            double r = v.size * 0.5 + 0.05;  // touch tolerance
+            int lo = 1 << 30, hi = -1;
+            for (const auto& s : b_.segments) {
+                if (s.net != v.net || s.cu < v.cu_from || s.cu > v.cu_to) continue;
+                if (std::min(std::hypot(s.x1 - v.x, s.y1 - v.y),
+                             std::hypot(s.x2 - v.x, s.y2 - v.y)) > r) continue;
+                lo = std::min(lo, s.cu); hi = std::max(hi, s.cu);
+            }
+            for (const auto& p : b_.pads) {
+                if (p.net != v.net) continue;
+                if (std::hypot(p.x - v.x, p.y - v.y) > r) continue;
+                int pc = p.through_hole ? v.cu_from : p.cu;
+                if (pc < v.cu_from || pc > v.cu_to) continue;
+                lo = std::min(lo, pc); hi = std::max(hi, pc);
+                if (p.through_hole) hi = std::max(hi, v.cu_to);
+            }
+            if (hi < 0 || lo > hi) continue;                 // nothing lands here
+            double stub = 0.0;
+            for (int c = v.cu_from; c < lo; ++c) stub += cu_z[c + 1] - cu_z[c];
+            for (int c = hi; c < v.cu_to; ++c) stub += cu_z[c + 1] - cu_z[c];
+            if (stub < p_.min_via_stub_mm) continue;
+            Agg& a = agg[{v.cu_from, v.cu_to}];
+            ++a.count;
+            a.min_stub = std::min(a.min_stub, stub);
+            a.max_stub = std::max(a.max_stub, stub);
+            if (stub > a.worst_stub) { a.worst_stub = stub; a.worst_net = v.net; }
+            if (a.pts.size() < 200) a.pts.push_back({v.x, v.y});
+        }
+
+        // One finding per via SPAN, not per via. Every through-via used for a
+        // shallow layer change on a 4-layer board leaves the same stub — 45
+        // identical rows (seen on OrangeCrab/VESC/Glasgow) is noise, one line
+        // naming the count and the resonance is a review comment.
+        for (auto& [span, a] : agg) {
+            auto [from, to] = span;
+            double h, eps;
+            b_.stackup.dielectric_between(from, to, h, eps);
+            double f_lo = tline::quarter_wave_hz(a.max_stub, tline::via_eps_eff(eps)) / 1e9;
+            double f_hi = tline::quarter_wave_hz(a.min_stub, tline::via_eps_eff(eps)) / 1e9;
+            Finding f;
+            f.rule = "via-stub";
+            // geometry only: the fraction of the barrel left unused. Whether
+            // that matters depends on the design's edge rate, which we do not
+            // know — so the frequency is REPORTED and the user judges.
+            double board_h = b_.stackup.copper_z().back();
+            double frac = board_h > 0 ? a.max_stub / board_h : 0.0;
+            f.severity = std::clamp(0.15 + 0.35 * frac, 0.15, 0.5);
+            f.severity_label = f.severity > 0.33 ? "medium" : "low";
+            f.confidence = "exact";
+            f.net_a = a.worst_net;
+            f.cu_a = from;
+            f.cu_b = to;
+            f.coupled_len_mm = a.max_stub;
+            char buf[320];
+            std::snprintf(buf, sizeof buf,
+                          "%d via(s) spanning %s..%s leave %.2f-%.2f mm of unused "
+                          "barrel because the net terminates earlier. Those open "
+                          "stubs are quarter-wave resonators between %.1f and "
+                          "%.1f GHz — a concern only if your edge rates reach "
+                          "that far. Worst: %s.",
+                          a.count, b_.copper_names[from].c_str(),
+                          b_.copper_names[to].c_str(), a.min_stub, a.max_stub,
+                          f_lo, f_hi, b_.net_name(a.worst_net).c_str());
+            f.title = "Via stubs on " + b_.copper_names[from] + ".." +
+                      b_.copper_names[to] + ": " + std::to_string(a.count) +
+                      " via(s), " + std::to_string((int)std::lround(f_lo)) + " GHz";
+            f.detail = buf;
+            f.remediation = "If those frequencies matter for this design, use "
+                            "blind/buried vias or back-drill; otherwise record "
+                            "the decision and move on.";
+            for (const auto& pt : a.pts) f.geom.markers.push_back(pt);
+            out.push_back(std::move(f));
+        }
+    }
+
+    // ---- rule: dangling trace ends (open stubs / accidental antennas) ----
+    void find_dangling_stubs(std::vector<Finding>& out) {
+        // endpoint -> how many pieces of copper of the same net meet there
+        struct Key { int net, cu; long long x, y; };
+        auto key = [](int net, int cu, double x, double y) {
+            return std::make_tuple(net, cu, (long long)std::llround(x * 100),
+                                   (long long)std::llround(y * 100));
+        };
+        std::map<std::tuple<int, int, long long, long long>, int> touch;
+        for (const auto& s : b_.segments) {
+            if (s.net <= 0 || is_pour_net(s.net)) continue;
+            ++touch[key(s.net, s.cu, s.x1, s.y1)];
+            ++touch[key(s.net, s.cu, s.x2, s.y2)];
+        }
+        for (const auto& s : b_.segments) {
+            if (s.net <= 0 || is_pour_net(s.net)) continue;
+            double len = std::hypot(s.x2 - s.x1, s.y2 - s.y1);
+            if (len < p_.min_dangling_mm) continue;
+            for (int end = 0; end < 2; ++end) {
+                double ex = end ? s.x2 : s.x1, ey = end ? s.y2 : s.y1;
+                if (touch[key(s.net, s.cu, ex, ey)] > 1) continue;  // continues
+                bool anchored = false;
+                for (const auto& p : b_.pads)
+                    if (p.net == s.net &&
+                        std::hypot(p.x - ex, p.y - ey) <= std::max(p.w, p.h)) {
+                        anchored = true; break;
+                    }
+                if (!anchored)
+                    for (const auto& v : b_.vias)
+                        if (v.net == s.net && s.cu >= v.cu_from && s.cu <= v.cu_to &&
+                            std::hypot(v.x - ex, v.y - ey) <= v.size) {
+                            anchored = true; break;
+                        }
+                if (anchored) continue;
+                double h = ref_height(s.cu);
+                Finding f;
+                f.rule = "dangling-stub";
+                f.severity = std::clamp(0.25 + len / 60.0, 0.25, 0.8);
+                f.severity_label = f.severity > 0.66 ? "high"
+                                  : f.severity > 0.33 ? "medium" : "low";
+                f.confidence = "exact";
+                f.net_a = s.net;
+                f.cu_a = s.cu;
+                f.coupled_len_mm = len;
+                char buf[240];
+                if (h > 0) {
+                    const LayerModel& lm = layers_[s.cu];
+                    double eps = lm.ref_up >= 0 ? lm.eps_up : lm.eps_dn;
+                    double w = s.width;
+                    double ee = tline::microstrip_eps_eff(w, h, eps);
+                    double f_mhz = tline::quarter_wave_hz(len, ee) / 1e6;
+                    std::snprintf(buf, sizeof buf,
+                                  "A %.1f mm length of %s on %s ends without "
+                                  "reaching a pad, via or another track. An open "
+                                  "stub radiates and loads its driver; this one "
+                                  "is a quarter-wave resonator near %.0f MHz.",
+                                  len, b_.net_name(s.net).c_str(),
+                                  b_.copper_names[s.cu].c_str(), f_mhz);
+                    f.title = "Open stub: " + b_.net_name(s.net) + " (" +
+                              std::to_string((int)std::lround(f_mhz)) + " MHz)";
+                } else {
+                    std::snprintf(buf, sizeof buf,
+                                  "A %.1f mm length of %s on %s ends without "
+                                  "reaching a pad, via or another track.",
+                                  len, b_.net_name(s.net).c_str(),
+                                  b_.copper_names[s.cu].c_str());
+                    f.title = "Open stub: " + b_.net_name(s.net);
+                }
+                f.detail = buf;
+                f.remediation = "Delete the leftover track, or terminate it "
+                                "where it was meant to connect.";
+                f.geom.lines.push_back(s);
+                f.geom.markers.push_back({ex, ey});
+                out.push_back(std::move(f));
+            }
+        }
+    }
+
+    // ---- rule: decoupling capacitor placement (loop inductance) ----
+    // A decoupling cap bridges a rail to a pour. What matters is the LOOP its
+    // current takes to the pin it serves: cap pad -> rail -> IC pad -> device
+    // -> pour -> back. Distance is the proxy the layout controls.
+    void find_decoupling(std::vector<Finding>& out) {
+        struct CapInfo { std::vector<Point> pts; std::set<int> nets; };
+        std::map<std::string, CapInfo> caps;
+        for (const auto& p : b_.pads) {
+            if (ref_prefix(p.component) != "C" || p.net <= 0) continue;
+            caps[p.component].pts.push_back({p.x, p.y});
+            caps[p.component].nets.insert(p.net);
+        }
+        for (auto& [ref, ci] : caps) {
+            int rail = -1;
+            bool on_pour = false;
+            for (int n : ci.nets) {
+                if (is_pour_net(n)) on_pour = true;
+                else rail = n;
+            }
+            if (!on_pour || rail < 0) continue;   // not a decoupling cap
+            // nearest IC pad on that rail
+            double best = 1e30;
+            std::string ic;
+            Point ic_pt{0, 0}, cap_pt{0, 0};
+            for (const auto& p : b_.pads) {
+                if (p.net != rail || ref_prefix(p.component) != "U") continue;
+                for (const auto& cp : ci.pts) {
+                    double d = std::hypot(p.x - cp.x, p.y - cp.y);
+                    if (d < best) { best = d; ic = p.component; ic_pt = {p.x, p.y};
+                                    cap_pt = cp; }
+                }
+            }
+            if (ic.empty() || best > p_.decoupling_far_mm * 4) continue;
+            if (best <= p_.decoupling_far_mm) continue;   // well placed
+            Finding f;
+            f.rule = "decoupling-distance";
+            f.severity = std::clamp(0.2 + (best - p_.decoupling_far_mm) / 25.0,
+                                    0.2, 0.7);
+            f.severity_label = f.severity > 0.33 ? "medium" : "low";
+            f.confidence = "heuristic";
+            f.net_a = rail;
+            f.coupled_len_mm = best;
+            char buf[240];
+            std::snprintf(buf, sizeof buf,
+                          "Decoupling capacitor %s on %s sits %.1f mm from the "
+                          "nearest %s pin on that rail. The supply loop that far "
+                          "out is dominated by track and via inductance, not by "
+                          "the capacitor, so the part stops decoupling well "
+                          "below its self-resonance.",
+                          ref.c_str(), b_.net_name(rail).c_str(), best, ic.c_str());
+            f.title = "Decoupling reach: " + ref + " -> " + ic + " (" +
+                      std::to_string((int)std::lround(best)) + " mm)";
+            f.detail = buf;
+            f.remediation = "Move " + ref + " next to the " + ic +
+                            " pin (ideally on the same side, with its own via "
+                            "pair into the plane).";
+            f.geom.lines.push_back({rail, 0, cap_pt.x, cap_pt.y, ic_pt.x, ic_pt.y, 0.2});
             out.push_back(std::move(f));
         }
     }
