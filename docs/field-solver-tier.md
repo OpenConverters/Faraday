@@ -280,8 +280,28 @@ and the solver cannot be used to infer the length and then be validated by it.
 
 **To close it:** extract the main-line length from the board's Gerbers or KiCad
 source (both are in the repo) and compare against 335 mm. Anyone holding the
-board can settle it in a minute. Until then the status stands: **validated
-against theory and against SPICE to ~1%, not yet against hardware.**
+board can settle it in a minute.
+
+### Searching for a better open dataset — none found
+
+A survey of what is publicly available turned up nothing usable:
+
+* **CMP-28/32** (Wild River Technology / Simberian) is the industry benchmark —
+  FR-408HR, Beatty standards, single-ended and coupled segments, pre-qualified
+  measurements to 50 GHz. Exactly the right artefact, and **commercial**: the
+  board and its measured data are a paid kit.
+* Recent measured-crosstalk literature exists but on the wrong topologies —
+  e.g. a 2025 study of *bent* microstrips behind a *perforated shield*, which is
+  not a clean uniform coupled pair and whose paper text is not machine-readable.
+* No open repository was found carrying measured coupled-line S-parameters
+  together with a fully documented stackup and geometry.
+
+That absence is itself worth recording: **there is no free, geometry-documented,
+measured coupled-line dataset to validate against.** The realistic options are
+therefore (a) the Antmicro trace length, which settles eps_eff only, (b) buying
+into CMP-28, or (c) fabricating a coupon. Status meanwhile: **validated against
+theory, against an exact analytic solution, and against SPICE to ~1% — not
+against hardware.**
 
 ## Calibration of the screening tier — a real finding
 
