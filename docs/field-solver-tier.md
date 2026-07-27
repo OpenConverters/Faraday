@@ -171,6 +171,48 @@ across a 40× span:
 | 1 GHz | 13.95 | 3.13× | 3.16× (√10) |
 | 4 GHz | 27.91 | **2.00×** | 2.00× (√4) |
 
+## The mutual terms, checked against an exact solution
+
+The self terms (Z0, eps_eff) had Hammerstad and the exact `sqrt(L*C0)=1/c0`
+identity behind them. The **mutual** terms — the coupling, which is the entire
+point of the tool — had nothing but a SPICE deck built from those same
+matrices, which is not a check.
+
+Coupled **striplines** close that gap. They sit in a homogeneous medium, so the
+mode is pure TEM and Cohn's conformal mapping gives Z_even and Z_odd *exactly* —
+no curve fit, no validity window. And `Z_odd = sqrt((L11−L12)/(C11−C12))`
+depends directly on the mutual terms, so agreeing on it tests precisely what was
+untested.
+
+Solving the same geometry both ways, at w/b = 0.4:
+
+| t/b | ΔZ_even | ΔZ_odd |
+|---|---|---|
+| 0.018 | −4.0 … −4.7 % | −4.9 … −7.0 % |
+| 0.008 | −2.0 … −2.4 % | −2.5 … −3.6 % |
+| 0.003 | **−0.9 … −1.1 %** | **−1.1 … −1.6 %** |
+
+The residual is **proportional to copper thickness and extrapolates to zero**.
+That is the signature of real physics Cohn omits — his strips are
+zero-thickness, and finite copper adds capacitance and lowers both impedances —
+rather than solver error. In the thin-copper limit the extraction agrees with an
+exact analytical result to about 1% on **both** modes.
+
+So the coupling now rests on something independent. What it does not yet rest on
+is measurement.
+
+### FasterCap — attempted, not completed
+
+An independent *numerical* cross-check was the first choice. `FastcapExport.hpp`
+writes the same cross-section in FastCap's 2D format and FasterCap 6.0.7 builds
+headless (its `LinAlgebra` and `Geometry` siblings are separate repos, and the
+CMake asks for wxWidgets 3.0 where 3.2 is current). The solver runs but reports
+"Number of panels after refinement: 0" — the surface files are not being
+accepted, and the format needed more archaeology than it was worth once the
+Cohn benchmark turned out to be *exact* rather than merely independent. The
+exporter is kept; finishing it is worth doing, but it is no longer the only
+thing holding up the mutual terms.
+
 ## Against measured hardware — consistent, but NOT yet validated
 
 Antmicro's [signal-integrity-test-board](https://github.com/antmicro/signal-integrity-test-board)

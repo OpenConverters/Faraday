@@ -310,4 +310,48 @@ inline CrossSection make_coupled_section(double w_a, double w_b, double sep,
     return cs;
 }
 
+// Symmetric coupled STRIPLINE: two traces centred between two planes, with one
+// homogeneous dielectric filling everything. That homogeneity is the point —
+// the mode is pure TEM, so Cohn's conformal mapping gives Z_even/Z_odd exactly
+// and the numerical extraction's MUTUAL terms can be checked against a closed
+// form rather than against another approximation.
+//
+//   w   trace width, mm      s   edge-to-edge gap, mm
+//   b   plane-to-plane spacing, mm     t  copper thickness, mm
+inline CrossSection make_coupled_stripline(double w, double s, double b,
+                                           double t, double eps_r,
+                                           double margin_factor = 6.0) {
+    if (w <= 0 || s <= 0 || b <= 0 || t < 0)
+        throw BoardError("stripline section: w, s, b must be > 0");
+    if (t >= b) throw BoardError("stripline section: copper thicker than the gap");
+    const double mm = 1e-3;
+    CrossSection cs;
+    const double margin = margin_factor * b * mm;
+    const double span = (2 * w + s) * mm;
+    cs.width = span + 2 * margin;
+    // planes at y=0..t and y=b+t..b+2t, dielectric between, traces centred
+    const double y_p0 = 0.0, y_p1 = t * mm;
+    const double y_top0 = y_p1 + b * mm, y_top1 = y_top0 + t * mm;
+    cs.height = y_top1;
+    cs.slabs.push_back({y_p1, y_top0, eps_r});
+
+    const double y_mid = 0.5 * (y_p1 + y_top0);
+    const double yt0 = y_mid - 0.5 * t * mm, yt1 = y_mid + 0.5 * t * mm;
+    const double xc = cs.width * 0.5;
+    const double xa = xc - 0.5 * (w + s) * mm, xb = xc + 0.5 * (w + s) * mm;
+    cs.conductors.push_back({"conductor_gnd", 0.0, y_p0, cs.width, y_p1});
+    cs.conductors.push_back({"conductor_a", xa - w * mm * 0.5, yt0,
+                             xa + w * mm * 0.5, yt1});
+    cs.conductors.push_back({"conductor_b", xb - w * mm * 0.5, yt0,
+                             xb + w * mm * 0.5, yt1});
+    // the upper plane is the SAME net as the lower one: both are the return,
+    // so they must be one electrode or the extraction sees three conductors
+    cs.conductors.push_back({"conductor_gnd", 0.0, y_top0, cs.width, y_top1});
+
+    const double target = std::min({t * mm, w * mm, s * mm, b * mm}) / 3.0;
+    cs.nx = std::clamp((int)std::lround(cs.width / target), 120, 900);
+    cs.ny = std::clamp((int)std::lround(cs.height / target), 80, 600);
+    return cs;
+}
+
 }  // namespace faraday

@@ -102,6 +102,50 @@ inline double quarter_wave_hz(double len_mm, double eps_eff) {
 // microstrip mixed-media value.
 inline double via_eps_eff(double eps_r) { return eps_r; }
 
+// ---- EXACT benchmark: coupled striplines (Cohn, 1955) ----
+// Coupled striplines sit in a HOMOGENEOUS medium, so the mode is pure TEM and
+// conformal mapping gives Z_even/Z_odd exactly — no curve fits, no validity
+// window. That makes it the right yardstick for a numerical extraction's
+// MUTUAL terms, which closed-form microstrip formulas can only approximate.
+//
+//   k_e = tanh(pi w / 2b) * tanh(pi (w+s) / 2b)
+//   k_o = tanh(pi w / 2b) * coth(pi (w+s) / 2b)
+//   Z_0{e,o} = (30 pi / sqrt(eps_r)) * K(k') / K(k)
+//
+// for zero-thickness strips of width w, gap s, between planes spaced b.
+
+// Complete elliptic integral of the first kind via the arithmetic-geometric
+// mean: K(k) = pi / (2 * AGM(1, sqrt(1-k^2))). Converges quadratically.
+inline double elliptic_K(double k) {
+    if (!(k >= 0.0 && k < 1.0))
+        throw std::invalid_argument("elliptic_K: need 0 <= k < 1");
+    double a = 1.0, b = std::sqrt(1.0 - k * k);
+    for (int i = 0; i < 60 && std::abs(a - b) > 1e-16 * a; ++i) {
+        const double an = 0.5 * (a + b);
+        b = std::sqrt(a * b);
+        a = an;
+    }
+    return M_PI / (2.0 * a);
+}
+
+struct EvenOdd {
+    double z_even, z_odd;
+};
+
+inline EvenOdd coupled_stripline_cohn(double w, double s, double b, double eps_r) {
+    if (w <= 0 || s <= 0 || b <= 0 || eps_r < 1)
+        throw std::invalid_argument("coupled_stripline_cohn: bad geometry");
+    const double t1 = std::tanh(M_PI * w / (2.0 * b));
+    const double t2 = std::tanh(M_PI * (w + s) / (2.0 * b));
+    const double k_e = t1 * t2;
+    const double k_o = t1 / t2;          // tanh * coth
+    auto zed = [&](double k) {
+        const double kp = std::sqrt(1.0 - k * k);
+        return (30.0 * M_PI / std::sqrt(eps_r)) * elliptic_K(kp) / elliptic_K(k);
+    };
+    return {zed(k_e), zed(k_o)};
+}
+
 inline double to_db(double ratio) {
     if (ratio <= 0) throw std::invalid_argument("to_db: ratio must be > 0");
     return 20.0 * std::log10(ratio);

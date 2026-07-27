@@ -6,6 +6,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <faraday/CrossSection.hpp>
 #include <faraday/Rlgc.hpp>
+#include <faraday/Tline.hpp>
 
 #include <cmath>
 #include <cstdio>
@@ -243,4 +244,49 @@ TEST_CASE("cross-section: grading reports the cell size it ACTUALLY achieved",
     std::stringstream ss; ss << in.rdbuf();
     CHECK(ss.str().find("\"conductor_gnd\"") != std::string::npos);
     std::remove(path.c_str());
+}
+
+TEST_CASE("tline: elliptic K matches known values", "[tline][cohn]") {
+    CHECK(tline::elliptic_K(0.0) == Approx(M_PI / 2));
+    CHECK(tline::elliptic_K(std::sin(M_PI / 6)) == Approx(1.6857503548).epsilon(1e-9));
+    CHECK(tline::elliptic_K(std::sin(M_PI / 4)) == Approx(1.8540746773).epsilon(1e-9));
+    CHECK(tline::elliptic_K(0.99) > tline::elliptic_K(0.5));   // diverges at k->1
+    CHECK_THROWS(tline::elliptic_K(1.0));
+}
+
+TEST_CASE("tline: Cohn coupled stripline is exact and behaves", "[tline][cohn]") {
+    // Coupled striplines sit in a homogeneous medium, so this conformal-mapping
+    // result is exact — which is what makes it a yardstick for the numerical
+    // extraction's MUTUAL terms rather than just its self terms.
+    auto eo = tline::coupled_stripline_cohn(0.4, 0.5, 1.0, 4.4);
+    CHECK(eo.z_even > eo.z_odd);                    // always, for coupled lines
+    CHECK(eo.z_even == Approx(57.83).margin(0.5));
+    CHECK(eo.z_odd == Approx(49.61).margin(0.5));
+    // widening the gap drives both modes toward the isolated-line value
+    auto wide = tline::coupled_stripline_cohn(0.4, 20.0, 1.0, 4.4);
+    CHECK(wide.z_even == Approx(wide.z_odd).epsilon(0.01));
+    CHECK(wide.z_even < eo.z_even);
+    CHECK(wide.z_odd > eo.z_odd);
+    // and both scale as 1/sqrt(eps_r)
+    auto e1 = tline::coupled_stripline_cohn(0.4, 0.5, 1.0, 1.0);
+    CHECK(e1.z_even == Approx(eo.z_even * std::sqrt(4.4)).epsilon(1e-9));
+    CHECK_THROWS(tline::coupled_stripline_cohn(0.0, 0.5, 1.0, 4.4));
+}
+
+TEST_CASE("cross-section: coupled stripline has BOTH planes as one electrode",
+          "[crosssection][cohn]") {
+    CrossSection cs = make_coupled_stripline(0.4, 0.5, 1.0, 0.018, 4.4);
+    // four rectangles, but only three distinct electrodes: the two planes are
+    // the same net, or the extraction would see an extra conductor
+    REQUIRE(cs.conductors.size() == 4);
+    int gnd = 0;
+    for (const auto& c : cs.conductors) if (c.name == "conductor_gnd") ++gnd;
+    CHECK(gnd == 2);
+    // traces centred between the planes, in a single homogeneous dielectric
+    const double ymid = 0.5 * (cs.conductors[1].y0 + cs.conductors[1].y1);
+    CHECK(ymid == Approx(0.5 * cs.height).epsilon(0.02));
+    REQUIRE(cs.slabs.size() == 1);
+    CHECK(cs.slabs[0].eps_r == Approx(4.4));
+    CHECK(cs.eps_at(ymid) == Approx(4.4));
+    CHECK_THROWS(make_coupled_stripline(0.4, 0.5, 0.01, 0.018, 4.4));  // t >= b
 }
