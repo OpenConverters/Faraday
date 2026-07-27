@@ -90,21 +90,37 @@ inline BoardIR import_kicad(const std::string& text,
     BoardIR b;
 
     // ---- copper layer table ----
+    // Copper layers are the entries TYPED signal/power/mixed/jumper (non-copper
+    // layers are 'user'). Names can be canonical (F.Cu/InN.Cu/B.Cu) or custom —
+    // KiCad 5 renames the primary name itself ("Top", "GND", "3V3", "Bottom" on
+    // power boards), while KiCad 6+ keeps the canonical name and appends the
+    // user name as a 4th field. Ordering: canonical names sort by name (KiCad 9
+    // renumbered ids); custom names sort by numeric id (v5 ids are 0..31 in
+    // stack order).
     const SExpr* layers = root.find("layers");
     if (!layers) throw BoardError("kicad: no (layers ...) section");
-    std::vector<std::pair<int, std::string>> coppers;  // (sort key, name)
-    std::vector<std::pair<std::string, std::string>> copper_types;
+    struct CuEntry { int id; std::string name, type; };
+    std::vector<CuEntry> coppers;
+    bool all_canonical = true;
     for (const auto& entry : layers->children()) {
         if (!entry.is_list() || entry.children().size() < 3) continue;
+        const std::string& type = entry.atom_at(2);
+        if (type != "signal" && type != "power" && type != "mixed" && type != "jumper")
+            continue;
         const std::string& lname = entry.atom_at(1);
-        int key = detail::copper_sort_key(lname);
-        if (key < 0) continue;
-        coppers.emplace_back(key, lname);
-        copper_types.emplace_back(lname, entry.atom_at(2));  // signal|power|mixed
+        coppers.push_back({static_cast<int>(entry.number_at(0)), lname, type});
+        if (detail::copper_sort_key(lname) < 0) all_canonical = false;
     }
     if (coppers.empty()) throw BoardError("kicad: no copper layers in (layers ...)");
-    std::sort(coppers.begin(), coppers.end());
-    for (auto& [key, lname] : coppers) b.copper_names.push_back(lname);
+    std::sort(coppers.begin(), coppers.end(), [&](const CuEntry& a, const CuEntry& c) {
+        return all_canonical ? detail::copper_sort_key(a.name) < detail::copper_sort_key(c.name)
+                             : a.id < c.id;
+    });
+    std::vector<std::pair<std::string, std::string>> copper_types;
+    for (auto& e : coppers) {
+        b.copper_names.push_back(e.name);
+        copper_types.emplace_back(e.name, e.type);
+    }
 
     // ---- stackup ----
     const SExpr* setup = root.find("setup");
@@ -175,14 +191,23 @@ inline BoardIR import_kicad(const std::string& text,
                           v->number_of("drill"), f, t});
     }
 
-    // ---- zones (filled polygons carry their own layer) ----
+    // ---- zones ----
+    // KiCad 6+ filled_polygons carry their own (layer ...); KiCad 5 ones
+    // inherit the zone's layer.
     for (const SExpr* z : root.find_all("zone")) {
         int net = net_of(*z);
+        int zone_cu = -1;
+        if (const SExpr* zl = z->find("layer"))
+            zone_cu = b.copper_ordinal(zl->atom_at(1));
+        else if (const SExpr* zls = z->find("layers"))
+            for (size_t i = 1; i < zls->children().size() && zone_cu < 0; ++i)
+                if (zls->children()[i].is_atom())
+                    zone_cu = b.copper_ordinal(zls->children()[i].atom());
         for (const SExpr* fp : z->find_all("filled_polygon")) {
             const SExpr* layer = fp->find("layer");
             const SExpr* pts = fp->find("pts");
-            if (!layer || !pts) continue;
-            int cu = b.copper_ordinal(layer->atom_at(1));
+            if (!pts) continue;
+            int cu = layer ? b.copper_ordinal(layer->atom_at(1)) : zone_cu;
             if (cu < 0) continue;  // zones on non-copper layers (keepout gfx)
             ZonePoly poly{net, cu, {}};
             for (const auto& p : pts->children()) {
@@ -200,8 +225,10 @@ inline BoardIR import_kicad(const std::string& text,
         }
     }
 
-    // ---- footprints: components + pads ----
-    for (const SExpr* f : root.find_all("footprint")) {
+    // ---- footprints ("module" before KiCad 6): components + pads ----
+    std::vector<const SExpr*> fps = root.find_all("footprint");
+    for (const SExpr* m : root.find_all("module")) fps.push_back(m);
+    for (const SExpr* f : fps) {
         Component comp;
         comp.footprint = f->children().size() > 1 && f->children()[1].is_atom()
                              ? f->children()[1].atom()

@@ -191,13 +191,16 @@ class Screener {
                               {"isPlane", layers_[i].is_plane},
                               {"planeNet", layers_[i].plane_net},
                               {"zoneCoverage", layers_[i].zone_coverage}});
+        nlohmann::json unverifiable = nlohmann::json::array();
+        for (const auto& n : unverifiable_planes_) unverifiable.push_back(n);
         return {{"planes", planes},
                 {"approximatedArcs", b_.approximated_arcs},
                 {"bboxFromOutline", b_.bbox_from_outline},
                 {"stackupSource", b_.stackup.source},
                 {"droppedBelowFloorDb", dropped_below_floor_},
                 {"droppedByFindingCap", dropped_by_cap_},
-                {"reportFloorDb", p_.report_floor_db}};
+                {"reportFloorDb", p_.report_floor_db},
+                {"crossingCheckSkippedPlanes", unverifiable}};
     }
 
     // Z0 estimate for a trace of width w on copper layer cu — for tooltips.
@@ -518,6 +521,13 @@ class Screener {
             const LayerModel& lm = layers_[s.cu];
             int plane = lm.ref_up >= 0 ? lm.ref_up : lm.ref_dn;
             if (plane < 0) continue;  // handled by no-reference-plane
+            // a plane known only from its 'power' layer-type hint has no fill
+            // geometry to test against — skipping is stated in meta, never
+            // silently flagged (a zoneless plane would fail EVERY sample)
+            if (zb[plane].empty()) {
+                unverifiable_planes_.insert(b_.copper_names[plane]);
+                continue;
+            }
             double len = std::hypot(s.x2 - s.x1, s.y2 - s.y1);
             int steps = std::max(1, (int)(len / p_.sample_step_mm));
             for (int i = 0; i <= steps; ++i) {
@@ -566,6 +576,7 @@ class Screener {
     std::vector<LayerModel> layers_;
     size_t dropped_below_floor_ = 0;
     size_t dropped_by_cap_ = 0;
+    std::set<std::string> unverifiable_planes_;
 };
 
 // ---- findings → JSON (report payload for CLI/web) ----

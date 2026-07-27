@@ -2,6 +2,7 @@
 #include <catch2/catch_approx.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <faraday/KicadImporter.hpp>
+#include <faraday/Screener.hpp>
 
 #include <fstream>
 #include <sstream>
@@ -130,6 +131,74 @@ TEST_CASE("importer: arcs are chord-approximated and counted", "[importer]") {
     BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
     CHECK(b.approximated_arcs == 1);
     CHECK(b.segments.size() == 2);
+}
+
+TEST_CASE("importer: KiCad 5 legacy — custom copper names, module, zone-layer fill",
+          "[importer]") {
+    // v5 power-board style: renamed copper layers typed signal/power, (module)
+    // instead of (footprint), filled_polygon inheriting the zone's layer
+    std::string txt = R"((kicad_pcb (version 20171130) (host pcbnew 5.1.9)
+      (layers (0 Top signal) (1 GND power) (2 3V3 power) (31 Bottom signal))
+      (net 0 "") (net 1 GND) (net 2 SW)
+      (segment (start 5 10) (end 25 10) (width 0.5) (layer Top) (net 2))
+      (segment (start 5 12) (end 25 12) (width 0.5) (layer Bottom) (net 2))
+      (module LibreSolar:R_0603 (layer Top) (at 10 20 90)
+        (fp_text reference R1 (at 0 0) (layer F.SilkS))
+        (fp_text value 100k (at 0 1) (layer F.Fab))
+        (pad 1 smd rect (at -0.75 0 90) (size 0.8 0.9) (layers Top F.Paste) (net 2 SW))
+        (pad 2 smd rect (at 0.75 0 90) (size 0.8 0.9) (layers Top F.Paste) (net 1 GND)))
+      (zone (net 1) (net_name GND) (layer GND) (hatch edge 0.508)
+        (polygon (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 30)))
+        (filled_polygon (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 30))))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-4layer"));
+    REQUIRE(b.copper_names.size() == 4);
+    CHECK(b.copper_names[0] == "Top");
+    CHECK(b.copper_names[1] == "GND");
+    CHECK(b.copper_names[2] == "3V3");
+    CHECK(b.copper_names[3] == "Bottom");
+    CHECK(b.segments[0].cu == 0);
+    CHECK(b.segments[1].cu == 3);
+    // module parsed as a component with pads
+    REQUIRE(b.components.size() == 1);
+    CHECK(b.components[0].reference == "R1");
+    REQUIRE(b.pads.size() == 2);
+    CHECK(b.pads[0].cu == 0);
+    // v5 filled_polygon landed on the ZONE's layer (GND, ordinal 1)
+    REQUIRE(b.zones.size() == 1);
+    CHECK(b.zones[0].cu == 1);
+    CHECK(b.zones[0].net == 1);
+    // the 'power' type hint survives
+    auto cu = b.stackup.copper_indices();
+    CHECK(b.stackup.layers[cu[1]].copper_type == "power");
+    CHECK(b.stackup.layers[cu[2]].copper_type == "power");
+}
+
+TEST_CASE("screener: power-hinted plane without fill geometry is skipped LOUDLY",
+          "[screener-guard]") {
+    // 3V3 is a plane by type hint only (no zone) — the void check must not
+    // flag every trace against a plane it cannot see; it reports the skip.
+    std::string txt = R"((kicad_pcb (version 20171130) (host pcbnew 5.1.9)
+      (layers (0 Top signal) (1 P1 power) (31 Bottom signal))
+      (net 0 "") (net 1 SW) (net 2 FB)
+      (segment (start 5 10) (end 25 10) (width 0.5) (layer Top) (net 1))
+      (segment (start 5 20) (end 25 20) (width 0.3) (layer Top) (net 2))
+    ))";
+    Stackup s;
+    s.source = "user:test-3cu";
+    s.layers = {
+        StackLayer{LayerKind::Copper, "Top", 0.035, std::nullopt, ""},
+        StackLayer{LayerKind::Dielectric, "d1", 0.2, 4.5, ""},
+        StackLayer{LayerKind::Copper, "P1", 0.035, std::nullopt, ""},
+        StackLayer{LayerKind::Dielectric, "d2", 1.2, 4.5, ""},
+        StackLayer{LayerKind::Copper, "Bottom", 0.035, std::nullopt, ""},
+    };
+    BoardIR b = import_kicad(txt, s);
+    nlohmann::json report = analyze_board(b);
+    for (const auto& f : report["findings"])
+        CHECK(f["rule"] != "plane-crossing");
+    REQUIRE(report["meta"]["crossingCheckSkippedPlanes"].size() == 1);
+    CHECK(report["meta"]["crossingCheckSkippedPlanes"][0] == "P1");
 }
 
 TEST_CASE("importer: unknown built-in stackup name throws", "[importer]") {
