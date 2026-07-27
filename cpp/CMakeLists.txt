@@ -22,6 +22,8 @@ target_link_libraries(faraday_cli PRIVATE faraday)
 # the WASM engine the browser loads — stay free of that dependency.
 #   cmake -S cpp -B build -DFARADAY_OMFEM_ROOT=$HOME/OpenMagnetics/OMFEM
 set(FARADAY_OMFEM_ROOT "" CACHE PATH "OMFEM checkout with a built libomfem")
+set(FARADAY_KIRCHHOFF_ROOT "" CACHE PATH "Kirchhoff checkout")
+set(FARADAY_KIRCHHOFF_BUILD "" CACHE PATH "Kirchhoff build dir with libkirchhoff")
 if(FARADAY_OMFEM_ROOT)
     find_library(OMFEM_LIBRARY omfem PATHS ${FARADAY_OMFEM_ROOT}/build NO_DEFAULT_PATH)
     find_library(MFEM_LIBRARY mfem
@@ -65,6 +67,24 @@ if(FARADAY_OMFEM_ROOT)
         target_link_libraries(faraday_spice PRIVATE faraday ${KIRCHHOFF_LIBRARY} ${NGSPICE_LIBRARY})
         message(STATUS "Faraday: building faraday_spice (Kirchhoff in-process ngspice)")
     endif()
+endif()
+
+# ---- Cross-check the browser's transient solver against real ngspice -------
+# Native only, and independent of the OMFEM tier: this needs Kirchhoff alone.
+#   cmake -S cpp -B build -DFARADAY_KIRCHHOFF_ROOT=$HOME/OpenConverters/Kirchhoff \
+#                         -DFARADAY_KIRCHHOFF_BUILD=$HOME/OpenConverters/Kirchhoff/build-latest
+if(FARADAY_KIRCHHOFF_ROOT AND FARADAY_KIRCHHOFF_BUILD)
+    find_library(XCHECK_KIRCHHOFF kirchhoff PATHS ${FARADAY_KIRCHHOFF_BUILD} NO_DEFAULT_PATH)
+    find_library(XCHECK_NGSPICE ngspice)
+    if(NOT XCHECK_KIRCHHOFF OR NOT XCHECK_NGSPICE)
+        message(FATAL_ERROR
+            "FARADAY_KIRCHHOFF_* set but libkirchhoff/libngspice were not found "
+            "— build Kirchhoff with -DENABLE_NGSPICE=ON first")
+    endif()
+    add_executable(faraday_xcheck tools/faraday_xcheck.cpp)
+    target_include_directories(faraday_xcheck PRIVATE ${FARADAY_KIRCHHOFF_ROOT}/src)
+    target_link_libraries(faraday_xcheck PRIVATE faraday ${XCHECK_KIRCHHOFF} ${XCHECK_NGSPICE})
+    message(STATUS "Faraday: building faraday_xcheck (mna vs in-process ngspice)")
 endif()
 
 if(FARADAY_BUILD_TESTS)

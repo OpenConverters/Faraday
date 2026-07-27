@@ -12,9 +12,13 @@
 // the difference between "press run and wait" and "drag the separation slider
 // and watch the noise move".
 //
-// Correctness is not traded away for that speed: spice_ladder_deck() in
-// Rlgc.hpp emits the identical circuit for ngspice, and the test suite pins
-// this solver against a real Kirchhoff/libngspice run of that deck.
+// Correctness is not traded away for that speed. spice_ladder_deck() in
+// Rlgc.hpp emits the identical circuit for ngspice, and tools/faraday_xcheck
+// runs both — this stepper and Kirchhoff's in-process libngspice — over the
+// same four cross-sections. They agree on near-end crosstalk to 0.01 dB and on
+// far-end to 0.05 dB. That is a native check (libngspice does not go in the
+// browser); the Catch2 suite pins this solver against transmission-line theory
+// directly, which is the stronger of the two claims anyway.
 //
 // FORMULATION. Modified nodal analysis with node voltages and inductor
 // currents as unknowns (inductor currents have to be explicit — mutual
@@ -51,7 +55,7 @@ struct DriveOptions {
     double amplitude_v = 3.3;
     size_t aggressor = 0;
     int sections = 0;            // 0 = choose from the rise time
-    int max_steps = 1400;        // ceiling on transient steps
+    int max_steps = 2400;        // ceiling on transient steps
 };
 
 struct Waveforms {
@@ -99,14 +103,26 @@ inline Waveforms simulate(const Rlgc& p, const DriveOptions& o) {
     const int N = o.sections > 0 ? o.sections : sections_for(delay, o.rise_s);
     const double dl = o.length_m / N;
 
-    // Run long enough for reflections to have their say. On an unterminated
-    // line — which is what a CMOS receiver actually presents — the first
-    // backward wave is not the worst case: it re-reflects off the driver and
-    // adds to the next one. Eight round trips is enough for the envelope to
-    // peak and start decaying, and stopping earlier would under-report the
-    // noise by exactly the amount that makes termination worth discussing.
-    const double tstop = std::max(6.0 * o.rise_s, 16.0 * delay + 2.0 * o.rise_s);
-    int steps = (int)std::ceil(tstop / (o.rise_s / 20.0));
+    // How long to run for, and how finely.
+    //
+    // Length is set by reflections. On an unterminated line — what a CMOS
+    // receiver actually presents — the first backward wave is not the worst
+    // case: it re-reflects off the driver and adds to the next one, so the
+    // envelope keeps growing for several round trips. On a matched line there
+    // is nothing to wait for. Scaling the window by the loop gain |Gs*Gt|
+    // therefore captures the true peak in the unterminated case without
+    // spending steps on a matched one that settled after the first transit.
+    const double z0m = p.z0(o.aggressor);
+    auto gamma = [&](double z) { return std::abs((z - z0m) / (z + z0m)); };
+    const double loop = gamma(o.z_src) * std::max(gamma(o.z_term), gamma(o.z_victim_near));
+    const double rounds = 3.0 + 13.0 * std::clamp(loop, 0.0, 1.0);
+    const double tstop = std::max(6.0 * o.rise_s, 2.0 * rounds * delay + 2.0 * o.rise_s);
+
+    // Resolution is set by the EDGE, not by the window: near-end crosstalk is a
+    // sharp feature lasting about one rise time, and sampling the window
+    // uniformly would starve it whenever the line is long. Forty points per
+    // edge matches the step ceiling spice_ladder_deck() hands ngspice.
+    int steps = (int)std::ceil(tstop / (o.rise_s / 40.0));
     steps = std::clamp(steps, 200, o.max_steps);
     const double h = tstop / steps;
 

@@ -3,6 +3,7 @@
 
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <faraday/CrossSection.hpp>
 #include <faraday/Rlgc.hpp>
@@ -100,8 +101,30 @@ TEST_CASE("rlgc: ladder deck is well formed and physical", "[rlgc][deck]") {
     };
     CHECK(count("\nL0_") == 4);
     CHECK(count("\nL1_") == 4);
-    CHECK(count("\nCm01_") == 4);
     CHECK(count("\nK01_") == 4);
+    // Capacitors hang off the NODES, so there is one more of them than there
+    // are sections, with half values at the two ends. That symmetry is what
+    // makes the model second-order accurate: the asymmetric alternative puts
+    // nothing at node 0, which is exactly where near-end crosstalk is read,
+    // and over-reported NEXT by 1.6 dB against this repo's own solver.
+    CHECK(count("\nC0_") == 5);
+    CHECK(count("\nCm01_") == 5);
+
+    // What has to hold regardless of how it is distributed: the ladder totals
+    // the real capacitance of the line.
+    auto sum_values = [&](const std::string& prefix) {
+        double total = 0;
+        size_t pos = 0;
+        while ((pos = deck.find(prefix, pos)) != std::string::npos) {
+            const size_t eol = deck.find('\n', pos + 1);
+            const std::string line = deck.substr(pos + 1, eol - pos - 1);
+            total += std::stod(line.substr(line.rfind(' ') + 1));
+            pos = eol;
+        }
+        return total;
+    };
+    CHECK_THAT(sum_values("\nC0_"), Catch::Matchers::WithinRel(p.c_to_ref(0) * o.length_m, 1e-9));
+    CHECK_THAT(sum_values("\nCm01_"), Catch::Matchers::WithinRel(p.c_mutual(0, 1) * o.length_m, 1e-9));
     // the victim is terminated at both ends so NEXT and FEXT are observable
     CHECK(deck.find("Rnear1 n1_0 0") != std::string::npos);
     CHECK(deck.find("Rfar1 n1_4 0") != std::string::npos);

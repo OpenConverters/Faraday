@@ -212,6 +212,30 @@ inline std::string spice_ladder_deck(const Rlgc& p, const DeckOptions& o) {
     for (size_t i = 0; i < p.n; ++i)
         s << "Rfar" << i << " n" << i << "_" << o.sections << " 0 " << o.z_term << "\n";
 
+    // Capacitors sit on the NODES, with half a section's worth at each end so
+    // the total is exactly length*C and the model is symmetric. Hanging a full
+    // capacitor off nodes 1..N and none off node 0 also totals correctly, but
+    // it is only first-order accurate and node 0 is precisely where near-end
+    // crosstalk is measured: cross-checking this deck against Faraday's own
+    // solver showed the asymmetric form over-reporting NEXT by 1.6 dB at 32
+    // sections on a fast edge, converging away only by 256. Same element
+    // count, one order of accuracy better.
+    for (int k = 0; k <= o.sections; ++k) {
+        const double cs = (k == 0 || k == o.sections) ? 0.5 * dl : dl;
+        for (size_t i = 0; i < p.n; ++i)
+            // capacitance to the reference — the PHYSICAL c_i0, i.e. the
+            // diagonal minus the mutuals the matrix folds into it
+            s << "C" << i << "_" << k << " n" << i << "_" << k << " 0 "
+              << p.c_to_ref(i) * cs << "\n";
+        for (size_t i = 0; i < p.n; ++i)
+            for (size_t j = i + 1; j < p.n; ++j) {
+                const double cm = p.c_mutual(i, j) * cs;
+                if (cm != 0.0)
+                    s << "Cm" << i << j << "_" << k << " n" << i << "_" << k
+                      << " n" << j << "_" << k << " " << cm << "\n";
+            }
+    }
+
     for (int k = 0; k < o.sections; ++k) {
         for (size_t i = 0; i < p.n; ++i) {
             const double Ri = p.at(p.R, i, i) * dl;
@@ -224,18 +248,10 @@ inline std::string spice_ladder_deck(const Rlgc& p, const DeckOptions& o) {
             }
             s << "L" << i << "_" << k << " " << mid << " " << b << " "
               << p.at(p.L, i, i) * dl << "\n";
-            // capacitance to the reference — the PHYSICAL c_i0, i.e. the
-            // diagonal minus the mutuals the matrix folds into it
-            s << "C" << i << "_" << k << " " << b << " 0 "
-              << p.c_to_ref(i) * dl << "\n";
         }
-        // mutual capacitance and inductance, all pairs
+        // mutual inductance, all pairs
         for (size_t i = 0; i < p.n; ++i)
             for (size_t j = i + 1; j < p.n; ++j) {
-                const double cm = p.c_mutual(i, j) * dl;
-                if (cm != 0.0)
-                    s << "Cm" << i << j << "_" << k << " n" << i << "_" << (k + 1)
-                      << " n" << j << "_" << (k + 1) << " " << cm << "\n";
                 const double lii = p.at(p.L, i, i), ljj = p.at(p.L, j, j);
                 const double kc = p.at(p.L, i, j) / std::sqrt(lii * ljj);
                 if (std::abs(kc) > 1e-9) {

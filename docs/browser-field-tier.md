@@ -50,8 +50,28 @@ of a Newton iteration. That is the difference between "press run and wait" and "
 separation slider and watch the noise move."
 
 Correctness is not traded for that speed. `spice_ladder_deck()` emits the identical
-circuit for ngspice, and the solver is pinned against transmission-line theory directly
-(below).
+circuit for ngspice, and `tools/faraday_xcheck` runs both — this stepper and Kirchhoff's
+in-process libngspice — over four cross-sections. They agree on near-end crosstalk to
+0.01 dB. That tool is native-only: libngspice does not go in the browser, and this is a
+check on the physics, not a runtime dependency.
+
+Building it:
+
+```
+cmake -S cpp -B build \
+  -DFARADAY_KIRCHHOFF_ROOT=$HOME/OpenConverters/Kirchhoff \
+  -DFARADAY_KIRCHHOFF_BUILD=$HOME/OpenConverters/Kirchhoff/build-latest
+make -C build faraday_xcheck && ./build/faraday_xcheck
+```
+
+The cross-check paid for itself immediately. The two disagreed by 1.6 dB on a fast edge,
+and refining the ladder showed which one was moving: Faraday's peak shifted by 2 mV
+between 32 and 256 sections while the ngspice deck's moved by 19 mV. The deck was the
+inaccurate one — `spice_ladder_deck()` hung a full capacitor off nodes 1..N and none off
+node 0, which is exactly where near-end crosstalk is measured. Splitting it half-and-half
+across the two ends makes the model second-order for the same element count, and the two
+solvers now agree to 0.01 dB at 32 sections. The deck a user takes away to ngspice got
+better as a result.
 
 FastCap and FastHenry are not used. FastCap solves the same integral equation this does,
 in 3D and with multipole acceleration neither of which helps a 2D cross-section;
@@ -72,6 +92,7 @@ independently derivable.
 | near-end crosstalk, saturated | Paul's k_b × launched wave | **0.1–1.7%** |
 | DC settling | resistor divider | **0.05%** |
 | interface truncation | self-convergence | **< 0.02%** beyond 10× height |
+| the whole transient | real ngspice, in-process via Kirchhoff | **0.01 dB** NEXT, **0.05 dB** FEXT |
 
 The `L·C` identity is the sharpest instrument in the box. L and C come from two separate
 solves — one with the dielectric, one in vacuum — so nothing but a correct formulation
