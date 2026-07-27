@@ -187,8 +187,13 @@ inline BoardIR import_kicad(const std::string& text,
             if (f < 0 || t < 0) throw BoardError("kicad: via on unknown layer");
             if (f > t) std::swap(f, t);
         }
+        // drill may be omitted (inherited from the netclass). No rule depends
+        // on it — 0 means "unspecified" and is counted for the report; the
+        // renderer draws no hole rather than inventing a diameter.
+        const SExpr* dr = v->find("drill");
+        if (!dr) ++b.vias_without_drill;
         b.vias.push_back({net_of(*v), at.x, at.y, v->number_of("size"),
-                          v->number_of("drill"), f, t});
+                          dr ? dr->number_at(1) : 0.0, f, t});
     }
 
     // ---- zones ----
@@ -323,8 +328,37 @@ inline BoardIR import_kicad(const std::string& text,
     return b;
 }
 
+// A generic symmetric FR4 stackup for n copper layers, total 1.6 mm: 35 µm
+// copper, dielectric heights split evenly across the n-1 gaps, eps_r 4.5.
+// This is a USER-SELECTED approximation, never an implicit default — the
+// caller asks for it explicitly and the report states "user:default-Nlayer".
+inline Stackup generic_stackup(int n_copper) {
+    if (n_copper < 2)
+        throw BoardError("generic_stackup: need at least 2 copper layers");
+    constexpr double kBoardMm = 1.6, kCuMm = 0.035, kEps = 4.5;
+    double diel_total = kBoardMm - n_copper * kCuMm;
+    if (diel_total <= 0)
+        throw BoardError("generic_stackup: " + std::to_string(n_copper) +
+                         " copper layers do not fit in a 1.6 mm board");
+    double each = diel_total / (n_copper - 1);
+    Stackup s;
+    s.source = "user:default-" + std::to_string(n_copper) + "layer";
+    for (int i = 0; i < n_copper; ++i) {
+        std::string name = i == 0 ? "F.Cu"
+                         : i == n_copper - 1 ? "B.Cu"
+                         : "In" + std::to_string(i) + ".Cu";
+        s.layers.push_back({LayerKind::Copper, name, kCuMm, std::nullopt, "signal"});
+        if (i < n_copper - 1)
+            s.layers.push_back({LayerKind::Dielectric,
+                                "dielectric " + std::to_string(i + 1), each, kEps, ""});
+    }
+    return s;
+}
+
 // Explicit built-in stackups — only ever selected BY THE USER (CLI flag /
-// GUI card), never applied implicitly. 35 µm copper, FR4 eps_r 4.5 / 4.4.
+// GUI card), never applied implicitly. The 2- and 4-layer entries use real
+// asymmetric prepreg/core geometry; "default-Nlayer" for any other n falls to
+// the generic symmetric stack above.
 inline Stackup builtin_stackup(const std::string& name) {
     auto cu = [](const char* n) {
         return StackLayer{LayerKind::Copper, n, 0.035, std::nullopt, "signal"};
@@ -336,16 +370,25 @@ inline Stackup builtin_stackup(const std::string& name) {
     s.source = "user:" + name;
     if (name == "default-2layer") {
         s.layers = {cu("F.Cu"), diel("core", 1.51, 4.5), cu("B.Cu")};
-    } else if (name == "default-4layer") {
+        return s;
+    }
+    if (name == "default-4layer") {
         s.layers = {cu("F.Cu"),    diel("prepreg 1", 0.2, 4.4),
                     cu("In1.Cu"),  diel("core", 1.065, 4.5),
                     cu("In2.Cu"),  diel("prepreg 2", 0.2, 4.4),
                     cu("B.Cu")};
-    } else {
-        throw BoardError("unknown built-in stackup '" + name +
-                         "' (default-2layer | default-4layer)");
+        return s;
     }
-    return s;
+    // default-Nlayer for any other N
+    if (name.rfind("default-", 0) == 0 &&
+        name.size() > 13 && name.compare(name.size() - 5, 5, "layer") == 0) {
+        const std::string digits = name.substr(8, name.size() - 13);
+        if (!digits.empty() &&
+            digits.find_first_not_of("0123456789") == std::string::npos)
+            return generic_stackup(std::stoi(digits));
+    }
+    throw BoardError("unknown built-in stackup '" + name +
+                     "' (default-2layer | default-4layer | default-<N>layer)");
 }
 
 }  // namespace faraday

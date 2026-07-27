@@ -201,6 +201,74 @@ TEST_CASE("screener: power-hinted plane without fill geometry is skipped LOUDLY"
     CHECK(report["meta"]["crossingCheckSkippedPlanes"][0] == "P1");
 }
 
+TEST_CASE("importer: via without an explicit drill is accepted and counted",
+          "[importer][corpus-regression]") {
+    // KiCad lets a via inherit its drill from the netclass (VESC does this).
+    // No rule depends on drill, so 0 means "unspecified" and is reported.
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "A")
+      (segment (start 0 0) (end 10 0) (width 0.3) (layer "F.Cu") (net 1))
+      (segment (start 0 5) (end 10 5) (width 0.3) (layer "F.Cu") (net 1))
+      (via (at 5 0) (size 0.6) (layers "F.Cu" "B.Cu") (net 1))
+      (via (at 8 0) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
+    REQUIRE(b.vias.size() == 2);
+    CHECK(b.vias[0].drill == 0.0);      // unspecified, never invented
+    CHECK(b.vias[1].drill == Approx(0.3));
+    CHECK(b.vias_without_drill == 1);   // stated in the report
+}
+
+TEST_CASE("stackup: generic N-layer generator", "[importer][corpus-regression]") {
+    // A 6-layer board (OrangeCrab) must be analysable, not rejected for want
+    // of a built-in stackup.
+    Stackup s = builtin_stackup("default-6layer");
+    CHECK(s.source == "user:default-6layer");
+    CHECK(s.copper_indices().size() == 6);
+    CHECK(s.layers.size() == 11);  // 6 copper + 5 dielectrics
+    double total = 0;
+    for (const auto& l : s.layers) total += l.thickness_mm;
+    CHECK(total == Approx(1.6));   // symmetric 1.6 mm board
+    double h, eps;
+    s.dielectric_between(0, 1, h, eps);
+    CHECK(eps == Approx(4.5));
+    CHECK(h > 0);
+    CHECK(builtin_stackup("default-8layer").copper_indices().size() == 8);
+    CHECK_THROWS(builtin_stackup("default-1layer"));
+    CHECK_THROWS(builtin_stackup("default-99layer"));  // will not fit 1.6 mm
+    CHECK_THROWS(builtin_stackup("default-xlayer"));
+}
+
+TEST_CASE("screener: a poured layer still has its OWN routing analysed",
+          "[screener][corpus-regression]") {
+    // LibreSolar bms-c1 has 58-89% pour on all four layers. Treating "is a
+    // plane" as "carries no signals" excluded every segment and reported a
+    // clean board — a false negative. A layer can be a reference AND route.
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "GND") (net 2 "A") (net 3 "B")
+      (segment (start 5 10) (end 25 10) (width 0.3) (layer "F.Cu") (net 2))
+      (segment (start 5 10.5) (end 25 10.5) (width 0.3) (layer "F.Cu") (net 3))
+      (zone (net 1) (net_name "GND") (layer "F.Cu")
+        (filled_polygon (layer "F.Cu") (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 30))))
+      (zone (net 1) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 30))))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
+    Screener sc(b);
+    CHECK(sc.layer_models()[0].is_plane);   // F.Cu IS a plane (100% pour)...
+    nlohmann::json report = analyze_board(b);
+    // ...and its two routed nets are STILL analysed
+    bool coupled = false;
+    for (const auto& f : report["findings"])
+        if (f["rule"] == "coupled-run") coupled = true;
+    CHECK(coupled);
+    // routed length per layer makes a "0 findings" verdict auditable
+    CHECK(report["meta"]["planes"][0]["routedMm"].get<double>() == Approx(40.0));
+    CHECK(report["meta"]["planes"][1]["routedMm"].get<double>() == 0.0);
+}
+
 TEST_CASE("importer: unknown built-in stackup name throws", "[importer]") {
     CHECK_THROWS_WITH(builtin_stackup("nonsense"),
                       Catch::Matchers::ContainsSubstring("unknown built-in stackup"));

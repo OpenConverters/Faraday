@@ -222,7 +222,8 @@ class Screener {
             planes.push_back({{"layer", b_.copper_names[i]},
                               {"isPlane", layers_[i].is_plane},
                               {"planeNet", layers_[i].plane_net},
-                              {"zoneCoverage", layers_[i].zone_coverage}});
+                              {"zoneCoverage", layers_[i].zone_coverage},
+                              {"routedMm", routed_mm_[i]}});
         nlohmann::json unverifiable = nlohmann::json::array();
         for (const auto& n : unverifiable_planes_) unverifiable.push_back(n);
         nlohmann::json sw = nlohmann::json::array();
@@ -296,8 +297,13 @@ class Screener {
                 sl.copper_type == "power";
             layers_[i].plane_net = dominant;
         }
+        // Reference layers are resolved for EVERY copper layer, including ones
+        // that are themselves planes: a heavily-poured layer can serve as a
+        // reference AND carry its own routing. (LibreSolar bms-c1 has 58-89%
+        // pour on all four layers; treating "is a plane" as "carries no
+        // signals" silently excluded 1097 segments and reported a clean board
+        // — a false negative, far worse than a false positive.)
         for (size_t i = 0; i < n; ++i) {
-            if (layers_[i].is_plane) continue;
             for (int j = (int)i - 1; j >= 0; --j)
                 if (layers_[j].is_plane) {
                     layers_[i].ref_up = j;
@@ -311,6 +317,12 @@ class Screener {
                     break;
                 }
         }
+        // routed length per layer that the rules actually analysed — makes a
+        // "0 findings" verdict auditable instead of silently empty
+        routed_mm_.assign(n, 0.0);
+        for (const auto& s : b_.segments)
+            if (s.net > 0 && !is_pour_net(s.net))
+                routed_mm_[s.cu] += std::hypot(s.x2 - s.x1, s.y2 - s.y1);
     }
 
     // ---- switch-node identification by CONNECTIVITY, not name-matching ----
@@ -406,9 +418,7 @@ class Screener {
 
     // ---- rule: layers carrying signals with no reference plane ----
     void find_no_reference_plane(std::vector<Finding>& out) {
-        std::vector<double> len_by_cu(layers_.size(), 0.0);
-        for (const auto& s : b_.segments)
-            len_by_cu[s.cu] += std::hypot(s.x2 - s.x1, s.y2 - s.y1);
+        const std::vector<double>& len_by_cu = routed_mm_;
         for (size_t i = 0; i < layers_.size(); ++i) {
             if (layers_[i].is_plane || len_by_cu[i] <= 0) continue;
             if (layers_[i].ref_up >= 0 || layers_[i].ref_dn >= 0) continue;
@@ -468,7 +478,7 @@ class Screener {
         for (size_t i = 0; i < n_cu; ++i) grids.emplace_back(std::max(1.0, max_radius));
         for (size_t i = 0; i < b_.segments.size(); ++i) {
             const Segment& s = b_.segments[i];
-            if (s.net <= 0 || layers_[s.cu].is_plane || is_pour_net(s.net)) continue;
+            if (s.net <= 0 || is_pour_net(s.net)) continue;  // pour nets only
             double dx = s.x2 - s.x1, dy = s.y2 - s.y1;
             double len = std::hypot(dx, dy);
             if (len < 1e-6) continue;
@@ -682,7 +692,7 @@ class Screener {
         };
         std::map<std::pair<int, int>, Detour> detours;  // (signal cu, nearest plane)
         for (const auto& s : b_.segments) {
-            if (s.net <= 0 || layers_[s.cu].is_plane || is_pour_net(s.net)) continue;
+            if (s.net <= 0 || is_pour_net(s.net)) continue;  // pour nets only
             const LayerModel& lm = layers_[s.cu];
             int nearest = lm.ref_up >= 0 ? lm.ref_up : lm.ref_dn;
             if (nearest < 0) continue;  // handled by no-reference-plane
@@ -788,6 +798,7 @@ class Screener {
     size_t diff_pairs_recognized_ = 0;
     std::set<std::string> unverifiable_planes_;
     std::set<int> sw_nets_;
+    std::vector<double> routed_mm_;
 };
 
 // ---- findings → JSON (report payload for CLI/web) ----
