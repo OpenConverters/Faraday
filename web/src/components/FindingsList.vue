@@ -26,11 +26,12 @@ const netName = id =>
                 :data-testid="`finding-${f.id}`"
                 @click="emit('select', f.id)">
           <span class="heat" :class="f.rule === 'diff-pair' ? 'pair'
-                                   : f.rule === 'switch-node' ? 'sw' : f.severityLabel" />
+                                   : f.rule === 'switch-node' ? 'sw'
+                                   : f.rule === 'commutation-loop' ? 'loop' : f.severityLabel" />
           <span class="fid">{{ f.id }}</span>
           <span class="ftitle">{{ f.title }}</span>
           <span class="fnum" v-if="f.nextDb !== undefined">{{ f.nextDb.toFixed(1) }} dB</span>
-          <span class="fnum" v-else-if="f.rule === 'switch-node'">{{ f.coupledLenMm.toFixed(0) }} mm²</span>
+          <span class="fnum" v-else-if="f.rule === 'switch-node' || f.rule === 'commutation-loop'">{{ f.coupledLenMm.toFixed(0) }} mm²</span>
           <span class="fnum" v-else-if="f.coupledLenMm">{{ f.coupledLenMm.toFixed(1) }} mm</span>
         </button>
         <div v-if="f.id === selectedId" class="detail" data-testid="finding-detail">
@@ -83,6 +84,7 @@ const netName = id =>
 .heat.info { background: var(--tin); }
 .heat.pair { background: #6f9fc4; }
 .heat.sw { background: var(--copper); box-shadow: 0 0 6px var(--copper); }
+.heat.loop { background: #e8d24a; box-shadow: 0 0 6px #e8d24a; }
 .fid { font-family: var(--mono); font-size: 11px; color: var(--tin); }
 .ftitle {
   font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

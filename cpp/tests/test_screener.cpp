@@ -300,6 +300,127 @@ TEST_CASE("screener: switch-node aggressor boosts coupled-run severity",
     CHECK((*c)["title"].get<std::string>().find("[SW aggressor]") != std::string::npos);
 }
 
+TEST_CASE("screener: half-bridge phase node found; gate nets excluded",
+          "[screener][switchnode]") {
+    // An inverter leg: PHASE joins two FETs plus a bulk cap and a connector
+    // (no inductor — the motor is the inductance). GATE_L also gathers FET
+    // pads but only sees the driver and gate resistors, so it must NOT be
+    // flagged. (VESC: phase nodes {Q,C,P,R,U} vs gate nets {Q,R,U}.)
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "PHASE") (net 2 "GATE_L") (net 3 "GND") (net 4 "VBUS")
+      (segment (start 10 10) (end 20 10) (width 2.0) (layer "F.Cu") (net 1))
+      (segment (start 10 20) (end 20 20) (width 0.3) (layer "F.Cu") (net 2))
+      (footprint "Q" (layer "F.Cu") (at 10 10) (property "Reference" "Q1")
+        (pad "1" smd rect (at 0 0) (size 2 2) (layers "F.Cu") (net 1 "PHASE"))
+        (pad "2" smd rect (at 0 3) (size 2 2) (layers "F.Cu") (net 4 "VBUS"))
+        (pad "3" smd rect (at 0 -3) (size 1 1) (layers "F.Cu") (net 2 "GATE_L")))
+      (footprint "Q" (layer "F.Cu") (at 20 10) (property "Reference" "Q2")
+        (pad "1" smd rect (at 0 0) (size 2 2) (layers "F.Cu") (net 1 "PHASE"))
+        (pad "2" smd rect (at 0 3) (size 2 2) (layers "F.Cu") (net 3 "GND"))
+        (pad "3" smd rect (at 0 -3) (size 1 1) (layers "F.Cu") (net 2 "GATE_L")))
+      (footprint "C" (layer "F.Cu") (at 15 4) (property "Reference" "C1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 4 "VBUS"))
+        (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net 3 "GND")))
+      (footprint "P" (layer "F.Cu") (at 25 10) (property "Reference" "P1")
+        (pad "1" smd rect (at 0 0) (size 2 2) (layers "F.Cu") (net 1 "PHASE")))
+      (footprint "U" (layer "F.Cu") (at 15 25) (property "Reference" "U1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 2 "GATE_L")))
+      (footprint "R" (layer "F.Cu") (at 12 22) (property "Reference" "R1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 2 "GATE_L")))
+      (zone (net 3) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 40 0) (xy 40 40) (xy 0 40))))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
+    nlohmann::json report = analyze_board(b);
+    const auto& sw = report["meta"]["switchNodes"];
+    REQUIRE(sw.size() == 1);
+    CHECK(sw[0] == "PHASE");   // gate net rejected: no C/L/P/J in the power path
+
+    // and its commutation loop is measured through the bulk cap
+    const auto* loop = find_rule(report["findings"], "commutation-loop");
+    REQUIRE(loop != nullptr);
+    CHECK((*loop)["confidence"] == "heuristic");
+    CHECK((*loop)["coupledLenMm"].get<double>() > 0.0);   // enclosed area, mm^2
+    CHECK((*loop)["detail"].get<std::string>().find("C1") != std::string::npos);
+    CHECK((*loop)["geom"]["lines"].size() >= 3);          // hull drawn
+}
+
+TEST_CASE("screener: commutation loop area grows when the cap moves away",
+          "[screener][switchnode]") {
+    auto with_cap_at = [](double cx) {
+        std::string txt = R"((kicad_pcb
+          (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+          (net 0 "") (net 1 "SW") (net 2 "GND") (net 3 "VIN")
+          (segment (start 10 10) (end 20 10) (width 2.0) (layer "F.Cu") (net 1))
+          (segment (start 10 30) (end 20 30) (width 2.0) (layer "F.Cu") (net 3))
+          (footprint "L" (layer "F.Cu") (at 22 10) (property "Reference" "L1")
+            (pad "1" smd rect (at 0 0) (size 2 2) (layers "F.Cu") (net 1 "SW")))
+          (footprint "Q" (layer "F.Cu") (at 10 10) (property "Reference" "Q1")
+            (pad "1" smd rect (at 0 0) (size 2 2) (layers "F.Cu") (net 1 "SW"))
+            (pad "2" smd rect (at 0 2) (size 2 2) (layers "F.Cu") (net 3 "VIN")))
+          (footprint "Q" (layer "F.Cu") (at 16 10) (property "Reference" "Q2")
+            (pad "1" smd rect (at 0 0) (size 2 2) (layers "F.Cu") (net 1 "SW"))
+            (pad "2" smd rect (at 0 2) (size 2 2) (layers "F.Cu") (net 2 "GND")))
+          (footprint "C" (layer "F.Cu") (at )" + std::to_string(cx) + R"( 16)
+            (property "Reference" "C1")
+            (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 3 "VIN"))
+            (pad "2" smd rect (at 1.5 0) (size 1 1) (layers "F.Cu") (net 2 "GND")))
+          (zone (net 2) (net_name "GND") (layer "B.Cu")
+            (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 40 0) (xy 40 40) (xy 0 40))))
+        ))";
+        return analyze_board(import_kicad(txt, builtin_stackup("default-2layer")));
+    };
+    const auto near = with_cap_at(13.0);
+    const auto far = with_cap_at(34.0);
+    const auto* ln = find_rule(near["findings"], "commutation-loop");
+    const auto* lf = find_rule(far["findings"], "commutation-loop");
+    REQUIRE(ln != nullptr);
+    REQUIRE(lf != nullptr);
+    // the physics the rule exists to express: a distant bulk cap = bigger loop
+    CHECK((*lf)["coupledLenMm"].get<double>() > (*ln)["coupledLenMm"].get<double>());
+    CHECK((*lf)["severity"].get<double>() >= (*ln)["severity"].get<double>());
+}
+
+TEST_CASE("screener: finding cap gives every rule a fair share",
+          "[screener][ranking]") {
+    // 40 tightly-packed victim traces around one aggressor: coupled-run and
+    // 3w both fire in bulk. With a small cap, a global sort would hand every
+    // slot to whichever rule ranks highest; round-robin must keep both.
+    std::string full =
+        "(kicad_pcb"
+        " (layers (0 \"F.Cu\" signal) (31 \"B.Cu\" signal))"
+        " (net 0 \"\") (net 99 \"G\")"
+        " (zone (net 99) (net_name \"G\") (layer \"B.Cu\")"
+        "   (filled_polygon (layer \"B.Cu\")"
+        "     (pts (xy 0 0) (xy 90 0) (xy 90 90) (xy 0 90))))";
+    for (int i = 1; i <= 40; ++i) {
+        std::string y = std::to_string(5.0 + i * 0.45);
+        std::string n = std::to_string(i);
+        full += " (net " + n + " \"N" + n + "\")"
+                " (segment (start 5 " + y + ") (end 60 " + y + ")"
+                " (width 0.3) (layer \"F.Cu\") (net " + n + "))";
+    }
+    full += ")";
+    BoardIR b = import_kicad(full, builtin_stackup("default-2layer"));
+    ScreenerParams p;
+    p.max_findings = 20;
+    nlohmann::json report = analyze_board(b, p);
+    std::map<std::string, int> by_rule;
+    for (const auto& f : report["findings"]) ++by_rule[f["rule"].get<std::string>()];
+    CHECK(report["findings"].size() == 20);
+    CHECK(report["meta"]["droppedByFindingCap"].get<int>() > 0);
+    REQUIRE(by_rule.size() >= 2);            // no single rule monopolises
+    CHECK(by_rule["coupled-run"] > 0);
+    CHECK(by_rule["3w"] > 0);
+    // and the surviving set is still ranked for display
+    double prev = 2.0;
+    for (const auto& f : report["findings"]) {
+        CHECK(f["severity"].get<double>() <= prev + 1e-12);
+        prev = f["severity"].get<double>();
+    }
+}
+
 TEST_CASE("screener: zone-only routed nets are reported as a blind spot",
           "[screener][coverage]") {
     // NETPOLY is routed purely as a polygon — invisible to segment coupling

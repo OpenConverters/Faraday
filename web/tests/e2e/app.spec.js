@@ -70,6 +70,11 @@ test('power converter: switch node identified and shown in the meta strip', asyn
   // the converter's switch node, found by connectivity not by name
   await expect(page.getByTestId('meta-switchnodes')).toContainText('SW_NODE')
   await expect(page.getByTestId('meta-strip')).toContainText('user:default-4layer')
+  // and its commutation loop — the headline converter EMC metric
+  const loop = page.locator('[data-testid^="finding-"]', { hasText: 'Commutation loop' }).first()
+  await expect(loop).toContainText('mm²')
+  await loop.click()
+  await expect(page.getByTestId('finding-detail')).toContainText('discontinuous switching current')
   expect(consoleErrors).toEqual([])
 })
 

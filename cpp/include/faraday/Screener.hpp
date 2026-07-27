@@ -16,9 +16,12 @@
 //   sparse-reference   aggregated: runs whose NEAREST plane is void but a
 //                      farther plane covers — the return current detours,
 //                      one finding per (signal layer, nearest plane)
-//   switch-node        converter dv/dt aggressor found by CONNECTIVITY (net
-//                      touching an L-ref pad and a Q/D-ref pad); its copper
-//                      extent is the classic minimize-SW-area metric
+//   switch-node        converter dv/dt aggressor found by CONNECTIVITY: an
+//                      inductor + FET net (buck/boost), or a half-bridge
+//                      midpoint carrying power copper (inverter, where the
+//                      motor is the inductance); copper extent is reported
+//   commutation-loop   the input-cap -> switch pair -> return loop whose
+//                      ENCLOSED AREA dominates converter radiated emissions
 //   no-reference-plane copper layer carrying signals with no plane to return on
 //   coverage notes     approximated arcs, missing outline, dropped findings,
 //                      zone-only routed nets invisible to segment coupling
@@ -194,6 +197,7 @@ class Screener {
         std::vector<Finding> out;
         find_no_reference_plane(out);
         find_switch_nodes(out);
+        find_commutation_loops(out);
         find_coupled_runs(out);
         find_plane_crossings(out);
         // rank: severity desc, then coupled length desc
@@ -201,10 +205,37 @@ class Screener {
             if (x.severity != y.severity) return x.severity > y.severity;
             return x.coupled_len_mm > y.coupled_len_mm;
         });
+        // Fair-share selection before the cap. A global sort + truncate lets
+        // one chatty rule eat every slot (6 of 9 corpus boards capped; ulx3s
+        // discarded 2137 findings, mostly to coupled-run). Round-robin one
+        // finding per rule, highest severity first within each rule, so every
+        // rule is represented; the SELECTED set is then ranked for display.
         dropped_by_cap_ = 0;
         if (out.size() > p_.max_findings) {
-            dropped_by_cap_ = out.size() - p_.max_findings;
-            out.resize(p_.max_findings);
+            std::map<std::string, std::vector<Finding>> by_rule;
+            for (auto& f : out) by_rule[f.rule].push_back(std::move(f));
+            for (auto& [rule, v] : by_rule)
+                std::sort(v.begin(), v.end(), [](const Finding& a, const Finding& b) {
+                    return a.severity > b.severity;
+                });
+            std::vector<Finding> picked;
+            picked.reserve(p_.max_findings);
+            for (size_t round = 0; picked.size() < p_.max_findings; ++round) {
+                bool any = false;
+                for (auto& [rule, v] : by_rule) {
+                    if (round >= v.size()) continue;
+                    any = true;
+                    picked.push_back(std::move(v[round]));
+                    if (picked.size() >= p_.max_findings) break;
+                }
+                if (!any) break;
+            }
+            dropped_by_cap_ = out.size() - picked.size();
+            out = std::move(picked);
+            std::sort(out.begin(), out.end(), [](const Finding& a, const Finding& b) {
+                if (a.severity != b.severity) return a.severity > b.severity;
+                return a.coupled_len_mm > b.coupled_len_mm;
+            });
         }
         // ids after ranking
         for (size_t i = 0; i < out.size(); ++i) {
@@ -347,16 +378,167 @@ class Screener {
 
     void build_sw_nets() {
         std::map<int, std::set<std::string>> prefixes;
-        std::map<int, int> pad_count;
+        std::map<int, int> pad_count, q_pads;
         for (const auto& p : b_.pads) {
             if (p.net <= 0 || p.component.empty() || is_pour_net(p.net)) continue;
-            prefixes[p.net].insert(ref_prefix(p.component));
+            std::string pre = ref_prefix(p.component);
+            prefixes[p.net].insert(pre);
             ++pad_count[p.net];
+            if (pre == "Q") ++q_pads[p.net];
         }
         for (auto& [net, pre] : prefixes) {
-            if (!pre.count("L") || !pre.count("Q")) continue;
-            if (pad_count[net] > p_.sw_max_pads) continue;
-            sw_nets_.insert(net);
+            if (pad_count[net] > p_.sw_max_pads) continue;   // a rail, not a node
+            bool buck_like = pre.count("L") && pre.count("Q");
+            // Inverter/half-bridge: several FETs meet with no inductor (the
+            // motor IS the inductance — VESC found 0 switch nodes without
+            // this). But GATE nets also gather many Q pads (VESC's H1_LOW has
+            // 5), so require the net to sit in the POWER path: it must also
+            // reach a capacitor, an inductor or a connector. VESC's phase
+            // nodes carry {Q,C,P,R,U}; its gate nets carry only {Q,R,U}. This
+            // is a topology test, not a trace-width guess — widths overlap too
+            // much to separate them (gate nets run up to 2.29 mm there).
+            bool power_path = pre.count("C") || pre.count("L") ||
+                              pre.count("P") || pre.count("J");
+            bool bridge_like = q_pads[net] >= 2 && power_path;
+            if (buck_like || bridge_like) sw_nets_.insert(net);
+        }
+    }
+
+    // ---- rule: commutation loop area (THE converter EMC metric) ----
+    // The high-di/dt loop is input-cap(+) -> high-side switch -> switch node ->
+    // low-side switch -> input-cap(-). Its ENCLOSED AREA sets radiated
+    // emissions and ringing. We find it from connectivity: the FETs on a
+    // switch node, and the nearest capacitor bridging one of their other rails
+    // to a pour net. Reported as a heuristic with the geometry drawn, so the
+    // user can see exactly which loop was measured.
+    struct LoopResult {
+        double area_mm2 = 0;
+        double cap_dist_mm = 0;
+        std::string cap_ref;
+        std::vector<Point> hull;
+    };
+
+    std::optional<LoopResult> commutation_loop(int sw_net) const {
+        // FETs on the switch node
+        std::set<std::string> fets;
+        for (const auto& p : b_.pads)
+            if (p.net == sw_net && ref_prefix(p.component) == "Q")
+                fets.insert(p.component);
+        if (fets.empty()) return std::nullopt;
+
+        // rails those FETs also touch (excluding the switch node and pours)
+        std::set<int> rails;
+        std::vector<Point> pts;
+        for (const auto& p : b_.pads) {
+            if (!fets.count(p.component)) continue;
+            pts.push_back({p.x, p.y});
+            if (p.net > 0 && p.net != sw_net && !is_pour_net(p.net)) rails.insert(p.net);
+        }
+        if (pts.empty()) return std::nullopt;
+        double cx = 0, cy = 0;
+        for (const auto& p : pts) { cx += p.x; cy += p.y; }
+        cx /= pts.size(); cy /= pts.size();
+
+        // the input cap: a C bridging one of those rails to a pour, nearest
+        // to the FET cluster
+        std::map<std::string, std::set<int>> cap_nets;
+        std::map<std::string, std::vector<Point>> cap_pts;
+        for (const auto& p : b_.pads) {
+            if (ref_prefix(p.component) != "C" || p.net <= 0) continue;
+            cap_nets[p.component].insert(p.net);
+            cap_pts[p.component].push_back({p.x, p.y});
+        }
+        LoopResult best;
+        double best_d = 1e30;
+        for (auto& [ref, nets] : cap_nets) {
+            bool on_rail = false, on_pour = false;
+            for (int n : nets) {
+                if (rails.count(n)) on_rail = true;
+                if (is_pour_net(n)) on_pour = true;
+            }
+            if (!on_rail || !on_pour) continue;
+            for (const auto& cp : cap_pts[ref]) {
+                double d = std::hypot(cp.x - cx, cp.y - cy);
+                if (d < best_d) { best_d = d; best.cap_ref = ref; }
+            }
+        }
+        if (best.cap_ref.empty()) return std::nullopt;
+
+        // loop geometry = convex hull of the FET pads + that cap's pads
+        std::vector<Point> all = pts;
+        for (const auto& cp : cap_pts[best.cap_ref]) all.push_back(cp);
+        best.hull = convex_hull(all);
+        double a = 0;
+        for (size_t i = 0, n = best.hull.size(); i < n; ++i) {
+            const Point& p = best.hull[i];
+            const Point& q = best.hull[(i + 1) % n];
+            a += p.x * q.y - q.x * p.y;
+        }
+        best.area_mm2 = std::abs(a) / 2.0;
+        best.cap_dist_mm = best_d;
+        return best;
+    }
+
+    static std::vector<Point> convex_hull(std::vector<Point> p) {
+        if (p.size() < 3) return p;
+        std::sort(p.begin(), p.end(), [](const Point& a, const Point& b) {
+            return a.x != b.x ? a.x < b.x : a.y < b.y;
+        });
+        auto cross = [](const Point& o, const Point& a, const Point& b) {
+            return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+        };
+        std::vector<Point> h(2 * p.size());
+        size_t k = 0;
+        for (size_t i = 0; i < p.size(); ++i) {
+            while (k >= 2 && cross(h[k - 2], h[k - 1], p[i]) <= 0) --k;
+            h[k++] = p[i];
+        }
+        for (size_t i = p.size() - 1, t = k + 1; i > 0; --i) {
+            while (k >= t && cross(h[k - 2], h[k - 1], p[i - 1]) <= 0) --k;
+            h[k++] = p[i - 1];
+        }
+        h.resize(k ? k - 1 : 0);
+        return h;
+    }
+
+    void find_commutation_loops(std::vector<Finding>& out) {
+        for (int net : sw_nets_) {
+            auto loop = commutation_loop(net);
+            if (!loop) continue;
+            Finding f;
+            f.rule = "commutation-loop";
+            // 20 mm^2 is tight, 200 mm^2 is poor — the span engineers work in
+            f.severity = std::clamp(0.35 + (loop->area_mm2 - 20.0) / 300.0, 0.35, 0.95);
+            f.severity_label = f.severity > 0.66 ? "high" : "medium";
+            f.confidence = "heuristic";
+            f.net_a = net;
+            f.coupled_len_mm = loop->area_mm2;
+            char buf[280];
+            std::snprintf(buf, sizeof buf,
+                          "Commutation loop around %s encloses about %.0f mm^2; "
+                          "the nearest bulk/input capacitor (%s) sits %.1f mm "
+                          "from the switching devices.",
+                          b_.net_name(net).c_str(), loop->area_mm2,
+                          loop->cap_ref.c_str(), loop->cap_dist_mm);
+            f.title = "Commutation loop: " + b_.net_name(net) + " (" +
+                      std::to_string((int)loop->area_mm2) + " mm^2)";
+            f.detail = std::string(buf) +
+                       " This loop carries the discontinuous switching current; "
+                       "its enclosed area is the dominant radiated-emission and "
+                       "ringing mechanism in a converter. The loop shown is the "
+                       "hull of the switching devices and that capacitor — "
+                       "verify it matches your intended commutation path.";
+            f.remediation = "Move the input capacitor as close to the switch "
+                            "pair as the footprints allow, and place the return "
+                            "plane directly beneath the loop so the return "
+                            "current cancels the forward path.";
+            // draw the hull
+            for (size_t i = 0; i < loop->hull.size(); ++i) {
+                const Point& a = loop->hull[i];
+                const Point& b = loop->hull[(i + 1) % loop->hull.size()];
+                f.geom.lines.push_back({net, 0, a.x, a.y, b.x, b.y, 0.25});
+            }
+            out.push_back(std::move(f));
         }
     }
 
