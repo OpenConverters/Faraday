@@ -1,0 +1,55 @@
+# faraday.openconverters.com — static SPA, WASM engine, no backend.
+# Mirrors the Hertz vhost. Installed to /etc/nginx/sites-available/faraday
+# and symlinked into sites-enabled by scripts/deploy.sh.
+# TLS lines are added by certbot once the DNS A record exists.
+server {
+    server_name faraday.openconverters.com;
+
+    access_log /var/log/faraday_web_access.log;
+    error_log /var/log/faraday_web_error.log;
+
+    charset utf-8;
+    root    /opt/faraday/dist;
+    index   index.html;
+
+    gzip_static on;
+
+    # Content-hashed build assets — safe to cache hard.
+    location /assets/ {
+        include /etc/nginx/snippets/oc-security-headers.conf;
+        try_files $uri =404;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+
+    # The engine has a stable name: revalidate so redeploys reach returning visitors.
+    location = /faraday.js {
+        include /etc/nginx/snippets/oc-security-headers.conf;
+        add_header Cache-Control "no-cache";
+    }
+    location = /faraday.wasm {
+        include /etc/nginx/snippets/oc-security-headers.conf;
+        add_header Cache-Control "no-cache";
+        types { application/wasm wasm; }
+    }
+
+    # Umami analytics — same-box OM instance, same-origin first-party tracker.
+    location = /stats { return 308 /stats/; }
+    location /stats/ {
+        include /etc/nginx/snippets/oc-security-headers.conf;
+        proxy_pass http://127.0.0.1:3000;
+        proxy_http_version 1.1;
+        proxy_set_header Host              $host;
+        proxy_set_header X-Real-IP         $remote_addr;
+        proxy_set_header X-Forwarded-For   $proxy_add_x_forwarded_for;
+        proxy_set_header X-Forwarded-Proto $scheme;
+    }
+
+    location / {
+        include /etc/nginx/snippets/oc-security-headers.conf;
+        include /etc/nginx/snippets/oc-csp.conf;
+        try_files $uri $uri/ /index.html;
+    }
+
+    listen 80;
+}
