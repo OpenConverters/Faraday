@@ -3,7 +3,7 @@
 // Screens the board and prints the ranked findings; writes the full report
 // JSON (board geometry + findings + meta) for the web viewer.
 
-#include <faraday/KicadImporter.hpp>
+#include <faraday/Import.hpp>
 #include <faraday/Screener.hpp>
 
 #include <fstream>
@@ -23,8 +23,9 @@ int main(int argc, char** argv) {
         }
     }
     if (board_path.empty()) {
-        std::cerr << "usage: faraday_cli board.kicad_pcb "
-                     "[--stackup default-2layer|default-4layer] [-o report.json]\n";
+        std::cerr << "usage: faraday_cli <board.kicad_pcb|board.hyp|board.xml> "
+                     "[--stackup default-<N>layer] [-o report.json]\n"
+                     "       format is detected from the file's contents\n";
         return 2;
     }
 
@@ -36,7 +37,10 @@ int main(int argc, char** argv) {
 
         std::optional<faraday::Stackup> user;
         if (!stackup_name.empty()) user = faraday::builtin_stackup(stackup_name);
-        faraday::BoardIR board = faraday::import_kicad(ss.str(), std::move(user));
+        faraday::BoardFormat fmt;
+        faraday::BoardIR board =
+            faraday::import_board(ss.str(), std::move(user), &fmt);
+        std::cout << "format: " << faraday::format_name(fmt) << "\n";
 
         nlohmann::json report = faraday::analyze_board(board);
 

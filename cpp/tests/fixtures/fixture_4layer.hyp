@@ -1,0 +1,61 @@
+* Hand-authored HyperLynx .HYP fixture for Faraday's importer tests.
+* Metric units, 4 copper layers with an inner PLANE, and one of each record
+* type the importer supports: SEG, ARC, VIA, PIN, POLYGON.
+* Two parallel signals 0.5 mm apart over a plane -> a known coupled run.
+
+{VERSION=2.14}
+{UNITS=METRIC LENGTH=MM}
+
+{BOARD
+(PERIMETER_SEGMENT X1=0.0 Y1=0.0 X2=50.0 Y2=0.0)
+(PERIMETER_SEGMENT X1=50.0 Y1=0.0 X2=50.0 Y2=30.0)
+(PERIMETER_SEGMENT X1=50.0 Y1=30.0 X2=0.0 Y2=30.0)
+(PERIMETER_SEGMENT X1=0.0 Y1=30.0 X2=0.0 Y2=0.0)
+}
+
+{STACKUP
+(SIGNAL T=0.035 P=0.035 L=Top)
+(DIELECTRIC T=0.2 C=4.4 L=DL01)
+(PLANE T=0.035 L=GNDPLANE)
+(DIELECTRIC T=1.065 C=4.5 L=DL02)
+(SIGNAL T=0.035 L=In2)
+(DIELECTRIC T=0.2 C=4.4 L=DL03)
+(SIGNAL T=0.035 P=0.035 L=Bottom)
+}
+
+{DEVICES
+(U REF="U1" NAME="QFN32" L="Top")  R000 X=10.0 Y=20.0 : Pins 32
+(C REF="C1" VAL=100n L="Top")  R000 X=30.0 Y=20.0 : Pins 2
+}
+
+{PADSTACK=SMD001
+(Top,1,0.9,0.95,0.0) ISASMD
+}
+
+{PADSTACK=VIA001
+(MDEF,0,0.6,0.6,0.0)
+}
+
+{NET=CLK
+(SEG X1=5.0 Y1=10.0 X2=45.0 Y2=10.0 W=0.3 L=Top)
+(PIN X=5.0 Y=10.0 R=U1.1 P=SMD001) driver
+(VIA X=45.0 Y=10.0 L1=Top L2=Bottom D=0.3 S=0.6)
+}
+
+{NET=DATA
+(SEG X1=5.0 Y1=10.5 X2=45.0 Y2=10.5 W=0.3 L=Top)
+(PIN X=5.0 Y=10.5 R=U1.2 P=SMD001) driver
+(ARC X1=45.0 Y1=10.5 X2=46.0 Y2=11.5 XC=45.0 YC=11.5 R=1.0 W=0.3 L=Top)
+}
+
+{NET=GND
+(PIN X=10.0 Y=25.0 R=C1.2 P=SMD001) return
+  {POLYGON L="GNDPLANE" T=POUR W=0 ID=1 X=1.0 Y=1.0
+    (LINE X=49.0 Y=1.0 )
+    (LINE X=49.0 Y=29.0 )
+    (LINE X=1.0 Y=29.0 )
+    (LINE X=1.0 Y=1.0 )
+  }
+}
+
+{END}

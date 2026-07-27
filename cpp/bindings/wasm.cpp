@@ -8,16 +8,19 @@
 
 #include <emscripten/bind.h>
 
-#include <faraday/KicadImporter.hpp>
+#include <faraday/Import.hpp>
 #include <faraday/Screener.hpp>
 
-static std::string analyze(std::string kicad_text, std::string stackup_name) {
+static std::string analyze(std::string board_text, std::string stackup_name) {
     try {
         std::optional<faraday::Stackup> user;
         if (!stackup_name.empty()) user = faraday::builtin_stackup(stackup_name);
+        faraday::BoardFormat fmt;
         faraday::BoardIR board =
-            faraday::import_kicad(kicad_text, std::move(user));
-        return faraday::analyze_board(board).dump();
+            faraday::import_board(board_text, std::move(user), &fmt);
+        nlohmann::json out = faraday::analyze_board(board);
+        out["format"] = faraday::format_name(fmt);
+        return out.dump();
     } catch (const std::exception& e) {
         return nlohmann::json{{"error", e.what()}}.dump();
     }

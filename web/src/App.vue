@@ -84,7 +84,7 @@ function toggleRule(rule) {
       <span class="tagline">EMC design review — runs in your browser, nothing is uploaded</span>
       <div class="spacer" />
       <label class="filebtn">
-        <input data-testid="file-input" type="file" accept=".kicad_pcb"
+        <input data-testid="file-input" type="file" accept=".kicad_pcb,.hyp,.HYP,.xml"
                @change="e => onFile(e.target.files[0])" />
         {{ fileName || 'Open board file' }}
       </label>
@@ -117,13 +117,16 @@ function toggleRule(rule) {
 
     <div v-else-if="!needStackup" class="empty" :class="{ over: dragOver }">
       <div class="board-ghost" aria-hidden="true" />
-      <p class="invite">Drop a <code>.kicad_pcb</code> here</p>
-      <p class="sub">Faraday screens the whole board for coupled runs, 3W violations and
-         return-path breaks, ranks the risk, and renders it on the copper.
+      <p class="invite">Drop a board here</p>
+      <p class="formats"><code>.kicad_pcb</code> · <code>.hyp</code> · <code>IPC-2581 .xml</code></p>
+      <p class="sub">Faraday screens the whole board for coupled runs, return-path breaks,
+         via and open stubs, decoupling reach, and — on converters — switch nodes and
+         commutation-loop area. It ranks the risk and renders it on the copper.
          Analysis runs here, in your browser — your layout never leaves this machine.</p>
     </div>
 
     <footer v-if="meta" class="metastrip" data-testid="meta-strip">
+      <span class="m">format: <b>{{ report.format }}</b></span>
       <span class="m">stackup: <b>{{ meta.stackupSource }}</b></span>
       <span v-for="p in meta.planes" :key="p.layer" class="m">
         {{ p.layer }} <b>{{ p.isPlane ? 'plane' : 'signal' }}</b>

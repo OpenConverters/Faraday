@@ -27,7 +27,9 @@ if(FARADAY_BUILD_TESTS)
         tests/test_importer.cpp
         tests/test_tline.cpp
         tests/test_screener.cpp
-        tests/test_real_boards.cpp)
+        tests/test_real_boards.cpp
+        tests/test_hyp.cpp
+        tests/test_ipc.cpp)
     target_link_libraries(test_faraday PRIVATE faraday Catch2::Catch2WithMain)
     target_compile_definitions(test_faraday PRIVATE
         FARADAY_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")

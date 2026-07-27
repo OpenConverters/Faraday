@@ -98,6 +98,25 @@ test('rule filter mutes a rule in both the list and the board overlay', async ({
   await expect(breaks).toHaveCount(nBreaks)
 })
 
+test('HYP and IPC-2581 boards load, detected by content', async ({ page }) => {
+  const consoleErrors = []
+  page.on('pageerror', e => consoleErrors.push(String(e)))
+  await page.goto('/')
+
+  for (const [file, format] of [['fixture_4layer.hyp', 'hyp'],
+                                ['fixture_4layer.xml', 'ipc2581']]) {
+    await page.getByTestId('file-input').setInputFiles(
+      path.join(here, '../../../cpp/tests/fixtures/', file))
+    await expect(page.getByTestId('finding-count')).toBeVisible()
+    await expect(page.getByTestId('meta-strip')).toContainText(`format: ${format}`)
+    // both fixtures describe the same CLK/DATA pair over a plane
+    await expect(page.getByTestId('meta-strip')).toContainText('board-file')
+    await expect(page.locator('[data-testid^="finding-F-"]',
+                              { hasText: 'CLK' }).first()).toBeVisible()
+  }
+  expect(consoleErrors).toEqual([])
+})
+
 test('tooltip appears when hovering routed copper', async ({ page }) => {
   await page.goto('/')
   await page.getByTestId('file-input').setInputFiles(FIXTURE)

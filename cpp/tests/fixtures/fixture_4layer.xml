@@ -1,0 +1,106 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- Hand-authored IPC-2581 rev C fixture for Faraday's importer tests.
+     Millimetre units, 4 conductor layers with an inner plane, permittivity
+     supplied as <Attribute> (the schema has no fixed field for it), and the
+     same CLK/DATA pair the other fixtures use so results are comparable. -->
+<IPC-2581 revision="C" xmlns="http://webstds.ipc.org/2581">
+  <Content/>
+  <Ecad name="board">
+    <CadHeader units="MILLIMETER"/>
+    <CadData>
+      <Layer name="TOP"    layerFunction="CONDUCTOR" side="TOP"      polarity="POSITIVE" id="L1"/>
+      <Layer name="DIEL1"  layerFunction="DIELPREG"  side="INTERNAL" polarity="POSITIVE" id="D1"/>
+      <Layer name="INNER1" layerFunction="PLANE"     side="INTERNAL" polarity="POSITIVE" id="L2"/>
+      <Layer name="DIEL2"  layerFunction="DIELCORE"  side="INTERNAL" polarity="POSITIVE" id="D2"/>
+      <Layer name="INNER2" layerFunction="CONDUCTOR" side="INTERNAL" polarity="POSITIVE" id="L3"/>
+      <Layer name="DIEL3"  layerFunction="DIELPREG"  side="INTERNAL" polarity="POSITIVE" id="D3"/>
+      <Layer name="BOTTOM" layerFunction="CONDUCTOR" side="BOTTOM"   polarity="POSITIVE" id="L4"/>
+
+      <Stackup overallThickness="1.6" tolPlus="0.1" tolMinus="0.1" whereMeasured="LAMINATE">
+        <StackupGroup name="primary" thickness="1.6" tolPlus="0.1" tolMinus="0.1">
+          <StackupLayer layerOrGroupRef="TOP"    materialType="COPPER"     thickness="0.035"/>
+          <StackupLayer layerOrGroupRef="DIEL1"  materialType="DIELECTRIC" thickness="0.2">
+            <Attribute name="DIELECTRIC_CONSTANT" value="4.4"/>
+          </StackupLayer>
+          <StackupLayer layerOrGroupRef="INNER1" materialType="COPPER"     thickness="0.035"/>
+          <StackupLayer layerOrGroupRef="DIEL2"  materialType="DIELECTRIC" thickness="1.065">
+            <Attribute name="DIELECTRIC_CONSTANT" value="4.5"/>
+          </StackupLayer>
+          <StackupLayer layerOrGroupRef="INNER2" materialType="COPPER"     thickness="0.035"/>
+          <StackupLayer layerOrGroupRef="DIEL3"  materialType="DIELECTRIC" thickness="0.2">
+            <Attribute name="DIELECTRIC_CONSTANT" value="4.4"/>
+          </StackupLayer>
+          <StackupLayer layerOrGroupRef="BOTTOM" materialType="COPPER"     thickness="0.035"/>
+        </StackupGroup>
+      </Stackup>
+
+      <Step name="board">
+        <Profile>
+          <Polygon>
+            <PolyBegin x="0" y="0"/>
+            <PolyStepSegment x="50" y="0"/>
+            <PolyStepSegment x="50" y="30"/>
+            <PolyStepSegment x="0" y="30"/>
+            <PolyStepSegment x="0" y="0"/>
+          </Polygon>
+        </Profile>
+
+        <Component refDes="U1" packageRef="QFN32" layerRef="TOP" part="MCU">
+          <Location x="8" y="20"/>
+        </Component>
+        <Component refDes="C1" packageRef="C0402" layerRef="TOP" part="100n">
+          <Location x="30" y="20"/>
+        </Component>
+
+        <LogicalNet name="CLK">
+          <PinRef componentRef="U1" pin="1"/>
+        </LogicalNet>
+        <LogicalNet name="DATA">
+          <PinRef componentRef="U1" pin="2"/>
+        </LogicalNet>
+        <LogicalNet name="GND">
+          <PinRef componentRef="C1" pin="2"/>
+        </LogicalNet>
+
+        <LayerFeature layerRef="TOP">
+          <Set net="CLK">
+            <Features>
+              <Location x="0" y="0"/>
+              <Line startX="5" startY="10" endX="45" endY="10">
+                <LineDescRef id="W300"/>
+              </Line>
+            </Features>
+          </Set>
+          <Set net="DATA">
+            <Features>
+              <Location x="0" y="0"/>
+              <Line startX="5" startY="10.5" endX="45" endY="10.5">
+                <LineDescRef id="W300"/>
+              </Line>
+            </Features>
+          </Set>
+        </LayerFeature>
+
+        <LayerFeature layerRef="INNER1">
+          <Set net="GND">
+            <Features>
+              <Location x="0" y="0"/>
+              <Polygon>
+                <PolyBegin x="1" y="1"/>
+                <PolyStepSegment x="49" y="1"/>
+                <PolyStepSegment x="49" y="29"/>
+                <PolyStepSegment x="1" y="29"/>
+                <PolyStepSegment x="1" y="1"/>
+              </Polygon>
+            </Features>
+          </Set>
+        </LayerFeature>
+      </Step>
+    </CadData>
+  </Ecad>
+  <DictionaryLineDesc units="MILLIMETER">
+    <EntryLineDesc id="W300">
+      <LineDesc lineEnd="ROUND" lineWidth="0.3"/>
+    </EntryLineDesc>
+  </DictionaryLineDesc>
+</IPC-2581>
