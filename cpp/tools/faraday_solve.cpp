@@ -69,6 +69,8 @@ int main(int argc, char** argv) {
     const double len_mm = arg_num(argc, argv, "--len", 0.0);
     const std::string deck_path = arg_str(argc, argv, "--deck", "");
     const std::string field_path = arg_str(argc, argv, "--field", "");
+    // --mesh keeps the generated mesh for inspection instead of deleting it
+    const std::string mesh_out = arg_str(argc, argv, "--mesh", "");
 
     if (!have_w || sep <= 0 || h <= 0 || er <= 0 || len_mm <= 0) {
         std::cerr <<
@@ -238,6 +240,10 @@ int main(int argc, char** argv) {
             std::printf("   run it: faraday_spice %s --victim 1 --sections %d "
                         "--vdd %.1f\n", deck_path.c_str(), o.sections, o.amplitude_v);
 
+        if (!mesh_out.empty()) {
+            cs.write_gmsh(mesh_out);
+            std::printf("mesh: %s\n", mesh_out.c_str());
+        }
         std::remove(mesh.c_str());
         return 0;
     } catch (const std::exception& e) {
