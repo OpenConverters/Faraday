@@ -41,7 +41,9 @@ export async function unzip(arrayBuffer) {
     const lExtraLen = dv.getUint16(localOff + 28, true)
     const data = buf.subarray(localOff + 30 + lNameLen + lExtraLen,
                               localOff + 30 + lNameLen + lExtraLen + csize)
-    files.push({ name: name.split('/').pop(), method, data })
+    // full path kept: Gerber detection is content-based and does not care,
+    // but an ODB++ job IS its directory structure (matrix/matrix, steps/...)
+    files.push({ name, method, data })
   }
 
   const out = []

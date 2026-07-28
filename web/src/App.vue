@@ -445,7 +445,7 @@ function toggleRule(rule) {
       <div class="board-ghost" aria-hidden="true" />
       <p class="invite">Drop a board here</p>
       <p class="formats"><code>.kicad_pcb</code> · <code>.hyp</code> · <code>IPC-2581 .xml</code>
-         · <code>Gerber X2 set</code> (all files, or one zip)</p>
+         · <code>Gerber X2 set</code> · <code>ODB++ job</code> (files, or one zip)</p>
       <button class="chip" data-testid="open-calc" @click="calcOpen = true">
         impedance calculator — no board needed</button>
       <button class="chip" data-testid="load-demo" @click="loadDemo">

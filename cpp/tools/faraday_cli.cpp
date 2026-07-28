@@ -33,15 +33,18 @@ int main(int argc, char** argv) {
         else if (a == "--fail-on" && i + 1 < argc) fail_on = argv[++i];
         else board_paths.push_back(a);
     }
+    std::string dir_root;   // non-empty → paths become relative to it
     if (board_paths.size() == 1 &&
         std::filesystem::is_directory(board_paths[0])) {
-        const std::string dir = board_paths[0];
+        dir_root = board_paths[0];
         board_paths.clear();
-        for (const auto& e : std::filesystem::directory_iterator(dir))
+        // recursive: an ODB++ job is a tree (matrix/matrix, steps/...)
+        for (const auto& e :
+             std::filesystem::recursive_directory_iterator(dir_root))
             if (e.is_regular_file()) board_paths.push_back(e.path().string());
         std::sort(board_paths.begin(), board_paths.end());
         if (board_paths.empty()) {
-            std::cerr << dir << " contains no files\n";
+            std::cerr << dir_root << " contains no files\n";
             return 2;
         }
     }
@@ -56,8 +59,11 @@ int main(int argc, char** argv) {
     try {
         std::vector<faraday::gerber::NamedFile> files;
         for (const auto& p : board_paths)
-            files.push_back({std::filesystem::path(p).filename().string(),
-                             slurp(p)});
+            files.push_back(
+                {dir_root.empty()
+                     ? std::filesystem::path(p).filename().string()
+                     : std::filesystem::relative(p, dir_root).generic_string(),
+                 slurp(p)});
 
         std::optional<faraday::Stackup> user;
         if (!stackup_name.empty()) user = faraday::builtin_stackup(stackup_name);

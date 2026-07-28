@@ -223,3 +223,15 @@ test('toggling the return-path overlay does not move the board', async ({ page }
   expect(after.y).toBe(before.y)
   expect(after.height).toBe(before.height)
 })
+
+test('an ODB++ job zip imports with exact nets and analyses', async ({ page }) => {
+  await page.goto('/')
+  await page.getByTestId('file-input').setInputFiles(
+    path.join(here, '../../../cpp/tests/fixtures/odb_job.zip'))
+  // ODB++ carries no stackup — the card must appear, never a silent default
+  await expect(page.getByTestId('stackup-card')).toBeVisible({ timeout: LOAD_MS })
+  await page.getByTestId('stackup-card').getByText('Default 2-layer FR4').click()
+  await expect(page.getByTestId('meta-strip'))
+    .toContainText('format: odb++', { timeout: LOAD_MS })
+  await expect(page.getByTestId('finding-F-0001')).toBeVisible()
+})

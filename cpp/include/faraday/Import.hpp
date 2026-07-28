@@ -5,6 +5,7 @@
 
 #include "BoardIR.hpp"
 #include "GerberImporter.hpp"
+#include "OdbImporter.hpp"
 #include "HypImporter.hpp"
 #include "IpcImporter.hpp"
 #include "KicadImporter.hpp"
@@ -14,7 +15,7 @@
 
 namespace faraday {
 
-enum class BoardFormat { Kicad, Hyp, Ipc2581, GerberSet };
+enum class BoardFormat { Kicad, Hyp, Ipc2581, GerberSet, Odb };
 
 inline const char* format_name(BoardFormat f) {
     switch (f) {
@@ -22,6 +23,7 @@ inline const char* format_name(BoardFormat f) {
         case BoardFormat::Hyp: return "hyp";
         case BoardFormat::Ipc2581: return "ipc2581";
         case BoardFormat::GerberSet: return "gerber-x2";
+        case BoardFormat::Odb: return "odb++";
     }
     return "?";
 }
@@ -72,6 +74,10 @@ inline BoardIR import_board_set(const std::vector<gerber::NamedFile>& files,
                                 std::optional<Stackup> user_stackup = std::nullopt,
                                 BoardFormat* detected = nullptr) {
     if (files.empty()) throw BoardError("import_board_set: no files");
+    if (odb::is_odb_set(files)) {
+        if (detected) *detected = BoardFormat::Odb;
+        return odb::import_odb(files, std::move(user_stackup));
+    }
     bool any_gerber = false;
     for (const auto& f : files)
         any_gerber = any_gerber || gerber::looks_gerber(f.text) ||
@@ -80,8 +86,9 @@ inline BoardIR import_board_set(const std::vector<gerber::NamedFile>& files,
         return import_board(files[0].text, std::move(user_stackup), detected);
     if (!any_gerber)
         throw BoardError(
-            "multiple files, none of them Gerber — Faraday takes one KiCad/"
-            "HyperLynx/IPC-2581 file, or a Gerber X2 set.");
+            "multiple files, none of them Gerber and no ODB++ matrix/matrix — "
+            "Faraday takes one KiCad/HyperLynx/IPC-2581 file, a Gerber X2 "
+            "set, or an ODB++ job (zip or directory).");
     if (detected) *detected = BoardFormat::GerberSet;
     return gerber::import_gerber_set(files, std::move(user_stackup));
 }

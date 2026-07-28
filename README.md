@@ -166,8 +166,8 @@ the view that shows it.
 | HyperLynx `.hyp` | ✅ full |
 | IPC-2581 `.xml` | ✅ full |
 | Gerber X2 set + Excellon | ✅ full — drop all files (or one zip); needs X2 `%TO.N` net attributes (KiCad's default), because plain RS-274X carries **no netlist** and a netless board would make most rules meaningless. Through vias only; clear-polarity objects are skipped and counted |
-| ODB++ | ❌ not yet — a zipped directory tree, a substantially larger importer (tracked) |
-| Altium / Eagle | ❌ export to IPC-2581 (or Gerber X2) from those tools and load that |
+| ODB++ | ✅ full — drop the job as one zip (or point the CLI at the directory); needs `eda/data` in the export, which is where the netlist lives. Nets, component values, via spans are exact. Surface holes skipped and counted |
+| Altium / Eagle | export **ODB++** or IPC-2581 from those tools and load that |
 
 Detection is by content, not extension.
 
