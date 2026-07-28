@@ -141,6 +141,31 @@ TEST_CASE("losing the reference plane is what dominates a map", "[radmap]") {
                          1e-9));
 }
 
+TEST_CASE("a trace over a plane void closes a bigger loop than one over copper",
+          "[radmap]") {
+    // The check that makes this a MAP rather than a net highlight: the colour
+    // must vary with WHERE the copper is, not just which layer and which net.
+    // Same trace, same net, same layer — one over the pour, one over a hole in
+    // it.
+    BoardIR b = toy(true);
+    b.segments.clear();
+    b.segments.push_back({1, 0, 1.0, 2.0, 9.0, 2.0, 0.25});    // over solid pour
+    b.segments.push_back({1, 0, 1.0, 15.0, 9.0, 15.0, 0.25});  // over the void
+    // punch a void in the plane under the second one
+    b.zones.clear();
+    b.zones.push_back({2, 1, {{0, 0}, {20, 0}, {20, 12}, {0, 12}}});
+
+    const radmap::MapResult r = run(b);
+    REQUIRE(r.segments.size() == 2);
+    CHECK_FALSE(r.segments[0].over_void);
+    CHECK(r.segments[1].over_void);
+    CHECK_THAT(r.segments[1].unreferenced_fraction, WithinAbs(1.0, 1e-9));
+    CHECK(r.over_void_count == 1);
+    // and it costs real loop area, so it must actually be louder
+    CHECK(r.segments[1].e_v_per_m > r.segments[0].e_v_per_m * 2);
+    CHECK(r.segments[1].height_mm > r.segments[0].height_mm);
+}
+
 TEST_CASE("a switch node is given the switched current, not swing over Z0",
           "[radmap]") {
     BoardIR b = toy();

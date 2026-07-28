@@ -480,6 +480,7 @@ inline nlohmann::json radiation_map_json(const BoardIR& board,
             {"totalDbuvM", r.total_dbuv_m},
             {"maxEVPerM", r.max_e_v_per_m},
             {"noReferenceCount", (int)r.no_reference_count},
+            {"overVoidCount", (int)r.over_void_count},
             {"noReferenceSharePct", 100.0 * r.no_reference_share},
             {"distanceM", p.r_m},
             {"top", top}};

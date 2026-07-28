@@ -139,6 +139,9 @@ function toggleRule(rule) {
       <b>Radiation attribution</b>
       <span>{{ radiation.totalDbuvM.toFixed(1) }} dBµV/m total at
         {{ radiation.distanceM.toFixed(0) }} m, over {{ radiation.counted }} segments</span>
+      <span v-if="radiation.overVoidCount" class="warn" data-testid="rad-void">
+        {{ radiation.overVoidCount }} segments run over a plane void or split —
+        their return current detours, and the map shows what that costs</span>
       <span v-if="radiation.noReferenceCount" class="warn">
         {{ radiation.noReferenceCount }} segments have no reference plane —
         {{ radiation.noReferenceSharePct.toFixed(0) }}% of the total</span>

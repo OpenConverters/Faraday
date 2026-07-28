@@ -78,6 +78,8 @@ struct SegmentContribution {
     double height_mm = 0;
     bool no_reference = false;
     bool switch_node = false;
+    bool over_void = false;             // the plane is missing under part of it
+    double unreferenced_fraction = 0;   // how much of it
 };
 
 struct MapResult {
@@ -86,7 +88,7 @@ struct MapResult {
     double total_dbuv_m = 0;
     double max_e_v_per_m = 0;
     double max_e_per_m = 0;      // peak loudness per unit length, for colouring
-    size_t counted = 0, no_reference_count = 0;
+    size_t counted = 0, no_reference_count = 0, over_void_count = 0;
     double no_reference_share = 0;  // fraction of total POWER from those
     std::vector<size_t> top;        // segment indices, largest first
 };
@@ -103,6 +105,34 @@ inline double loop_height_mm(const LayerModel& lm, const MapParams& p,
     return p.no_reference_height_mm;
 }
 
+// Is there reference-plane copper directly beneath (or above) this point?
+// Bounding boxes first, then the even-odd ray cast — the same two-step the
+// plane-crossing rule uses, and the reason this is affordable per segment.
+struct PlaneLookup {
+    struct Box { double x1, y1, x2, y2; const ZonePoly* z; };
+    std::vector<std::vector<Box>> by_layer;
+
+    PlaneLookup(const BoardIR& b, size_t n_layers) : by_layer(n_layers) {
+        for (const auto& z : b.zones) {
+            if (z.cu < 0 || (size_t)z.cu >= n_layers) continue;
+            Box box{1e30, 1e30, -1e30, -1e30, &z};
+            for (const auto& q : z.pts) {
+                box.x1 = std::min(box.x1, q.x); box.y1 = std::min(box.y1, q.y);
+                box.x2 = std::max(box.x2, q.x); box.y2 = std::max(box.y2, q.y);
+            }
+            by_layer[z.cu].push_back(box);
+        }
+    }
+    bool covered(int cu, double x, double y) const {
+        if (cu < 0 || (size_t)cu >= by_layer.size()) return false;
+        for (const auto& b : by_layer[cu]) {
+            if (x < b.x1 || x > b.x2 || y < b.y1 || y > b.y2) continue;
+            if (b.z->contains(x, y)) return true;
+        }
+        return false;
+    }
+};
+
 inline MapResult compute(const BoardIR& board, const Screener& screener,
                          const MapParams& p) {
     if (!(p.r_m > 0) || !(p.rise_s > 0) || !(p.f_sw_hz > 0))
@@ -114,6 +144,7 @@ inline MapResult compute(const BoardIR& board, const Screener& screener,
 
     const std::vector<LayerModel>& layers = screener.layer_models();
     const double gain = p.ground_reflection ? emc::GROUND_REFLECTION : 1.0;
+    const PlaneLookup planes(board, layers.size());
 
     MapResult r;
     r.segments.resize(board.segments.size());
@@ -128,6 +159,46 @@ inline MapResult compute(const BoardIR& board, const Screener& screener,
 
         SegmentContribution c;
         c.height_mm = loop_height_mm(layers[s.cu], p, &c.no_reference);
+
+        // THE PART THAT MAKES THIS A MAP. The stackup height is what the
+        // reference plane would give you IF it were actually there under this
+        // particular copper. Sample along the segment and check. Where the
+        // plane is missing — a void, a split, the edge of a pour — the return
+        // current cannot run underneath, it detours, and the loop closes over
+        // the next plane down or over the board itself.
+        //
+        // Without this the colour varies only per LAYER and per net class, so
+        // the picture reduces to "the switch nets are hot", which the findings
+        // list already said. With it, a signal trace crossing a void outshines
+        // a switch node over solid ground — which is the truth.
+        const LayerModel& lm = layers[s.cu];
+        const int ref_cu = (lm.ref_dn >= 0) ? lm.ref_dn : lm.ref_up;
+        if (ref_cu >= 0) {
+            const int samples = std::clamp((int)std::ceil(len_mm / 0.5), 2, 24);
+            int uncovered = 0;
+            for (int k = 0; k < samples; ++k) {
+                const double f = (k + 0.5) / samples;
+                if (!planes.covered(ref_cu, s.x1 + dx * f, s.y1 + dy * f)) ++uncovered;
+            }
+            c.unreferenced_fraction = (double)uncovered / samples;
+            if (uncovered > 0) {
+                // the fallback the return has to use where the plane is gone
+                double alt = p.no_reference_height_mm;
+                for (size_t j = 0; j < layers.size(); ++j) {
+                    if ((int)j == ref_cu || (int)j == s.cu || !layers[j].is_plane)
+                        continue;
+                    double h = 0, eps = 0;
+                    board.stackup.dielectric_between(std::min((size_t)s.cu, j),
+                                                     std::max((size_t)s.cu, j), h, eps);
+                    if (h > c.height_mm) { alt = std::min(alt, h); }
+                }
+                // area-weighted: the covered part keeps its tight loop, the
+                // uncovered part closes over the detour
+                c.height_mm = c.height_mm * (1.0 - c.unreferenced_fraction) +
+                              alt * c.unreferenced_fraction;
+                c.over_void = true;
+            }
+        }
         c.area_m2 = (len_mm * 1e-3) * (c.height_mm * 1e-3);
 
         // current: switch nodes carry what the user says they switch; signals
@@ -160,6 +231,7 @@ inline MapResult compute(const BoardIR& board, const Screener& screener,
             ++r.no_reference_count;
             power_no_ref += c.e_v_per_m * c.e_v_per_m;
         }
+        if (c.over_void) ++r.over_void_count;
         r.max_e_v_per_m = std::max(r.max_e_v_per_m, c.e_v_per_m);
         r.max_e_per_m = std::max(r.max_e_per_m, c.e_per_m);
         ++r.counted;
