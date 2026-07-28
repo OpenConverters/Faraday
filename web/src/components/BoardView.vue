@@ -25,12 +25,21 @@ const heat = computed(() => {
 
 // Cool copper through to white-hot. Below a tenth of the peak a trace is not
 // part of the answer, so it stays dark rather than tinting the whole board.
+// The quiet end has to stay VISIBLE. A ramp that fades to near-black hides the
+// copper it is describing, and the reader cannot tell "this trace is quiet"
+// from "this trace was not analysed" — which is how the first version of this
+// map came out looking like nothing had happened.
 function radColour(v) {
   const t = v / 255
-  if (t < 0.45) return `rgba(60,80,72,${0.25 + t})`
-  if (t < 0.75) { const u = (t - 0.45) / 0.3
-    return `rgb(${Math.round(96 + 121 * u)},${Math.round(110 + 29 * u)},${Math.round(96 - 1 * u)})` }
-  const u = (t - 0.75) / 0.25
+  if (t < 0.5) {                     // quiet: cool teal, clearly drawn
+    const u = t / 0.5
+    return `rgb(${Math.round(78 + 60 * u)},${Math.round(148 + 22 * u)},${Math.round(132 - 22 * u)})`
+  }
+  if (t < 0.8) {                     // warming
+    const u = (t - 0.5) / 0.3
+    return `rgb(${Math.round(138 + 79 * u)},${Math.round(170 - 31 * u)},${Math.round(110 - 15 * u)})`
+  }
+  const u = (t - 0.8) / 0.2          // hot
   return `rgb(${Math.round(217 + 38 * u)},${Math.round(139 + 98 * u)},${Math.round(95 + 137 * u)})`
 }
 
@@ -154,7 +163,7 @@ function draw() {
       // the hot traces read at board zoom.
       if (h) {
         ctx.strokeStyle = radColour(h[i] ?? 0)
-        ctx.lineWidth = Math.max(s.w * view.scale, h[i] > 150 ? 1.8 : 0.8)
+        ctx.lineWidth = Math.max(s.w * view.scale, h[i] > 150 ? 2.2 : 1.1)
       } else {
         ctx.lineWidth = Math.max(s.w * view.scale, 0.6)
       }

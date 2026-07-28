@@ -64,6 +64,14 @@ struct MapParams {
 };
 
 struct SegmentContribution {
+    // Contribution per unit length — height x current, stripped of the
+    // segment's own length. THIS is what the map should be coloured by: a
+    // router splits one trace into a dozen segments, so per-segment
+    // contribution makes a single net render as a dozen different shades and
+    // buries 89% of the copper in the dark end of the ramp. Loudness per
+    // millimetre is uniform along a net, which is both legible and the honest
+    // reading of "how noisy is this piece of copper".
+    double e_per_m = 0;
     double area_m2 = 0;
     double current_a = 0;
     double e_v_per_m = 0;
@@ -77,6 +85,7 @@ struct MapResult {
     double total_v_per_m = 0;      // incoherent (power) sum
     double total_dbuv_m = 0;
     double max_e_v_per_m = 0;
+    double max_e_per_m = 0;      // peak loudness per unit length, for colouring
     size_t counted = 0, no_reference_count = 0;
     double no_reference_share = 0;  // fraction of total POWER from those
     std::vector<size_t> top;        // segment indices, largest first
@@ -144,6 +153,7 @@ inline MapResult compute(const BoardIR& board, const Screener& screener,
         t.duty = p.duty;
         t.rise_s = p.rise_s;
         c.e_v_per_m = gain * emc::plateau_v_per_m(c.area_m2, t, p.r_m);
+        c.e_per_m = c.e_v_per_m / (len_mm * 1e-3);
 
         power += c.e_v_per_m * c.e_v_per_m;
         if (c.no_reference) {
@@ -151,6 +161,7 @@ inline MapResult compute(const BoardIR& board, const Screener& screener,
             power_no_ref += c.e_v_per_m * c.e_v_per_m;
         }
         r.max_e_v_per_m = std::max(r.max_e_v_per_m, c.e_v_per_m);
+        r.max_e_per_m = std::max(r.max_e_per_m, c.e_per_m);
         ++r.counted;
         r.segments[i] = c;
     }

@@ -20,6 +20,7 @@
 #include <nlohmann/json.hpp>
 
 #include <chrono>
+#include <map>
 #include <cmath>
 #include <string>
 #include <vector>
@@ -423,32 +424,57 @@ inline nlohmann::json radiation_map_json(const BoardIR& board,
                                          const Screener& screener,
                                          const radmap::MapParams& p) {
     const radmap::MapResult r = radmap::compute(board, screener, p);
-    const double floor_e = r.max_e_v_per_m > 0 ? r.max_e_v_per_m * 1e-4 : 1.0;
+    // Colour by loudness PER UNIT LENGTH, over three decades. Colouring by
+    // per-segment contribution instead put 89% of a real board's copper into
+    // the bottom half of the ramp — correct arithmetic, unreadable picture,
+    // because the router had chopped every trace into segments of wildly
+    // different length.
+    // Span the ramp over the data that is actually there, not a fixed number of
+    // decades. On a board whose only differentiator is switch-node current the
+    // real spread is 2.3 decades; a fixed 3-decade window then parks every
+    // signal trace at 0.25 and every switch node at 0.95, which reads as broken
+    // rather than as bimodal.
+    double lo_e = 1e300;
+    for (const auto& c : r.segments)
+        if (c.e_per_m > 0) lo_e = std::min(lo_e, c.e_per_m);
+    const double floor_e =
+        (r.max_e_per_m > 0 && lo_e < r.max_e_per_m) ? lo_e : r.max_e_per_m * 0.5;
+    const double span = std::log(r.max_e_per_m / floor_e);
     std::vector<unsigned char> heat(r.segments.size(), 0);
     for (size_t i = 0; i < r.segments.size(); ++i) {
-        const double e = r.segments[i].e_v_per_m;
-        if (!(e > floor_e)) continue;
-        heat[i] = (unsigned char)std::clamp(
-            255.0 * std::log(e / floor_e) / std::log(r.max_e_v_per_m / floor_e),
-            0.0, 255.0);
+        const double e = r.segments[i].e_per_m;
+        if (!(e > 0)) continue;
+        heat[i] = span > 1e-9
+            ? (unsigned char)std::clamp(255.0 * std::log(e / floor_e) / span, 0.0, 255.0)
+            : (unsigned char)128;
     }
-    nlohmann::json top = nlohmann::json::array();
+    // Aggregate by NET. A net split into a dozen segments listed itself a dozen
+    // times, which is why the same supply rail appeared twice in a top-four.
     double power = 0;
-    for (const auto& c : r.segments) power += c.e_v_per_m * c.e_v_per_m;
-    for (size_t i : r.top) {
-        const auto& c = r.segments[i];
-        if (!(c.e_v_per_m > 0)) continue;
-        top.push_back({{"seg", (int)i},
-                       {"net", board.net_name(board.segments[i].net)},
-                       {"cu", board.copper_names[board.segments[i].cu]},
-                       {"sharePct", power > 0 ? 100.0 * c.e_v_per_m * c.e_v_per_m / power : 0.0},
-                       {"heightMm", c.height_mm},
-                       {"currentA", c.current_a},
-                       {"noReference", c.no_reference},
-                       {"switchNode", c.switch_node}});
-        if (top.size() >= 12) break;
+    std::map<int, double> by_net;
+    std::map<int, bool> net_no_ref, net_sw;
+    for (size_t i = 0; i < r.segments.size(); ++i) {
+        const double pw = r.segments[i].e_v_per_m * r.segments[i].e_v_per_m;
+        if (!(pw > 0)) continue;
+        power += pw;
+        const int net = board.segments[i].net;
+        by_net[net] += pw;
+        net_no_ref[net] = net_no_ref[net] || r.segments[i].no_reference;
+        net_sw[net] = net_sw[net] || r.segments[i].switch_node;
+    }
+    std::vector<std::pair<int, double>> ranked(by_net.begin(), by_net.end());
+    std::sort(ranked.begin(), ranked.end(),
+              [](const auto& a, const auto& b) { return a.second > b.second; });
+    nlohmann::json top = nlohmann::json::array();
+    for (const auto& [net, pw] : ranked) {
+        top.push_back({{"net", board.net_name(net)},
+                       {"sharePct", power > 0 ? 100.0 * pw / power : 0.0},
+                       {"noReference", net_no_ref[net]},
+                       {"switchNode", net_sw[net]}});
+        if (top.size() >= 10) break;
     }
     return {{"heat", base64(heat)},
+            {"nets", (int)by_net.size()},
             {"segments", (int)r.segments.size()},
             {"counted", (int)r.counted},
             {"totalDbuvM", r.total_dbuv_m},

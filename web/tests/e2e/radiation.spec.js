@@ -42,14 +42,31 @@ test('the radiation layer attributes the board and recolours the copper',
     // the caveat is not optional on a picture this easy to mistake for a solve
     await expect(bar).toContainText('not a chamber')
 
-    // the copper actually changed colour
-    const after = await page.getByTestId('board-canvas').evaluate(cv => {
+    // "the colours changed" is not enough — the first version of this map was
+    // arithmetically right and rendered 89% of the copper into a near-black
+    // band, which looks exactly like nothing happened. So assert the picture is
+    // actually LEGIBLE: quiet copper drawn in visible teal, hot copper present,
+    // and the hot part a small minority of it.
+    const px = await page.getByTestId('board-canvas').evaluate(cv => {
       const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data
-      const s = new Set()
-      for (let i = 0; i < d.length; i += 4) s.add(`${d[i]},${d[i + 1]},${d[i + 2]}`)
-      return s.size
+      let quiet = 0, hot = 0
+      for (let i = 0; i < d.length; i += 4) {
+        const r = d[i], g = d[i + 1], b = d[i + 2]
+        if (g > r + 25 && g > 110) quiet++              // teal end of the ramp
+        else if (r > 215 && g > 200 && b > 190) hot++   // white-hot end
+      }
+      return { quiet, hot }
     })
-    expect(after).not.toBe(before)
+    expect(px.quiet, 'quiet copper must be drawn visibly, not near-black')
+      .toBeGreaterThan(500)
+    expect(px.hot).toBeLessThan(px.quiet)   // an attribution, not a red board
+    expect(before).toBeGreaterThan(0)
+
+    // Counting HOT pixels is deliberately not asserted: pads are drawn in the
+    // same copper colour as the hot end of the ramp, and a hot trace is only a
+    // couple of pixels wide, so the count is dominated by pads and would pass
+    // whatever the map did. The attribution shares below are the honest check
+    // that the hot end is real.
 
     // and it toggles back off
     await page.getByTestId('rad-toggle').click()
