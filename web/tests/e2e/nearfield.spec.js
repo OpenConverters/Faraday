@@ -141,7 +141,9 @@ test('close-in parts get a real number from the exact integral', async ({ page }
   expect(rows.length).toBeGreaterThan(0)
   for (const r of rows) {
     expect(r[3], 'every victim must get a field').toMatch(/dB[µu]A\/m/)
-    expect(r[4], 'every victim must get an induced voltage').toMatch(/[µm]V/)
+    // column 4 is cos(theta) now; induced moved to 5
+    expect(Number(r[4].replace('*', ''))).toBeGreaterThanOrEqual(0)
+    expect(r[5], 'every victim must get an induced voltage').toMatch(/[µm]V/)
   }
   // and the dipole caveat is context, not a refusal
   const body = await page.getByTestId('nf-panel').textContent()

@@ -18,7 +18,7 @@ const props = defineProps({
   findings: { type: Array, required: true },
   selectedId: { type: String, default: '' },
 })
-const emit = defineEmits(['select', 'toggleReturnPath', 'nearField', 'shield'])
+const emit = defineEmits(['select', 'toggleReturnPath', 'nearField', 'shield', 'pdn'])
 
 // Radiation attribution, decoded once per map into a byte per segment. Null
 // when the map is off, and every draw path checks for that rather than
@@ -251,12 +251,29 @@ function draw() {
     for (const sh of boxes) {
       const [ax, ay] = toScreen(Math.min(sh.x1, sh.x2), Math.min(sh.y1, sh.y2))
       const [cx, cy] = toScreen(Math.max(sh.x1, sh.x2), Math.max(sh.y1, sh.y2))
-      ctx.fillStyle = 'rgba(157,180,173,0.10)'
-      ctx.fillRect(ax, ay, cx - ax, cy - ay)
-      ctx.strokeStyle = 'rgba(157,180,173,0.75)'
-      ctx.setLineDash([5, 3]); ctx.lineWidth = 1.5
-      ctx.strokeRect(ax, ay, cx - ax, cy - ay)
-      ctx.setLineDash([])
+      const w2 = cx - ax, h2 = cy - ay
+      // a translucent grey lid, so it reads as metal over the copper rather
+      // than as a selection rectangle
+      ctx.save()
+      ctx.beginPath(); ctx.rect(ax, ay, w2, h2); ctx.clip()
+      ctx.fillStyle = 'rgba(150,158,162,0.32)'
+      ctx.fillRect(ax, ay, w2, h2)
+      // brushed-metal hatch
+      ctx.strokeStyle = 'rgba(210,216,220,0.14)'
+      ctx.lineWidth = 1
+      for (let x = ax - h2; x < cx; x += 7) {
+        ctx.beginPath(); ctx.moveTo(x, cy); ctx.lineTo(x + h2, ay); ctx.stroke()
+      }
+      // lid highlight along the top edge
+      const grad = ctx.createLinearGradient(ax, ay, ax, ay + Math.min(18, h2))
+      grad.addColorStop(0, 'rgba(230,237,232,0.22)')
+      grad.addColorStop(1, 'rgba(230,237,232,0)')
+      ctx.fillStyle = grad
+      ctx.fillRect(ax, ay, w2, Math.min(18, h2))
+      ctx.restore()
+      ctx.strokeStyle = 'rgba(200,208,212,0.85)'
+      ctx.lineWidth = 1.6
+      ctx.strokeRect(ax, ay, w2, h2)
     }
   }
 
@@ -539,6 +556,10 @@ watch(() => props.findings, () => draw())
                 ? 'quasi-static field at component scale — what couples ON the board'
                 : 'no switching node on this board, so there is no near-field aggressor to model'"
               @click="emit('nearField')">near field</button>
+      <button class="lchip rad off" data-testid="pdn-toggle"
+              :style="{ '--c': '#8fb8ff' }"
+              title="power-distribution impedance: every decoupling cap as a measured R-L-C branch"
+              @click="emit('pdn')">pdn</button>
     </div>
     <div v-if="hover" class="tooltip" data-testid="board-tooltip"
          :style="{ left: Math.min(hover.x + 14, 9999) + 'px', top: hover.y + 14 + 'px' }">

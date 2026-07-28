@@ -109,7 +109,8 @@ if(FARADAY_BUILD_TESTS)
         tests/test_returnpath.cpp
         tests/test_nearfield.cpp
         tests/test_nfmap.cpp
-        tests/test_shielding.cpp)
+        tests/test_shielding.cpp
+        tests/test_pdn.cpp)
     target_link_libraries(test_faraday PRIVATE faraday Catch2::Catch2WithMain)
     target_compile_definitions(test_faraday PRIVATE
         FARADAY_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")

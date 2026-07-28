@@ -69,14 +69,76 @@ function onInput() {
   busy.value = true
   solve(false)
   clearTimeout(idleTimer)
-  idleTimer = setTimeout(() => { solve(true); busy.value = false; draw() }, 180)
+  idleTimer = setTimeout(() => {
+    solve(true); busy.value = false; draw()
+    runSweep(); nextTick(drawSweep)
+  }, 180)
   nextTick(draw)
 }
-watch([family, termination], () => { solve(true); nextTick(draw) })
+watch([family, termination], () => {
+  solve(true)
+  runSweep()
+  nextTick(() => { draw(); drawSweep() })
+})
 
 // ---- field rendering -----------------------------------------------------
 const fieldCanvas = ref(null)
 const waveCanvas = ref(null)
+const sweepCanvas = ref(null)
+
+// The whole curve, not one point at a time: peak noise against separation, 22
+// extractions at ~3 ms each. "How much gap do I need" answered visually.
+const sweep = ref(null)
+function runSweep() {
+  try {
+    const pts = []
+    for (let i = 0; i < 22; i++) {
+      const g = 0.05 * Math.pow(2 / 0.05, i / 21)
+      const out = JSON.parse(props.engine.solvePair(JSON.stringify({
+        ...JSON.parse(request(false)), gapMm: g, field: false, fix: false,
+      })))
+      if (out.error) continue
+      pts.push({ g, mv: Math.max(Math.abs(out.spice.nextMv), Math.abs(out.spice.fextMv)) })
+    }
+    sweep.value = pts
+  } catch { sweep.value = null }
+}
+
+function drawSweep() {
+  const cv = sweepCanvas.value
+  const pts = sweep.value
+  if (!cv || !pts?.length || !result.value) return
+  const dpr = window.devicePixelRatio || 1
+  const w = cv.clientWidth, h = cv.clientHeight
+  cv.width = w * dpr; cv.height = h * dpr
+  const ctx = cv.getContext('2d')
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.clearRect(0, 0, w, h)
+  const budget = result.value.verdict.budgetV * 1000
+  const top = Math.max(budget * 1.4, ...pts.map(p => p.mv)) * 1.1
+  const X = g => 34 + (Math.log(g / 0.05) / Math.log(2 / 0.05)) * (w - 40)
+  const Y = mv => 6 + (1 - mv / top) * (h - 22)
+  ctx.font = '9px IBM Plex Mono, monospace'
+  ctx.strokeStyle = 'rgba(255,93,93,0.55)'
+  ctx.setLineDash([4, 3])
+  ctx.beginPath(); ctx.moveTo(34, Y(budget)); ctx.lineTo(w - 4, Y(budget)); ctx.stroke()
+  ctx.setLineDash([])
+  ctx.fillStyle = 'rgba(255,93,93,0.8)'
+  ctx.fillText('budget', 36, Y(budget) - 3)
+  ctx.strokeStyle = '#d98b5f'
+  ctx.lineWidth = 1.6
+  ctx.beginPath()
+  pts.forEach((p2, i) => i ? ctx.lineTo(X(p2.g), Y(p2.mv)) : ctx.moveTo(X(p2.g), Y(p2.mv)))
+  ctx.stroke()
+  // the current setting
+  ctx.fillStyle = '#58c79a'
+  ctx.beginPath(); ctx.arc(X(Math.max(0.05, Math.min(2, gap.value))),
+    Y(Math.max(...[result.value.verdict.peakMv]) || 0), 3.2, 0, 7); ctx.fill()
+  ctx.fillStyle = 'rgba(157,180,173,0.7)'
+  for (const g of [0.1, 0.5, 1, 2]) { ctx.textAlign = 'center'; ctx.fillText(String(g), X(g), h - 4) }
+  ctx.textAlign = 'left'
+  ctx.fillText('mm', 4, h - 4)
+}
 
 // The field window is framed on the structure, so its aspect is whatever the
 // geometry needs. Stretching it into a fixed canvas ratio would misrepresent
@@ -249,8 +311,10 @@ function drawWave() {
 const ro = new ResizeObserver(() => draw())
 onMounted(() => {
   solve(true)
+  runSweep()
   nextTick(() => {
     draw()
+    drawSweep()
     if (fieldCanvas.value) ro.observe(fieldCanvas.value)
     if (waveCanvas.value) ro.observe(waveCanvas.value)
   })
@@ -327,6 +391,13 @@ const num = (x, d = 2) => (x === undefined || x === null ? '—' : x.toFixed(d))
             <span class="cap">{{ result.spice.sections }}-section coupled ladder ·
               {{ result.spice.steps }} steps · {{ num(result.spice.delayNs, 2) }} ns one way</span>
           </figcaption>
+        </figure>
+
+        <!-- the whole curve, not one point: peak noise vs separation -->
+        <figure class="sweepwrap">
+          <canvas ref="sweepCanvas" data-testid="bench-sweep" />
+          <figcaption><span class="cap">peak victim noise vs separation — the
+            green dot is where your sliders are now</span></figcaption>
         </figure>
 
         <!-- extracted parameters -->
@@ -410,6 +481,7 @@ const num = (x, d = 2) => (x === undefined || x === null ? '—' : x.toFixed(d))
 figure { min-width: 0; }
 .fieldwrap canvas { width: 100%; display: block; border-radius: 4px; background: #0d1210; }
 .wavewrap canvas { width: 100%; height: 150px; display: block; border-radius: 4px; background: #0d1210; }
+.sweepwrap canvas { width: 100%; height: 92px; display: block; border-radius: 4px; background: #0d1210; }
 figcaption {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding-top: 6px; font-family: var(--mono); font-size: 11px; color: var(--tin);

@@ -153,3 +153,24 @@ TEST_CASE("a full bench run fits in an interactive budget", "[bench]") {
     INFO("extraction + transient took " << ms << " ms");
     CHECK(ms < 25.0);
 }
+
+TEST_CASE("copper loss follows sqrt(f) above the skin crossover", "[bench]") {
+    // DC below, one skin-depth sheet above: R_ac(4f) = 2 R_ac(f) once delta is
+    // inside the foil, and the DC floor holds below it.
+    const double w = 0.25e-3, t = 35e-6;
+    const double r_dc = bench::r_ac_per_m(w, t, 0);
+    CHECK_THAT(r_dc, WithinRel(1.724e-8 / (w * t), 1e-12));
+    // at 10 kHz delta (~660 um) >> t: still DC
+    CHECK_THAT(bench::r_ac_per_m(w, t, 1e4), WithinRel(r_dc, 1e-12));
+    // deep in skin: sqrt(f) scaling, exactly
+    const double a = bench::r_ac_per_m(w, t, 1e8);
+    const double b = bench::r_ac_per_m(w, t, 4e8);
+    CHECK_THAT(b, WithinRel(2 * a, 1e-9));
+    CHECK(a > r_dc);
+    // and the bench reports it
+    nlohmann::json req = base_request();
+    req["field"] = false; req["fix"] = false;
+    const auto out = bench::run(bench::request_from_json(req));
+    CHECK(out["rlgc"]["rAcOhmPerM"].get<double>() > 0.0);
+    CHECK(out["rlgc"]["fKneeMhz"].get<double>() > 0.0);
+}

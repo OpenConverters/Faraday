@@ -15,6 +15,7 @@
 #include "Emissions.hpp"
 #include "NearFieldMap.hpp"
 #include "Shielding.hpp"
+#include "Pdn.hpp"
 #include "ReturnPath.hpp"
 #include "Mna.hpp"
 #include "Rlgc.hpp"
@@ -127,7 +128,21 @@ struct Extraction {
     size_t panels = 0;
 };
 
-inline Extraction extract(const bem::PairSection& s) {
+// Skin-effect resistance per metre at frequency f for a rectangular trace
+// over a plane: DC below the crossover, one current sheet of one skin depth on
+// the plane-facing side above it (proximity crowds the current there). The
+// larger of the two, so the model never under-reports either regime.
+inline double r_ac_per_m(double w_m, double t_m, double f_hz) {
+    if (!(w_m > 0) || !(t_m > 0))
+        throw std::invalid_argument("bench: trace section must be positive");
+    constexpr double RHO_CU = 1.724e-8;              // ohm*m
+    const double r_dc = RHO_CU / (w_m * t_m);
+    if (!(f_hz > 0)) return r_dc;
+    const double delta = 66100.0e-6 / std::sqrt(f_hz);   // m, copper
+    return std::max(r_dc, RHO_CU / (w_m * std::min(t_m, delta)));
+}
+
+inline Extraction extract(const bem::PairSection& s, double f_knee_hz = 0) {
     bem::Geometry g = bem::geometry_for(s);
     bem::Solution sd = bem::solve(g, false);
     bem::Solution sv = bem::solve(g, true);
@@ -139,7 +154,12 @@ inline Extraction extract(const bem::PairSection& s) {
             M0[i * nt + j] = sv.at(i, j);
         }
     Extraction e;
-    e.p = rlgc_from_maxwell(M, M0, nt, 2);
+    // Copper loss at the edge's knee frequency. Small against 50 ohm on short
+    // runs, but it is what damps the ringing on unterminated lines, and a
+    // lossless model was reporting the stated-pessimistic peak (#325).
+    const std::vector<double> r = {r_ac_per_m(s.w1, s.t, f_knee_hz),
+                                   r_ac_per_m(s.w2, s.t, f_knee_hz)};
+    e.p = rlgc_from_maxwell(M, M0, nt, 2, r);
     e.panels = sd.panels.size();
     e.solved = std::move(sd);
     return e;
@@ -205,15 +225,16 @@ inline double peak_noise(const Rlgc& p, const mna::DriveOptions& o) {
 inline double gap_to_meet(const bem::PairSection& base, mna::DriveOptions o,
                           double target_v, int iters = 11) {
     bem::PairSection s = base;
+    const double f_knee = 0.35 / o.rise_s;
     const double lo0 = base.gap;
     double hi = std::max(base.gap, base.h) * 12.0;
     s.gap = hi;
-    if (peak_noise(extract(s).p, o) > target_v) return 0.0;
+    if (peak_noise(extract(s, f_knee).p, o) > target_v) return 0.0;
     double lo = lo0;
     for (int i = 0; i < iters; ++i) {
         const double mid = 0.5 * (lo + hi);
         s.gap = mid;
-        if (peak_noise(extract(s).p, o) > target_v) lo = mid;
+        if (peak_noise(extract(s, f_knee).p, o) > target_v) lo = mid;
         else hi = mid;
     }
     return hi;
@@ -224,7 +245,11 @@ inline nlohmann::json run(const Request& r) {
     const LogicFamily& fam = family_by_id(r.family);
 
     const auto t0 = clk::now();
-    Extraction ex = extract(r.section);
+    // 0.35 / t_r is the classic knee of a trapezoid's spectrum — the highest
+    // frequency the edge meaningfully contains, and where the copper loss is
+    // evaluated.
+    const double f_knee = 0.35 / r.drive.rise_s;
+    Extraction ex = extract(r.section, f_knee);
     const auto t1 = clk::now();
     mna::Waveforms w = mna::simulate(ex.p, r.drive);
     const auto t2 = clk::now();
@@ -267,6 +292,8 @@ inline nlohmann::json run(const Request& r) {
         {"lMutualNhPerMm", p.at(p.L, 0, 1) * 1e9 * 1e-3},
         {"cMutualPfPerMm", p.c_mutual(0, 1) * 1e12 * 1e-3},
         {"kb", p.kb(0, 1)},
+        {"rAcOhmPerM", p.at(p.R, 0, 0)},
+        {"fKneeMhz", f_knee * 1e-6},
         {"kbDb", 20.0 * std::log10(std::max(p.kb(0, 1), 1e-12))}};
     out["spice"] = {
         {"sections", w.sections}, {"steps", (int)w.t.size()},
@@ -288,7 +315,7 @@ inline nlohmann::json run(const Request& r) {
         if (g > 0) {
             bem::PairSection s2 = r.section;
             s2.gap = g;
-            const double after = peak_noise(extract(s2).p, o);
+            const double after = peak_noise(extract(s2, f_knee).p, o);
             out["fix"] = {{"gapMm", g * 1e3},
                           {"fromMm", r.section.gap * 1e3},
                           {"peakMvAfter", after * 1e3},
@@ -475,7 +502,8 @@ inline nlohmann::json near_field_json(const BoardIR& board,
     const nfmap::MapResult r = nfmap::compute(board, screener, p);
     nlohmann::json ag = nlohmann::json::array();
     for (const auto& a : r.aggressors)
-        ag.push_back({{"net", a.net}, {"xMm", a.x_mm}, {"yMm", a.y_mm},
+        ag.push_back({{"kind", a.kind},
+                      {"net", a.net}, {"xMm", a.x_mm}, {"yMm", a.y_mm},
                       {"areaMm2", a.area_mm2}, {"momentAm2", a.moment_am2},
                       {"aEffMm", a.a_eff_mm}, {"validFromMm", a.valid_from_mm},
                       {"hull", [&] {
@@ -501,12 +529,25 @@ inline nlohmann::json near_field_json(const BoardIR& board,
                       {"thresholdMv", v.threshold_v * 1e3},
                       {"ratio", v.ratio},
                       {"dipoleValid", v.dipole_valid},
+                      {"cosTheta", v.cos_theta},
+                      {"oriented", v.oriented},
                       {"shieldDb", v.shield_db},
                       {"aggressor", v.aggressor},
                       {"level", v.ratio >= 1.0 ? "over"
                                 : (v.ratio >= 0.25 ? "watch" : "ok")}});
     }
-    return {{"aggressors", ag}, {"victims", vi},
+    nlohmann::json caps = nlohmann::json::array();
+    for (const auto& ch : r.cap_hits)
+        caps.push_back({{"component", ch.component}, {"net", ch.net},
+                        {"class", ch.victim_class},
+                        {"overlapMm2", ch.overlap_mm2},
+                        {"c12Pf", ch.c12_f * 1e12},
+                        {"dvMv", ch.dv_v * 1e3},
+                        {"thresholdMv", ch.threshold_v * 1e3},
+                        {"ratio", ch.ratio},
+                        {"level", ch.ratio >= 1.0 ? "over"
+                                  : (ch.ratio >= 0.25 ? "watch" : "ok")}});
+    return {{"aggressors", ag}, {"victims", vi}, {"capacitive", caps},
             {"maxHAPerM", r.max_h},
             {"tooCloseCount", (int)r.too_close_count},
             {"shieldedVictims", (int)r.shielded_victims},
@@ -527,6 +568,12 @@ inline nfmap::MapParams nfmap_params_from_json(const nlohmann::json& j) {
     p.f_sw_hz = opt("fSwKhz", 500.0) * 1e3;
     p.probe_height_mm = opt("probeHeightMm", 3.0);
     p.default_victim_area_mm2 = opt("victimAreaMm2", 4.0);
+    // Inductor construction: the one attribute geometry cannot see. Factors
+    // are conservative ring-frequency figures from the measured anchors.
+    p.inductor_type = j.value("inductorType", std::string("unshielded"));
+    p.inductor_k = p.inductor_type == "composite" ? 0.3
+                 : p.inductor_type == "shielded" ? 0.35
+                 : p.inductor_type == "semi" ? 0.65 : 1.0;
     // Shield cans, each with an SE its own material, wall and contact pitch
     // earn at the RING frequency — the dominant coupling case.
     if (j.contains("shields") && j.at("shields").is_array()) {
@@ -596,6 +643,53 @@ inline nlohmann::json victim_classes_json() {
                                   ? "dc-accuracy" : "peak-volts"},
                      {"why", v.why}});
     return a;
+}
+
+// The PDN: rails, per-cap branches with the MEASURED mounting inductance, the
+// impedance curve, and its anti-resonances. The target line is drawn by the
+// UI from the user's transient current and allowed ripple — the model has no
+// business inventing either.
+inline nlohmann::json pdn_json(const BoardIR& board, const Screener& screener,
+                               const nlohmann::json& j) {
+    pdn::Params p;
+    p.vrm_r_ohm = j.value("vrmROhm", 0.01);
+    p.vrm_l_h = j.value("vrmLnH", 20.0) * 1e-9;
+    const pdn::Result d = pdn::discover(board, screener, p);
+    nlohmann::json rails = nlohmann::json::array();
+    for (const auto& rail : d.rails) {
+        const pdn::Curve c = pdn::curve(rail, p);
+        nlohmann::json caps = nlohmann::json::array();
+        for (const auto& b : rail.caps)
+            caps.push_back({{"ref", b.ref},
+                            {"cF", b.c_f},
+                            {"cLabel", b.c_f >= 1e-6
+                                 ? std::to_string(b.c_f * 1e6).substr(0, 4) + " uF"
+                                 : std::to_string(b.c_f * 1e9).substr(0, 4) + " nF"},
+                            {"eslNh", b.esl_h * 1e9},
+                            {"lMountNh", b.l_mount_h * 1e9},
+                            {"viaD1Mm", b.via_d1_mm}, {"viaD2Mm", b.via_d2_mm},
+                            {"noVia", b.no_via},
+                            {"fResMhz", b.f_res_hz * 1e-6}});
+        nlohmann::json f = nlohmann::json::array(), z = nlohmann::json::array();
+        for (size_t i = 0; i < c.f_hz.size(); ++i) {
+            f.push_back(c.f_hz[i] * 1e-6);
+            z.push_back(c.z_ohm[i]);
+        }
+        nlohmann::json ar = nlohmann::json::array();
+        for (auto& [fa, za] : c.antires)
+            ar.push_back({{"fMhz", fa * 1e-6}, {"zOhm", za}});
+        rails.push_back({{"net", rail.name},
+                         {"caps", caps},
+                         {"skippedUnparsed", rail.skipped_unparsed},
+                         {"planeCpF", rail.plane_c_f * 1e12},
+                         {"planeOverlapMm2", rail.plane_overlap_mm2},
+                         {"fMhz", f}, {"zOhm", z},
+                         {"zMaxOhm", c.z_max_ohm},
+                         {"zMaxMhz", c.z_max_hz * 1e-6},
+                         {"antires", ar}});
+    }
+    return {{"gnd", d.gnd_name}, {"rails", rails},
+            {"vrmROhm", p.vrm_r_ohm}, {"vrmLnH", p.vrm_l_h * 1e9}};
 }
 
 inline nlohmann::json limit_lines_json() {

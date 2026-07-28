@@ -201,15 +201,17 @@ inline double h_segment(const Vec3& A, const Vec3& B, const Vec3& P,
     return current_a * nc * (na + nb) / (4.0 * PI_N * den);
 }
 
-// |H| at P from a closed polygon loop. Components are summed as VECTORS, which
-// is what makes the far-field cancellation into a 1/r^3 dipole come out right;
-// summing magnitudes would leave a spurious 1/r tail.
-inline double h_loop(const std::vector<Vec3>& poly, const Vec3& P,
-                     double current_a) {
+// H VECTOR at P from a closed polygon loop. Components are summed as vectors,
+// which is what makes the far-field cancellation into a 1/r^3 dipole come out
+// right; summing magnitudes would leave a spurious 1/r tail. The vector matters
+// in its own right: the victim's pickup goes as cos(theta) between this field
+// and its own loop normal, and that angle is real layout information.
+inline Vec3 h_loop_vec(const std::vector<Vec3>& poly, const Vec3& P,
+                       double current_a) {
     if (poly.size() < 3)
         throw std::invalid_argument("nf: a loop needs at least three vertices");
     if (current_a < 0) throw std::invalid_argument("nf: current must be >= 0");
-    double hx = 0, hy = 0, hz = 0;
+    Vec3 h;
     for (size_t i = 0; i < poly.size(); ++i) {
         const Vec3& A = poly[i];
         const Vec3& B = poly[(i + 1) % poly.size()];
@@ -225,9 +227,15 @@ inline double h_loop(const std::vector<Vec3>& poly, const Vec3& P,
         const double den = na * nb * (na * nb + dot);
         if (!(den > 0)) continue;
         const double k = current_a * (na + nb) / (4.0 * PI_N * den);
-        hx += k * c.x; hy += k * c.y; hz += k * c.z;
+        h.x += k * c.x; h.y += k * c.y; h.z += k * c.z;
     }
-    return std::sqrt(hx * hx + hy * hy + hz * hz);
+    return h;
+}
+
+inline double h_loop(const std::vector<Vec3>& poly, const Vec3& P,
+                     double current_a) {
+    const Vec3 h = h_loop_vec(poly, P, current_a);
+    return std::sqrt(h.x * h.x + h.y * h.y + h.z * h.z);
 }
 
 // Field of a long straight conductor. This — not 1/r^3 — is the right law

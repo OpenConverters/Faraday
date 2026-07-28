@@ -114,6 +114,19 @@ static std::string victim_classes() {
     return faraday::bench::victim_classes_json().dump();
 }
 
+static std::string pdn_map(std::string request_json) {
+    try {
+        if (!g_board)
+            throw std::runtime_error(
+                "no board loaded — open a layout before asking about its PDN");
+        const nlohmann::json j = nlohmann::json::parse(request_json);
+        faraday::Screener sc(*g_board);
+        return faraday::bench::pdn_json(*g_board, sc, j).dump();
+    } catch (const std::exception& e) {
+        return nlohmann::json{{"error", e.what()}}.dump();
+    }
+}
+
 static std::string limit_lines() { return faraday::bench::limit_lines_json().dump(); }
 
 static std::string logic_families() {
@@ -128,6 +141,7 @@ EMSCRIPTEN_BINDINGS(faraday) {
     emscripten::function("predictEmissions", &predict_emissions);
     emscripten::function("cmBudget", &cm_budget);
     emscripten::function("returnPath", &return_path);
+    emscripten::function("pdn", &pdn_map);
     emscripten::function("nearField", &near_field);
     emscripten::function("victimClasses", &victim_classes);
     emscripten::function("shielding", &shielding);

@@ -70,7 +70,7 @@ function set(k, v) { emit('params', { [k]: Number(v) }) }
           </div>
 
           <table class="vic" data-testid="nf-victims">
-            <thead><tr><th>part</th><th>class</th><th>d</th><th>|H|</th><th>induced</th></tr></thead>
+            <thead><tr><th>part</th><th>class</th><th>d</th><th>|H|</th><th>cosθ</th><th>induced</th></tr></thead>
             <tbody>
               <tr v-for="v in result.victims.slice(0, 12)" :key="v.component + v.net"
                   :class="v.level">
@@ -79,13 +79,29 @@ function set(k, v) { emit('params', { [k]: Number(v) }) }
                 <td>{{ num(v.distanceMm, 1) }}<i v-if="!v.dipoleValid" class="inside"
                     title="closer than a point dipole allows — the exact loop integral is used here">*</i></td>
                 <td>{{ num(v.hDbuaM, 0) }} dBµA/m</td>
-                <td>{{ mv(v.inducedMv) }}</td>
+                <td :title="v.oriented ? 'from this net\u2019s own routed direction'
+                    : 'net unrouted near the pad — worst case 1.0 assumed'">
+                  {{ v.oriented ? num(v.cosTheta, 2) : '1*' }}</td>
+                <td>{{ mv(v.inducedMv) }}{{ v.shieldDb > 0 ? ' 🛡' : '' }}</td>
               </tr>
             </tbody>
           </table>
         </div>
 
         <div class="col">
+          <table v-if="result.capacitive?.length" class="vic" data-testid="nf-cap">
+            <caption>Broadside over switch-node copper — the E mechanism</caption>
+            <thead><tr><th>part</th><th>overlap</th><th>C₁₂</th><th>ΔV bound</th></tr></thead>
+            <tbody>
+              <tr v-for="ch in result.capacitive.slice(0, 6)" :key="ch.component + ch.net"
+                  :class="ch.level">
+                <td>{{ ch.component }} ({{ ch.net }})</td>
+                <td>{{ num(ch.overlapMm2, 1) }} mm²</td>
+                <td>{{ num(ch.c12Pf, 2) }} pF</td>
+                <td>{{ mv(ch.dvMv) }} / {{ mv(ch.thresholdMv) }}</td>
+              </tr>
+            </tbody>
+          </table>
           <h3>What a shield can would buy</h3>
           <div v-if="shield && magnetic && electric" class="shield" data-testid="nf-shield">
             <div class="rows">
@@ -145,6 +161,15 @@ function set(k, v) { emit('params', { [k]: Number(v) }) }
           <input type="range" min="0.5" max="40" step="0.5"
                  :value="params.victimAreaMm2"
                  @input="e => set('victimAreaMm2', e.target.value)" /></label>
+        <label class="sl"><span>inductor construction</span>
+          <select data-testid="nf-inductor" :value="params.inductorType ?? 'unshielded'"
+                  @change="e => emit('params', { inductorType: e.target.value })"
+                  class="isel">
+            <option value="unshielded">unshielded drum (1.0×)</option>
+            <option value="semi">semi-shielded (0.65×)</option>
+            <option value="shielded">shielded ferrite (0.35×)</option>
+            <option value="composite">moulded composite (0.3×)</option>
+          </select></label>
       </div>
     </section>
   </div>
@@ -215,4 +240,7 @@ h3 { font-family: var(--display); font-size: 13px; font-weight: 700; letter-spac
 .sl { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--tin); }
 .sl span b { color: var(--silk); font-family: var(--mono); }
 .sl input { width: 100%; accent-color: var(--heat-low); }
+.sl .isel { background: var(--resin); color: var(--silk); font-family: var(--mono);
+  font-size: 12px; border: 1px solid var(--resin-edge); border-radius: 3px; padding: 4px 6px; }
+.vic caption { text-align: left; color: var(--tin); font-size: 11px; padding-bottom: 4px; }
 </style>

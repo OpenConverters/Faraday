@@ -5,6 +5,8 @@ import FindingsList from './components/FindingsList.vue'
 import BenchPanel from './components/BenchPanel.vue'
 import EmissionsPanel from './components/EmissionsPanel.vue'
 import NearFieldPanel from './components/NearFieldPanel.vue'
+import PdnPanel from './components/PdnPanel.vue'
+import ImpedancePanel from './components/ImpedancePanel.vue'
 
 const engine = ref(null)
 const boardText = ref('')
@@ -173,6 +175,52 @@ watch(report, () => { nearField.value = null; nfError.value = ''; nfDetail.value
 // to let it error on click.
 const hasSwitchNode = computed(() => (meta.value?.switchNodes?.length ?? 0) > 0)
 
+const pdnOpen = ref(false)
+const calcOpen = ref(false)
+watch(report, () => { pdnOpen.value = false })
+
+// Report export: a single self-contained HTML file built from the report the
+// engine already produced. A design review you cannot hand to a colleague is
+// half a review.
+function exportReport() {
+  const rep = report.value
+  if (!rep) return
+  const esc = t => String(t ?? '').replace(/&/g, '&amp;').replace(/</g, '&lt;')
+  const rows = rep.findings.map(f => `<tr class="${esc(f.severityLabel)}">
+    <td>${esc(f.id)}</td><td>${esc(f.rule)}</td><td>${esc(f.severityLabel)}</td>
+    <td>${esc(f.title)}</td><td>${esc(f.detail)}<br><b>Fix:</b> ${esc(f.remediation)}</td></tr>`).join('')
+  const planes = (rep.meta.planes ?? []).map(p =>
+    `${esc(p.layer)}: ${p.isPlane ? 'plane' : 'signal'}`).join(' · ')
+  const html = `<!doctype html><html><head><meta charset="utf-8">
+<title>Faraday EMC review — ${esc(fileName.value)}</title>
+<style>
+ body{font:14px/1.5 system-ui;margin:2rem auto;max-width:70rem;color:#1c2422;padding:0 1rem}
+ h1{font-size:1.4rem} .meta{color:#5a6d67;font-size:.85rem;margin-bottom:1.5rem}
+ table{border-collapse:collapse;width:100%;font-size:.85rem}
+ th,td{border:1px solid #d5ddd9;padding:.4rem .6rem;text-align:left;vertical-align:top}
+ tr.high td:first-child{border-left:4px solid #d33}
+ tr.medium td:first-child{border-left:4px solid #d90}
+ .caveat{background:#f4f1ea;border:1px solid #d5ddd9;padding:.8rem 1rem;margin:1.2rem 0;font-size:.85rem}
+</style></head><body>
+<h1>Faraday EMC design review — ${esc(fileName.value)}</h1>
+<p class="meta">Generated ${new Date().toISOString().slice(0, 10)} ·
+ format ${esc(rep.format)} · stackup ${esc(rep.meta.stackupSource)} · ${planes} ·
+ ${rep.findings.length} findings</p>
+<div class="caveat"><b>Screening estimates, not compliance predictions.</b>
+ Faraday ranks EMC risk from layout geometry with stated physics and stated
+ error bars. Findings marked screening-estimate carry roughly ±6 dB; a clean
+ report is not a chamber pass. Analysis ran locally in the browser — the
+ layout never left the machine.</div>
+<table><thead><tr><th>id</th><th>rule</th><th>severity</th><th>finding</th>
+<th>detail</th></tr></thead><tbody>${rows}</tbody></table>
+</body></html>`
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' }))
+  a.download = (fileName.value || 'board').replace(/\.[^.]+$/, '') + '-faraday-review.html'
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
+
 const emitId = ref('')
 const emitFinding = computed(() =>
   findings.value.find(f => f.id === emitId.value && f.emit) ?? null)
@@ -198,6 +246,8 @@ function toggleRule(rule) {
                @change="e => onFile(e.target.files[0])" />
         {{ fileName || 'Open board file' }}
       </label>
+      <button v-if="report" class="filebtn" data-testid="export-report"
+              @click="exportReport">export report</button>
       <select v-if="report || needStackup" data-testid="stackup-select" class="stackup"
               :value="stackupChoice" @change="e => chooseStackup(e.target.value)"
               aria-label="Stackup">
@@ -286,7 +336,8 @@ function toggleRule(rule) {
                  @select="id => selectedId = id"
                  @toggle-return-path="toggleReturnPath"
                  @near-field="toggleNearField"
-                 @shield="addShield" />
+                 @shield="addShield"
+                 @pdn="pdnOpen = true" />
       <FindingsList :findings="visibleFindings" :report="report" :selected-id="selectedId"
                     :rules="ruleCounts" :hidden-rules="hiddenRules" :total="findings.length"
                     @select="id => selectedId = selectedId === id ? '' : id"
@@ -299,6 +350,8 @@ function toggleRule(rule) {
       <div class="board-ghost" aria-hidden="true" />
       <p class="invite">Drop a board here</p>
       <p class="formats"><code>.kicad_pcb</code> · <code>.hyp</code> · <code>IPC-2581 .xml</code></p>
+      <button class="chip" data-testid="open-calc" @click="calcOpen = true">
+        impedance calculator — no board needed</button>
       <p class="sub">Faraday screens the whole board for coupled runs, return-path breaks,
          via and open stubs, decoupling reach, and — on converters — switch nodes and
          commutation-loop area. It ranks the risk and renders it on the copper.
@@ -320,6 +373,12 @@ function toggleRule(rule) {
     <NearFieldPanel v-if="nfDetail && nearField && engine" :engine="engine"
                     :result="nearField" :params="nfParams"
                     @close="nfDetail = false" @params="setNfParams" />
+
+    <PdnPanel v-if="pdnOpen && engine && report" :engine="engine"
+              @close="pdnOpen = false" />
+
+    <ImpedancePanel v-if="calcOpen && engine" :engine="engine"
+                    @close="calcOpen = false" />
 
     <footer v-if="meta" class="metastrip" data-testid="meta-strip">
       <span class="m">format: <b>{{ report.format }}</b></span>

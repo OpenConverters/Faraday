@@ -70,6 +70,13 @@ struct MapParams {
     // A victim's loop area, when its own routing has not been measured. Stated
     // rather than silently assumed.
     double default_victim_area_mm2 = 4.0;
+    // Inductors on switch nets are near-field sources in their own right. The
+    // construction factor is the ONE attribute geometry cannot see, so it is a
+    // stated input: measured anchors (Wurth ANP047c, Vishay) put a shielded
+    // part ~9-10.5 dB below an unshielded drum and a moulded composite ~10.6 dB
+    // below, conservatively carried to the ring frequency.
+    double inductor_k = 1.0;           // unshielded drum
+    std::string inductor_type = "unshielded";
     // Shield cans drawn by the user. A can attenuates coupling only when it
     // separates the pair — aggressor inside and victim outside, or the
     // reverse. Both inside or both outside, it changes nothing, which is the
@@ -77,8 +84,10 @@ struct MapParams {
     std::vector<shield::Rect> shields;
 };
 
-// One radiating loop, reduced to a dipole at a location.
+// One radiating source: a commutation loop (with its hull, for the exact
+// integral) or an inductor (a dipole at its footprint).
 struct Aggressor {
+    std::string kind = "loop";
     std::string net;
     double x_mm = 0, y_mm = 0;     // centroid
     double area_mm2 = 0;           // enclosed loop area
@@ -103,6 +112,13 @@ struct VictimHit {
     // The reported field does not depend on it — that comes from the exact
     // integral — but it tells the reader how far inside the source they are.
     bool dipole_valid = true;
+    // cos(theta) between the aggressor's field VECTOR at the pad and the
+    // victim loop's own normal, taken from the victim net's routed direction.
+    // This is real layout information — rotating a victim edge-on nulls the
+    // coupling, and no distance rule can see that. When the victim net has no
+    // routed segment near the pad, 1.0 worst case is used and flagged.
+    double cos_theta = 1.0;
+    bool oriented = false;
     // Attenuation from a drawn can separating this victim from its aggressor.
     // An UPPER BOUND: the can is five-sided and flux routes around through the
     // PCB, which the UI states rather than hides.
@@ -110,9 +126,18 @@ struct VictimHit {
     std::string aggressor;
 };
 
+// A victim trace or pad broadside over switch-node copper: the capacitive
+// mechanism, with the frequency-independent divider ceiling as its bound.
+struct CapHit {
+    std::string component, net, victim_class;
+    double x_mm = 0, y_mm = 0;
+    double overlap_mm2 = 0, c12_f = 0, dv_v = 0, threshold_v = 0, ratio = 0;
+};
+
 struct MapResult {
     std::vector<Aggressor> aggressors;
     std::vector<VictimHit> victims;
+    std::vector<CapHit> cap_hits;
     double max_h = 0;
     size_t too_close_count = 0, shielded_victims = 0;   // how many are inside the dipole radius
     // context the reader needs to interpret any of it
@@ -178,6 +203,35 @@ inline MapResult compute(const BoardIR& board, const Screener& screener,
         a.hull = loop->hull;
         r.aggressors.push_back(std::move(a));
     }
+    // ---- aggressors: inductors sitting on those switch nets ----
+    {
+        std::map<std::string, std::pair<Point, Point>> bbox;   // ref -> min,max
+        std::map<std::string, bool> on_sw;
+        for (const auto& pad : board.pads) {
+            if (pad.component.empty() || pad.component[0] != 'L') continue;
+            auto& [lo, hi] = bbox.try_emplace(pad.component,
+                std::make_pair(Point{pad.x, pad.y}, Point{pad.x, pad.y})).first->second;
+            lo.x = std::min(lo.x, pad.x - pad.w / 2); lo.y = std::min(lo.y, pad.y - pad.h / 2);
+            hi.x = std::max(hi.x, pad.x + pad.w / 2); hi.y = std::max(hi.y, pad.y + pad.h / 2);
+            if (screener.is_switch_node(pad.net)) on_sw[pad.component] = true;
+        }
+        for (const auto& [ref, mm] : bbox) {
+            if (!on_sw.count(ref)) continue;
+            const auto& [lo, hi] = mm;
+            const double area_mm2 = std::max((hi.x - lo.x) * (hi.y - lo.y), 1.0);
+            Aggressor a;
+            a.kind = "inductor";
+            a.net = ref + " (" + p.inductor_type + ")";
+            a.x_mm = (lo.x + hi.x) / 2;
+            a.y_mm = (lo.y + hi.y) / 2;
+            a.area_mm2 = area_mm2;
+            a.moment_am2 = nf::magnetic_moment(1.0, p.inductor_k * p.ring_current_a,
+                                               area_mm2 * 1e-6);
+            a.a_eff_mm = nf::effective_radius(area_mm2 * 1e-6) * 1e3;
+            a.valid_from_mm = nf::dipole_valid_from_m(area_mm2 * 1e-6) * 1e3;
+            r.aggressors.push_back(std::move(a));
+        }
+    }
     if (r.aggressors.empty())
         throw std::invalid_argument(
             "nfmap: no commutation loop found on this board — the near-field "
@@ -193,17 +247,35 @@ inline MapResult compute(const BoardIR& board, const Screener& screener,
         if (cls.empty()) continue;
         const nf::VictimClass& vc = nf::victim_by_id(cls);
 
-        // nearest aggressor, in three dimensions: the probe height is a real
-        // separation, not a label
+        // STRONGEST aggressor at this pad, not the nearest: a big loop across
+        // the board can out-field a small one next door, and the field is the
+        // thing the victim experiences. Each candidate is evaluated by the
+        // exact integral where it has a hull, and by the dipole only where the
+        // dipole is valid.
         const Aggressor* best = nullptr;
-        double best_d = 1e30;
+        double best_d = 1e30, best_h = -1.0;
+        nf::Vec3 best_vec;
+        const nf::Vec3 probe{pad.x * 1e-3, pad.y * 1e-3, p.probe_height_mm * 1e-3};
         for (const auto& a : r.aggressors) {
             const double dx = pad.x - a.x_mm, dy = pad.y - a.y_mm;
             const double d = std::sqrt(dx * dx + dy * dy +
                                        p.probe_height_mm * p.probe_height_mm);
-            if (d < best_d) { best_d = d; best = &a; }
+            double h = -1.0;
+            nf::Vec3 vec;
+            if (a.hull.size() >= 3) {
+                std::vector<nf::Vec3> poly;
+                poly.reserve(a.hull.size());
+                for (const auto& pt : a.hull)
+                    poly.push_back({pt.x * 1e-3, pt.y * 1e-3, 0.0});
+                vec = nf::h_loop_vec(poly, probe, p.ring_current_a);
+                h = std::sqrt(vec.x * vec.x + vec.y * vec.y + vec.z * vec.z);
+            } else if (d >= a.valid_from_mm) {
+                h = nf::h_equatorial(a.moment_am2, d * 1e-3);
+                vec = {0, 0, h};   // dipole axis vertical: field ~ axial at range
+            }
+            if (h > best_h) { best_h = h; best_d = d; best = &a; best_vec = vec; }
         }
-        if (!best) continue;
+        if (!best || !(best_h >= 0)) continue;
 
         VictimHit v;
         v.component = pad.component;
@@ -224,19 +296,31 @@ inline MapResult compute(const BoardIR& board, const Screener& screener,
         // everywhere.
         v.dipole_valid = best_d >= best->valid_from_mm;
         if (!v.dipole_valid) ++r.too_close_count;
-        if (best->hull.size() >= 3) {
-            std::vector<nf::Vec3> poly;
-            poly.reserve(best->hull.size());
-            for (const auto& pt : best->hull)
-                poly.push_back({pt.x * 1e-3, pt.y * 1e-3, 0.0});
-            const nf::Vec3 probe{pad.x * 1e-3, pad.y * 1e-3,
-                                 p.probe_height_mm * 1e-3};
-            v.h_a_per_m = nf::h_loop(poly, probe, p.ring_current_a);
-        } else {
-            // no hull to integrate: fall back to the dipole, and only where it
-            // is actually valid rather than extrapolating it
-            if (!v.dipole_valid) { r.victims.push_back(std::move(v)); continue; }
-            v.h_a_per_m = nf::h_equatorial(best->moment_am2, best_d * 1e-3);
+        v.h_a_per_m = best_h;
+        // cos(theta): the victim loop (its trace over its return) has its
+        // normal IN the board plane, perpendicular to the trace direction.
+        // Take the direction from the victim net's own nearest routed segment.
+        {
+            double bd = 25.0, tx = 0, ty = 0;
+            for (const auto& seg : board.segments) {
+                if (seg.net != pad.net) continue;
+                const double sdx = seg.x2 - seg.x1, sdy = seg.y2 - seg.y1;
+                const double sl = std::hypot(sdx, sdy);
+                if (!(sl > 0)) continue;
+                double t = ((pad.x - seg.x1) * sdx + (pad.y - seg.y1) * sdy) / (sl * sl);
+                t = std::clamp(t, 0.0, 1.0);
+                const double d = std::hypot(pad.x - (seg.x1 + t * sdx),
+                                            pad.y - (seg.y1 + t * sdy));
+                if (d < bd) { bd = d; tx = sdx / sl; ty = sdy / sl; }
+            }
+            if (bd < 25.0) {
+                const double hmag = std::hypot(best_vec.x, best_vec.y, best_vec.z);
+                if (hmag > 0) {
+                    // loop normal n = (-ty, tx, 0)
+                    v.cos_theta = std::abs(-ty * best_vec.x + tx * best_vec.y) / hmag;
+                    v.oriented = true;
+                }
+            }
         }
         // A can between the pair attenuates by its SE; around both or neither
         // it does nothing.
@@ -250,13 +334,54 @@ inline MapResult compute(const BoardIR& board, const Screener& screener,
             ++r.shielded_victims;
         }
         v.b_tesla = nf::b_from_h(v.h_a_per_m);
-        // cos(theta) = 1: worst case, because a layout tool cannot know the
-        // victim loop's orientation without its routing. Stated, not hidden.
-        v.induced_v = nf::induced_voltage(p.ring_hz, v.b_tesla, area_m2, 1.0);
+        v.induced_v = nf::induced_voltage(p.ring_hz, v.b_tesla, area_m2,
+                                          v.oriented ? v.cos_theta : 1.0);
         v.ratio = v.induced_v / v.threshold_v;
         r.max_h = std::max(r.max_h, v.h_a_per_m);
         r.victims.push_back(std::move(v));
     }
+
+    // ---- capacitive: victim pads broadside over switch-node copper ----
+    // The E mechanism, bounded by the frequency-independent divider ceiling.
+    // Only broadside overlap across an adjacent dielectric is claimed, because
+    // that is the one capacitance a layout computes exactly.
+    for (const auto& pad : board.pads) {
+        if (pad.net < 0 || pad.cu < 0) continue;
+        const std::string cls = victim_class_for(board.net_name(pad.net));
+        if (cls.empty()) continue;
+        for (const auto& seg : board.segments) {
+            if (!screener.is_switch_node(seg.net) || seg.cu == pad.cu) continue;
+            const double sdx = seg.x2 - seg.x1, sdy = seg.y2 - seg.y1;
+            const double sl = std::hypot(sdx, sdy);
+            if (!(sl > 0)) continue;
+            double t = ((pad.x - seg.x1) * sdx + (pad.y - seg.y1) * sdy) / (sl * sl);
+            t = std::clamp(t, 0.0, 1.0);
+            const double d = std::hypot(pad.x - (seg.x1 + t * sdx),
+                                        pad.y - (seg.y1 + t * sdy));
+            if (d > seg.width / 2 + std::max(pad.w, pad.h) / 2) continue;
+            double hmm = 0, eps = 4.3;
+            board.stackup.dielectric_between(std::min(pad.cu, seg.cu),
+                                             std::max(pad.cu, seg.cu), hmm, eps);
+            if (!(hmm > 0)) continue;
+            CapHit ch;
+            ch.component = pad.component;
+            ch.net = board.net_name(pad.net);
+            ch.victim_class = cls;
+            ch.x_mm = pad.x;
+            ch.y_mm = pad.y;
+            ch.overlap_mm2 = std::min(pad.w, seg.width) * std::min(pad.h, sl);
+            ch.c12_f = nf::overlap_capacitance(ch.overlap_mm2 * 1e-6,
+                                               hmm * 1e-3, eps);
+            ch.dv_v = nf::capacitive_step(p.swing_v, ch.c12_f, 5e-12);
+            ch.threshold_v = nf::victim_by_id(cls).threshold_v;
+            ch.ratio = ch.dv_v / ch.threshold_v;
+            r.cap_hits.push_back(std::move(ch));
+            break;   // one hit per pad is the story; the worst is enough
+        }
+    }
+    std::sort(r.cap_hits.begin(), r.cap_hits.end(),
+              [](const CapHit& a, const CapHit& b) { return a.ratio > b.ratio; });
+    if (r.cap_hits.size() > 12) r.cap_hits.resize(12);
 
     std::sort(r.victims.begin(), r.victims.end(),
               [](const VictimHit& a, const VictimHit& b) { return a.ratio > b.ratio; });

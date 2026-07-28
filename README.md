@@ -132,6 +132,32 @@ instead and tin-plated steel beats brass by ~49 dB. Same can, opposite lever.
 It carries no dBµV/m, no limit line and no pass/fail: there is no reliable near-field to
 far-field transform. See [docs/near-field-map-design.md](docs/near-field-map-design.md).
 
+## PDN impedance — measured off the board
+
+The **pdn** chip turns every decoupling capacitor into a series R-L-C branch whose
+inductance is **measured off the layout** — pad-to-via escape on each terminal plus the
+barrels — and plots the rail's |Z| against a target derived from your transient current
+and allowed ripple, with its anti-resonance peaks marked. A cap whose mounting
+inductance exceeds its ESL is wasted by placement, not by choice of part, and this is
+the view that shows it.
+
+## Also in the box
+
+- **Impedance calculator** (from the start screen, no board needed): a real 2D
+  boundary-element solve of the cross-section — Z₀, Z_diff, ε_eff, delay — plus a width
+  finder that bisects to a target impedance.
+- **Report export**: one self-contained HTML file of the whole review, with the
+  screening caveats attached to it rather than left behind.
+- **Bench sweep**: peak victim noise against separation as a curve, with the budget
+  line, not one point at a time.
+- **Copper loss**: the bench's transient now carries skin-effect R at the edge's knee
+  frequency, so unterminated ringing is damped the amount real copper damps it.
+- **Diff-pair skew**: recognized pairs are checked for intra-pair length mismatch —
+  skew converts differential signal into the common mode that reaches the cable.
+- Near-field victims carry a **cos θ from their own routed direction**, capacitive
+  broadside overlaps over switch copper get their divider-ceiling bound, and inductors
+  on switch nets are sources with a stated construction derating.
+
 ## Stackup policy
 
 Z₀ and coupling depend on the stackup. If the board file carries none, Faraday **refuses** rather

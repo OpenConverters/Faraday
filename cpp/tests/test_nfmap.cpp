@@ -303,3 +303,73 @@ TEST_CASE("a can attenuates only when it separates aggressor from victim",
         CHECK_THAT(un.victims[i].h_a_per_m,
                    WithinRel(bare.victims[i].h_a_per_m, 1e-12));
 }
+
+TEST_CASE("cos(theta) comes from the victim's own routed direction",
+          "[nfmap]") {
+    // The victim loop's normal lies in the board plane, perpendicular to its
+    // trace. Rotating the trace therefore changes the pickup — real layout
+    // information, and the cheapest countermeasure in the subject.
+    auto board_with_victim_dir = [](double vx, double vy) {
+        BoardIR b = converter();
+        // route the ISENSE victim net from U2's pad in a chosen direction
+        b.segments.push_back({4, 0, 40.0, 10.0, 40.0 + vx, 10.0 + vy, 0.25});
+        return b;
+    };
+    const auto rx = run(board_with_victim_dir(8.0, 0.0));   // routed in +x
+    const auto ry = run(board_with_victim_dir(0.0, 8.0));   // routed in +y
+    const nfmap::VictimHit *ux = nullptr, *uy = nullptr;
+    for (const auto& v : rx.victims) if (v.component == "U2") ux = &v;
+    for (const auto& v : ry.victims) if (v.component == "U2") uy = &v;
+    REQUIRE(ux); REQUIRE(uy);
+    CHECK(ux->oriented);
+    CHECK(uy->oriented);
+    // same field magnitude, different projection: the two orientations MUST
+    // disagree, and each cos is a valid projection
+    CHECK(ux->cos_theta >= 0.0); CHECK(ux->cos_theta <= 1.0);
+    CHECK(uy->cos_theta >= 0.0); CHECK(uy->cos_theta <= 1.0);
+    CHECK(std::abs(ux->cos_theta - uy->cos_theta) > 0.05);
+    // and the induced voltage follows the projection exactly
+    if (ux->cos_theta > 1e-6 && uy->cos_theta > 1e-6)
+        CHECK_THAT(ux->induced_v / uy->induced_v,
+                   WithinRel(ux->cos_theta / uy->cos_theta, 1e-6));
+}
+
+TEST_CASE("an inductor on the switch net is a source, derated by construction",
+          "[nfmap]") {
+    const BoardIR b = converter();
+    Screener s(b);
+    nfmap::MapParams drum, shielded;
+    shielded.inductor_k = 0.3;
+    shielded.inductor_type = "shielded";
+    const auto rd = nfmap::compute(b, s, drum);
+    const auto rs = nfmap::compute(b, s, shielded);
+
+    const nfmap::Aggressor *ad = nullptr, *as = nullptr;
+    for (const auto& a : rd.aggressors) if (a.kind == "inductor") ad = &a;
+    for (const auto& a : rs.aggressors) if (a.kind == "inductor") as = &a;
+    REQUIRE(ad); REQUIRE(as);
+    // the construction factor scales the moment linearly — it is the one
+    // attribute geometry cannot see, so it is an input, not a guess
+    CHECK_THAT(as->moment_am2, WithinRel(0.3 * ad->moment_am2, 1e-12));
+    CHECK(as->net.find("shielded") != std::string::npos);
+}
+
+TEST_CASE("a victim pad broadside over switch copper gets a capacitive hit",
+          "[nfmap]") {
+    BoardIR b = converter();
+    // switch-node copper on the OTHER layer, directly under U2's ISENSE pad
+    b.segments.push_back({1, 1, 38.0, 10.0, 42.0, 10.0, 1.0});
+    const auto r = run(b);
+    REQUIRE_FALSE(r.cap_hits.empty());
+    const auto& ch = r.cap_hits[0];
+    CHECK(ch.component == "U2");
+    CHECK(ch.victim_class == "csa");
+    CHECK(ch.overlap_mm2 > 0);
+    CHECK(ch.c12_f > 0);
+    // the divider ceiling is bounded by the swing itself
+    CHECK(ch.dv_v > 0);
+    CHECK(ch.dv_v < 12.0);
+    // and the same board without the overlap has no hit
+    const auto clean = run(converter());
+    CHECK(clean.cap_hits.empty());
+}

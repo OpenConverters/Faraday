@@ -253,6 +253,7 @@ class Screener {
         find_via_stubs(out);
         find_dangling_stubs(out);
         find_decoupling(out);
+        find_diff_skew(out);
         // rank: severity desc, then coupled length desc
         std::sort(out.begin(), out.end(), [](const Finding& x, const Finding& y) {
             if (x.severity != y.severity) return x.severity > y.severity;
@@ -737,6 +738,74 @@ class Screener {
         if (is_plane_net(net)) return true;
         if (big_pour_nets_.count(net) && !sw_nets_.count(net)) return true;
         return false;
+    }
+
+    // ---- rule: intra-pair skew on recognized differential pairs ----
+    // The pair recognizer already exists for the coupled-run reclassification;
+    // this closes the other half: a pair is only a pair if both halves arrive
+    // at the same time. Skew is pure geometry — summed routed length per net —
+    // so the finding carries no assumption beyond the name match.
+    void find_diff_skew(std::vector<Finding>& out) {
+        std::map<int, double> len_by_net;
+        std::map<int, int> cu_of_net;
+        for (const auto& seg : b_.segments) {
+            const double l = std::hypot(seg.x2 - seg.x1, seg.y2 - seg.y1);
+            len_by_net[seg.net] += l;
+            cu_of_net[seg.net] = seg.cu;
+        }
+        std::set<int> done;
+        for (const auto& [na_id, la] : len_by_net) {
+            if (done.count(na_id)) continue;
+            const std::string& na = b_.net_name(na_id);
+            if (na.empty()) continue;
+            for (const auto& [nb_id, lb] : len_by_net) {
+                if (nb_id <= na_id || done.count(nb_id)) continue;
+                const std::string& nb = b_.net_name(nb_id);
+                if (!is_differential_pair_name(na, nb)) continue;
+                done.insert(na_id);
+                done.insert(nb_id);
+                if (la < 5.0 || lb < 5.0) break;   // stubs, not a routed pair
+                const double skew = std::abs(la - lb);
+                if (skew < 0.5) break;             // matched well enough
+                Finding f;
+                f.rule = "diff-skew";
+                f.severity = std::clamp(0.2 + skew / 20.0, 0.2, 0.6);
+                f.severity_label = f.severity > 0.4 ? "medium" : "low";
+                f.confidence = "exact";
+                f.net_a = na_id;
+                f.net_b = nb_id;
+                f.coupled_len_mm = skew;
+                // delay per mm from the layer the pair is routed on, when a
+                // reference exists to define one; FR-4 microstrip otherwise
+                double eps_eff = 3.0;
+                const int cu = cu_of_net[na_id];
+                if (cu >= 0 && (size_t)cu < layers_.size()) {
+                    const LayerModel& lm = layers_[cu];
+                    if (lm.ref_up >= 0)
+                        eps_eff = tline::microstrip_eps_eff(0.2, lm.h_up, lm.eps_up);
+                    else if (lm.ref_dn >= 0)
+                        eps_eff = tline::microstrip_eps_eff(0.2, lm.h_dn, lm.eps_dn);
+                }
+                const double ps = skew * std::sqrt(eps_eff) / 0.2998;
+                char buf[240];
+                std::snprintf(buf, sizeof buf,
+                              "Intra-pair skew %.1f mm (%s %.1f mm, %s %.1f mm) "
+                              "— about %.0f ps at eps_eff %.1f.",
+                              skew, na.c_str(), la, nb.c_str(), lb, ps, eps_eff);
+                f.title = na + " / " + nb + " skew " +
+                          std::to_string((int)std::lround(skew)) + " mm";
+                f.detail = std::string(buf) +
+                           " Skew converts differential signal into common mode "
+                           "at every edge, and the common-mode current is what "
+                           "reaches the cable. Both lengths are summed routed "
+                           "copper, a geometric fact.";
+                f.remediation = "Length-match the pair with serpentines AT the "
+                                "mismatch point, not at the far end; keep the "
+                                "correction on the same layer as the mismatch.";
+                out.push_back(std::move(f));
+                break;
+            }
+        }
     }
 
     // ---- rule: layers carrying signals with no reference plane ----
