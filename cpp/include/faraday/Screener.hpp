@@ -54,7 +54,17 @@ struct ScreenerParams {
     double sample_step_mm = 1.0;     // plane-coverage sampling pitch
     double report_floor_db = -40.0;  // coupled-run findings below this are dropped (counted)
     double plane_coverage_min = 0.5; // zone area / board area to call a layer a plane
-    int sw_max_pads = 12;            // above this a L+Q net is a rail, not a switch node
+    // Above this many distinct COMPONENTS an L+Q net is a rail, not a switch
+    // node. Components, not pads: a rail betrays itself by its crowd of
+    // decoupling caps (each one a component), while a real 20 A switch node
+    // stays compact in components even when its power FETs are multi-pad
+    // packages — mppt-2420-lc's SW_NODE is 6 components but 22 pads, and the
+    // old pad count silently rejected it (the worst class of false negative).
+    int sw_max_components = 12;
+    // A dv/dt node carries at most a snubber and a bootstrap cap; a crowd of
+    // capacitor COMPONENTS is bulk/decoupling and marks a DC rail
+    // (mppt-2420-hc's HV+ input rail: 5 caps; its SW_NODE: 1).
+    int sw_max_caps = 3;
     double min_via_stub_mm = 0.3;    // ignore stubs shorter than this
     double min_dangling_mm = 1.0;    // ignore dangling ends shorter than this
     double decoupling_far_mm = 6.0;  // beyond this a decoupling cap is "reaching"
@@ -494,28 +504,37 @@ class Screener {
 
     void build_sw_nets() {
         std::map<int, std::set<std::string>> prefixes;
-        std::map<int, int> pad_count, q_pads;
+        std::map<int, std::set<std::string>> comps, sw_comps, cap_comps;
         for (const auto& p : b_.pads) {
             if (p.net <= 0 || p.component.empty() || is_plane_net(p.net)) continue;
             std::string pre = ref_prefix(p.component);
             prefixes[p.net].insert(pre);
-            ++pad_count[p.net];
-            if (pre == "Q") ++q_pads[p.net];
+            comps[p.net].insert(p.component);
+            // Q only: counting diodes as bridge legs made every power-button
+            // FET+D pair a "switch node" (ulx3s, bms-c1). The async-buck case
+            // (one FET, one diode, one L) is buck_like's job, not this one's.
+            if (pre == "Q") sw_comps[p.net].insert(p.component);
+            if (pre == "C") cap_comps[p.net].insert(p.component);
         }
         for (auto& [net, pre] : prefixes) {
-            if (pad_count[net] > p_.sw_max_pads) continue;   // a rail, not a node
+            if ((int)comps[net].size() > p_.sw_max_components)
+                continue;   // a rail, not a node
+            if ((int)cap_comps[net].size() > p_.sw_max_caps)
+                continue;   // bulk/decoupling crowd: a DC rail, not a node
             bool buck_like = pre.count("L") && pre.count("Q");
             // Inverter/half-bridge: several FETs meet with no inductor (the
             // motor IS the inductance — VESC found 0 switch nodes without
-            // this). But GATE nets also gather many Q pads (VESC's H1_LOW has
-            // 5), so require the net to sit in the POWER path: it must also
-            // reach a capacitor, an inductor or a connector. VESC's phase
-            // nodes carry {Q,C,P,R,U}; its gate nets carry only {Q,R,U}. This
-            // is a topology test, not a trace-width guess — widths overlap too
-            // much to separate them (gate nets run up to 2.29 mm there).
+            // this). But GATE nets also gather Q pads (VESC's H1_LOW has 5),
+            // so require (a) at least two distinct SWITCHING components — a
+            // midpoint is bridged from both sides, where a rail behind one
+            // FET sees only that FET (mppt-2420-lc's DCDC_IN), and (b) the
+            // POWER path: the net must also reach a capacitor, an inductor or
+            // a connector. VESC's phase nodes carry {Q,C,P,R,U}; its gate
+            // nets carry only {Q,R,U}. Topology tests, not trace-width
+            // guesses — widths overlap too much (gate nets run 2.29 mm).
             bool power_path = pre.count("C") || pre.count("L") ||
                               pre.count("P") || pre.count("J");
-            bool bridge_like = q_pads[net] >= 2 && power_path;
+            bool bridge_like = sw_comps[net].size() >= 2 && power_path;
             if (buck_like || bridge_like) sw_nets_.insert(net);
         }
     }

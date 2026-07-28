@@ -1,0 +1,65 @@
+[
+ {
+  "slug": "vesc",
+  "repo": "vedderb/bldc-hardware",
+  "kind": "motor drive (BLDC inverter)",
+  "path": "design/BLDC_4.kicad_pcb",
+  "branch": "master",
+  "license": "see repo",
+  "bytes": 848492
+ },
+ {
+  "slug": "orangecrab",
+  "repo": "gregdavill/OrangeCrab",
+  "kind": "ECP5 FPGA + DDR3",
+  "path": "hardware/orangecrab_r0.1/OrangeCrab.kicad_pcb",
+  "branch": "main",
+  "license": "NOASSERTION",
+  "bytes": 2255236
+ },
+ {
+  "slug": "mppt-2420-lc",
+  "repo": "LibreSolar/mppt-2420-lc",
+  "kind": "solar charge controller (buck)",
+  "path": "MPPT_charger_20A.kicad_pcb",
+  "branch": "master",
+  "license": "CC-BY-SA-4.0",
+  "bytes": 878391
+ },
+ {
+  "slug": "bms-c1",
+  "repo": "LibreSolar/bms-c1",
+  "kind": "battery management",
+  "path": "kicad/bms-c1.kicad_pcb",
+  "branch": "main",
+  "license": "NOASSERTION",
+  "bytes": 2738382
+ },
+ {
+  "slug": "glasgow",
+  "repo": "GlasgowEmbedded/glasgow",
+  "kind": "debug/interface tool",
+  "path": "hardware/boards/glasgow/glasgow.kicad_pcb",
+  "branch": "main",
+  "license": "0BSD",
+  "bytes": 3837315
+ },
+ {
+  "slug": "fomu",
+  "repo": "im-tomu/fomu-hardware",
+  "kind": "tiny FPGA",
+  "path": "archive/dvt/pcb/tomu-fpga.kicad_pcb",
+  "branch": "master",
+  "license": "CC-BY-SA-4.0",
+  "bytes": 267604
+ },
+ {
+  "slug": "ulx3s",
+  "repo": "emard/ulx3s",
+  "kind": "FPGA board",
+  "path": "ulx3s.kicad_pcb",
+  "branch": "master",
+  "license": "NOASSERTION",
+  "bytes": 4490683
+ }
+]

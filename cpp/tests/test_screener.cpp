@@ -267,6 +267,71 @@ TEST_CASE("screener: switch node found by connectivity; rails and LEDs are not",
     CHECK((*f)["coupledLenMm"].get<double>() > 0.0);  // copper extent, mm^2
 }
 
+TEST_CASE("screener: multi-pad power FETs do not hide the switch node",
+          "[screener][switchnode]") {
+    // mppt-2420-lc in miniature: the node has only 6 COMPONENTS but the FETs
+    // are multi-pad power packages, so a pad count crosses 12 and the old
+    // discriminator silently rejected the true switch node of a 20 A buck.
+    auto fet = [](const std::string& ref, double x, const std::string& n1,
+                  const std::string& other, int id1, int id2) {
+        std::string f = "(footprint \"Q\" (layer \"F.Cu\") (at " +
+                        std::to_string(x) + " 10) (property \"Reference\" \"" +
+                        ref + "\")";
+        for (int k = 0; k < 4; ++k)   // 4 drain pads, fused
+            f += " (pad \"D" + std::to_string(k) + "\" smd rect (at " +
+                 std::to_string(k * 1.5) + " 0) (size 1 1) (layers \"F.Cu\")"
+                 " (net " + std::to_string(id1) + " \"" + n1 + "\"))";
+        f += " (pad \"S\" smd rect (at 0 2) (size 1 1) (layers \"F.Cu\")"
+             " (net " + std::to_string(id2) + " \"" + other + "\"))";
+        return f + ")";
+    };
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SW") (net 2 "VIN") (net 3 "GND")
+      (footprint "L" (layer "F.Cu") (at 30 10)
+        (property "Reference" "L1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SW")))
+    )";
+    // NB the )" above terminates the raw string — the board's own closer is
+    // appended after the FETs, as the VRAIL test does
+    BoardIR b = import_kicad(txt + fet("Q1", 10, "SW", "VIN", 1, 2) +
+                                 fet("Q2", 20, "SW", "GND", 1, 3) + ")",
+                             builtin_stackup("default-2layer"));
+    nlohmann::json report = analyze_board(b);
+    const auto& sw = report["meta"]["switchNodes"];
+    REQUIRE(sw.size() == 1);
+    CHECK(sw[0] == "SW");
+}
+
+TEST_CASE("screener: a capacitor crowd marks a rail, never a switch node",
+          "[screener][switchnode]") {
+    // Two real FETs and an inductor sit on VBULK — but so do five bulk caps,
+    // and bulk capacitance is what a dv/dt node cannot have. mppt-2420-hc's
+    // HV+ input rail is exactly this shape.
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "VBULK") (net 2 "X")
+      (footprint "L" (layer "F.Cu") (at 30 10)
+        (property "Reference" "L1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "VBULK")))
+      (footprint "Q" (layer "F.Cu") (at 10 10)
+        (property "Reference" "Q1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "VBULK")))
+      (footprint "Q" (layer "F.Cu") (at 20 25)
+        (property "Reference" "Q2")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "VBULK")))
+    )";
+    std::string caps;
+    for (int i = 0; i < 5; ++i)
+        caps += "(footprint \"C\" (layer \"F.Cu\") (at " + std::to_string(40 + i * 3) +
+                " 10) (property \"Reference\" \"C" + std::to_string(i) + "\")"
+                " (pad \"1\" smd rect (at 0 0) (size 1 1) (layers \"F.Cu\")"
+                " (net 1 \"VBULK\")))";
+    BoardIR b = import_kicad(txt + caps + ")", builtin_stackup("default-2layer"));
+    nlohmann::json report = analyze_board(b);
+    CHECK(report["meta"]["switchNodes"].empty());
+}
+
 TEST_CASE("screener: switch-node aggressor boosts coupled-run severity",
           "[screener][switchnode]") {
     auto board = [](bool with_switch) {
