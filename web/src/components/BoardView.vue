@@ -5,6 +5,10 @@ const props = defineProps({
   report: { type: Object, required: true },
   // per-segment radiation attribution, or null when the layer is off
   radiation: { type: Object, default: null },
+  // component near-field result, or null. Rendered as a heat wash UNDER the
+  // copper: the field is what is in the air above the board, and putting the
+  // copper on top is what lets you see which parts sit in the hot region.
+  nearField: { type: Object, default: null },
   // already filtered by the rule chips — the board shows exactly what the list shows
   findings: { type: Array, required: true },
   selectedId: { type: String, default: '' },
@@ -77,6 +81,7 @@ const z0map = computed(() => {
 
 // ---- view transform ----
 const toScreen = (x, y) => [(x - view.ox) * view.scale, (y - view.oy) * view.scale]
+const invScreen = (sx, sy) => [sx / view.scale + view.ox, sy / view.scale + view.oy]
 const toWorld = (sx, sy) => [sx / view.scale + view.ox, sy / view.scale + view.oy]
 
 function fit() {
@@ -110,6 +115,90 @@ function zoomTo(f) {
 }
 
 // ---- drawing ----
+// |H| from a filamentary polygon loop, A/m. Mirrors nf::h_loop in
+// NearField.hpp, which is pinned against the point-dipole limit.
+function hLoop(hull, px, py, pz, cur) {
+  if (!hull || hull.length < 3) return 0
+  let hx = 0, hy = 0, hz = 0
+  for (let i = 0; i < hull.length; i++) {
+    const A = hull[i], B = hull[(i + 1) % hull.length]
+    const ax = (A[0] - px) * 1e-3, ay = (A[1] - py) * 1e-3, az = -pz * 1e-3
+    const bx = (B[0] - px) * 1e-3, by = (B[1] - py) * 1e-3, bz = -pz * 1e-3
+    const na = Math.hypot(ax, ay, az), nb = Math.hypot(bx, by, bz)
+    if (!(na > 0) || !(nb > 0)) continue
+    const cx = ay * bz - az * by, cy = az * bx - ax * bz, cz = ax * by - ay * bx
+    const dot = ax * bx + ay * by + az * bz
+    const den = na * nb * (na * nb + dot)
+    if (!(den > 0)) continue
+    const k = cur * (na + nb) / (4 * Math.PI * den)
+    hx += k * cx; hy += k * cy; hz += k * cz
+  }
+  return Math.hypot(hx, hy, hz)
+}
+
+// The near-field heat wash, drawn before any copper.
+function drawNearField(ctx, w, h, toScreen, invScreen) {
+  const nfd = props.nearField
+  if (!nfd || !nfd.aggressors?.length) return
+  const step = 5
+  const nx = Math.ceil(w / step), ny = Math.ceil(h / step)
+  const z = nfd.probeHeightMm
+  const cur = nfd.ringCurrentA ?? 2
+  const f = new Float64Array(nx * ny)
+  let peak = 0
+  for (let iy = 0; iy < ny; iy++)
+    for (let ix = 0; ix < nx; ix++) {
+      const [mx, my] = invScreen(ix * step, iy * step)
+      let p = 0
+      for (const a of nfd.aggressors) {
+        const v = hLoop(a.hull, mx, my, z, cur)
+        p += v * v
+      }
+      const v = Math.sqrt(p)
+      f[iy * nx + ix] = v
+      if (v > peak) peak = v
+    }
+  if (!(peak > 0)) return
+  const img = ctx.createImageData(nx, ny)
+  const floor = peak * 1e-3
+  for (let i = 0; i < nx * ny; i++) {
+    const v = f[i]
+    const t = v > floor ? Math.log(v / floor) / Math.log(peak / floor) : 0
+    let r, g, b
+    if (t < 0.5) { const u = t / 0.5; r = 14 + 40 * u; g = 20 + 78 * u; b = 18 + 70 * u }
+    else if (t < 0.8) { const u = (t - 0.5) / 0.3; r = 54 + 163 * u; g = 98 + 41 * u; b = 88 + 7 * u }
+    else { const u = (t - 0.8) / 0.2; r = 217 + 38 * u; g = 139 + 98 * u; b = 95 + 137 * u }
+    const o = i * 4
+    img.data[o] = r; img.data[o + 1] = g; img.data[o + 2] = b; img.data[o + 3] = 255
+  }
+  const off = document.createElement('canvas')
+  off.width = nx; off.height = ny
+  off.getContext('2d').putImageData(img, 0, 0)
+  ctx.imageSmoothingEnabled = true
+  ctx.imageSmoothingQuality = 'high'
+  ctx.drawImage(off, 0, 0, w, h)
+
+  // the loops the field is integrated over, and the victims sitting in it
+  for (const a of nfd.aggressors) {
+    if (!a.hull || a.hull.length < 3) continue
+    ctx.strokeStyle = 'rgba(255,255,255,0.75)'
+    ctx.lineWidth = 1.4
+    ctx.beginPath()
+    a.hull.forEach(([hx, hy], i) => {
+      const [sx, sy] = toScreen(hx, hy)
+      i ? ctx.lineTo(sx, sy) : ctx.moveTo(sx, sy)
+    })
+    ctx.closePath(); ctx.stroke()
+  }
+  for (const v of (nfd.victims ?? []).slice(0, 20)) {
+    const [sx, sy] = toScreen(v.xMm, v.yMm)
+    ctx.strokeStyle = v.level === 'over' ? '#ff5d5d'
+                    : v.level === 'watch' ? '#ffb454' : '#58c79a'
+    ctx.lineWidth = 2
+    ctx.beginPath(); ctx.arc(sx, sy, 6, 0, 7); ctx.stroke()
+  }
+}
+
 function draw() {
   const el = canvas.value
   if (!el) return
@@ -133,6 +222,18 @@ function draw() {
   ctx.roundRect(bx1, by1, bx2 - bx1, by2 - by1, 3)
   ctx.fill()
   ctx.stroke()
+
+  // Near-field heat wash goes down FIRST, so the copper draws on top of it and
+  // you can see which parts sit in the hot region — that is the whole point of
+  // putting it on the board rather than in a panel of its own.
+  if (props.nearField) {
+    ctx.save()
+    ctx.beginPath()
+    ctx.rect(bx1, by1, bx2 - bx1, by2 - by1)
+    ctx.clip()
+    drawNearField(ctx, el.clientWidth, el.clientHeight, toScreen, invScreen)
+    ctx.restore()
+  }
 
   const nCu = b.copperNames.length
   // bottom -> top so F.Cu renders on top
@@ -349,7 +450,8 @@ watch(() => props.selectedId, id => {
   if (f) zoomTo(f)
   else draw()
 })
-watch([layerVis, overlaysOn, () => props.radiation], () => draw())
+watch([layerVis, overlaysOn, () => props.radiation, () => props.nearField],
+      () => draw())
 watch(() => props.findings, () => draw())
 </script>
 
@@ -369,7 +471,7 @@ watch(() => props.findings, () => draw())
       <button class="lchip rad" :class="{ off: !radiation }" data-testid="rad-toggle"
               :style="{ '--c': '#ffb454' }"
               @click="emit('toggleRadiation')">radiation</button>
-      <button class="lchip rad off" data-testid="nf-toggle"
+      <button class="lchip rad" :class="{ off: !nearField }" data-testid="nf-toggle"
               :style="{ '--c': '#58c79a' }"
               @click="emit('nearField')">near field</button>
     </div>

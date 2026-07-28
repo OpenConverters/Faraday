@@ -14,6 +14,7 @@
 #include "Bem2d.hpp"
 #include "Emissions.hpp"
 #include "NearFieldMap.hpp"
+#include "Shielding.hpp"
 #include "RadiationMap.hpp"
 #include "Mna.hpp"
 #include "Rlgc.hpp"
@@ -562,6 +563,47 @@ inline nfmap::MapParams nfmap_params_from_json(const nlohmann::json& j) {
     p.probe_height_mm = opt("probeHeightMm", 3.0);
     p.default_victim_area_mm2 = opt("victimAreaMm2", 4.0);
     return p;
+}
+
+// What a shield can would actually buy, at the frequency in question. Never a
+// single number: the answer is set by the WALL at low frequency and by the
+// SEAM at high frequency, and quoting one figure hides which lever matters.
+inline nlohmann::json shielding_json(const nlohmann::json& j) {
+    shield::Can can;
+    can.material = j.value("material", std::string("tinsteel"));
+    can.wall_mm = j.value("wallMm", 0.2);
+    can.seam_pitch_mm = j.value("seamPitchMm", 5.0);
+    can.five_sided = j.value("fiveSided", true);
+    const double f = j.value("fMhz", 130.0) * 1e6;
+
+    nlohmann::json out = nlohmann::json::array();
+    for (auto [kind, id] : {std::pair{shield::FieldKind::MagneticNear, "magnetic"},
+                            std::pair{shield::FieldKind::ElectricNear, "electric"}}) {
+        const shield::Verdict v = shield::evaluate(can, f, kind);
+        out.push_back({{"field", id},
+                       {"seDb", v.se_db},
+                       {"absorptionDb", v.absorption_db},
+                       {"apertureDb", v.aperture_db},
+                       {"limitedBy", v.limited_by},
+                       {"skinDepthUm", v.skin_depth_um},
+                       {"wallsPerSkin", v.walls_per_skin},
+                       {"permeabilityExtrapolated", v.permeability_extrapolated},
+                       {"caveat", v.caveat}});
+    }
+    const shield::Material& m = shield::material_by_id(can.material);
+    return {{"fMhz", f * 1e-6}, {"material", m.id}, {"materialLabel", m.label},
+            {"materialNote", m.note}, {"wallMm", can.wall_mm},
+            {"seamPitchMm", can.seam_pitch_mm}, {"fiveSided", can.five_sided},
+            {"seamResonanceMhz", shield::seam_resonance_hz(can.seam_pitch_mm) * 1e-6},
+            {"results", out}};
+}
+
+inline nlohmann::json shield_materials_json() {
+    nlohmann::json a = nlohmann::json::array();
+    for (const auto& m : shield::materials())
+        a.push_back({{"id", m.id}, {"label", m.label}, {"note", m.note},
+                     {"muValidToMhz", m.mu_valid_to_hz * 1e-6}});
+    return a;
 }
 
 inline nlohmann::json victim_classes_json() {

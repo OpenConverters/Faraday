@@ -96,6 +96,19 @@ static std::string near_field(std::string request_json) {
     }
 }
 
+static std::string shielding(std::string request_json) {
+    try {
+        return faraday::bench::shielding_json(
+                   nlohmann::json::parse(request_json)).dump();
+    } catch (const std::exception& e) {
+        return nlohmann::json{{"error", e.what()}}.dump();
+    }
+}
+
+static std::string shield_materials() {
+    return faraday::bench::shield_materials_json().dump();
+}
+
 static std::string victim_classes() {
     return faraday::bench::victim_classes_json().dump();
 }
@@ -116,6 +129,8 @@ EMSCRIPTEN_BINDINGS(faraday) {
     emscripten::function("radiationMap", &radiation_map);
     emscripten::function("nearField", &near_field);
     emscripten::function("victimClasses", &victim_classes);
+    emscripten::function("shielding", &shielding);
+    emscripten::function("shieldMaterials", &shield_materials);
     emscripten::function("limitLines", &limit_lines);
     emscripten::function("logicFamilies", &logic_families);
     emscripten::function("version", &version);

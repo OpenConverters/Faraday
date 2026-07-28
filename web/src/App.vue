@@ -101,8 +101,26 @@ watch(report, () => { radiation.value = null; radError.value = '' })
 
 // The component near-field map: a different regime from the far-field
 // attribution, so it is a separate panel with its own units and its own caveat.
-const nearFieldOpen = ref(false)
-watch(report, () => { nearFieldOpen.value = false })
+const nearField = ref(null)
+const nfError = ref('')
+const nfDetail = ref(false)
+// The excitation the overlay is computed at. Held here rather than in the
+// panel because the board overlay needs it too.
+const nfParams = ref({ ringCurrentA: 2, ringMhz: 130, probeHeightMm: 3, victimAreaMm2: 4 })
+function runNearField() {
+  try {
+    const out = JSON.parse(engine.value.nearField(JSON.stringify(nfParams.value)))
+    if (out.error) { nfError.value = out.error; nearField.value = null; return }
+    nfError.value = ''
+    nearField.value = out
+  } catch (e) { nfError.value = String(e) }
+}
+function toggleNearField() {
+  if (nearField.value) { nearField.value = null; nfError.value = ''; return }
+  runNearField()
+}
+function setNfParams(p) { nfParams.value = { ...nfParams.value, ...p }; runNearField() }
+watch(report, () => { nearField.value = null; nfError.value = ''; nfDetail.value = false })
 
 const emitId = ref('')
 const emitFinding = computed(() =>
@@ -141,6 +159,26 @@ function toggleRule(rule) {
     <div v-if="error" class="banner error" data-testid="error-banner">{{ error }}</div>
     <div v-if="radError" class="banner error" data-testid="rad-error">{{ radError }}</div>
 
+    <div v-if="nfError" class="banner error" data-testid="nf-error">{{ nfError }}</div>
+
+    <div v-if="nearField" class="radbar nf" data-testid="nf-bar">
+      <b>Near field</b>
+      <span>|H| at {{ nfParams.probeHeightMm.toFixed(1) }} mm ·
+        {{ nfParams.ringCurrentA.toFixed(1) }} A ring at {{ nfParams.ringMhz.toFixed(0) }} MHz ·
+        λ/2π = {{ nearField.lambdaOver2PiMm.toFixed(0) }} mm, the whole board is inside it</span>
+      <span v-if="nearField.victims?.length" class="top">
+        worst: <b>{{ nearField.victims[0].component }}</b>
+        ({{ nearField.victims[0].class }})
+        {{ nearField.victims[0].ratio >= 10
+           ? (20 * Math.log10(nearField.victims[0].ratio)).toFixed(0) + ' dB over'
+           : (nearField.victims[0].ratio * 100).toFixed(0) + '% of' }} threshold</span>
+      <button class="detail" data-testid="nf-detail" @click="nfDetail = true">
+        victims &amp; shielding →</button>
+      <span class="cav">Quasi-static induction at component scale, in A/m — not a
+        radiation map. No dBµV/m, no limit line: there is no reliable near-field to
+        far-field transform. The ring current is your assumption.</span>
+    </div>
+
     <div v-if="radiation" class="radbar" data-testid="rad-bar">
       <b>Radiation attribution</b>
       <span>{{ radiation.totalDbuvM.toFixed(1) }} dBµV/m total at
@@ -167,10 +205,10 @@ function toggleRule(rule) {
 
     <main class="work" v-if="report">
       <BoardView :report="report" :findings="visibleFindings" :selected-id="selectedId"
-                 :radiation="radiation"
+                 :radiation="radiation" :near-field="nearField"
                  @select="id => selectedId = id"
                  @toggle-radiation="toggleRadiation"
-                 @near-field="nearFieldOpen = true" />
+                 @near-field="toggleNearField" />
       <FindingsList :findings="visibleFindings" :report="report" :selected-id="selectedId"
                     :rules="ruleCounts" :hidden-rules="hiddenRules" :total="findings.length"
                     @select="id => selectedId = selectedId === id ? '' : id"
@@ -201,8 +239,9 @@ function toggleRule(rule) {
     <EmissionsPanel v-if="emitFinding && engine" :engine="engine"
                     :finding="emitFinding" @close="emitId = ''" />
 
-    <NearFieldPanel v-if="nearFieldOpen && engine && report" :engine="engine"
-                    :report="report" @close="nearFieldOpen = false" />
+    <NearFieldPanel v-if="nfDetail && nearField && engine" :engine="engine"
+                    :result="nearField" :params="nfParams"
+                    @close="nfDetail = false" @params="setNfParams" />
 
     <footer v-if="meta" class="metastrip" data-testid="meta-strip">
       <span class="m">format: <b>{{ report.format }}</b></span>
@@ -293,6 +332,12 @@ function toggleRule(rule) {
   color: var(--tin);
 }
 .radbar > b { color: var(--copper); letter-spacing: 0.06em; }
+.radbar.nf > b { color: var(--heat-low); }
+.radbar .detail {
+  border: 1px solid var(--heat-low); border-radius: 3px; padding: 2px 9px;
+  font-size: 11px; color: var(--heat-low);
+}
+.radbar .detail:hover { background: var(--heat-low); color: var(--bare-fr4); }
 .radbar .warn { color: var(--heat-med); }
 .radbar .top b { color: var(--silk); }
 .radbar .cav { flex: 1 1 100%; opacity: 0.75; font-family: var(--sans); font-size: 11px; }

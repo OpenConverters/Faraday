@@ -123,6 +123,12 @@ and **nearly useless against a low-frequency magnetic near field** — single-di
 below ~10 MHz regardless of material. A magnetically shielded inductor is not shielded
 by a can at all; it has a closed magnetic path.
 
+It renders as a heat wash **on the board itself**, with the copper drawn over it, and
+**victims & shielding →** opens the per-part table plus a shield-can model. That model
+shows the thing a datasheet usually hides: at 130 MHz a 0.2 mm wall absorbs ~950 dB and
+only the **cover-to-frame contact pitch** matters, while at 500 kHz the wall binds
+instead and tin-plated steel beats brass by ~49 dB. Same can, opposite lever.
+
 It carries no dBµV/m, no limit line and no pass/fail: there is no reliable near-field to
 far-field transform. See [docs/near-field-map-design.md](docs/near-field-map-design.md).
 

@@ -17,7 +17,13 @@ async function openNearField(page) {
   if (await card.count()) await card.getByText('Default 4-layer').click()
   await expect(page.getByTestId('finding-F-0001')).toBeVisible({ timeout: 30000 })
   await page.getByTestId('nf-toggle').click()
-  await expect(page.getByTestId('nearfield')).toBeVisible()
+  await expect(page.getByTestId('nf-bar')).toBeVisible()
+}
+
+async function openDetail(page) {
+  await openNearField(page)
+  await page.getByTestId('nf-detail').click()
+  await expect(page.getByTestId('nf-panel')).toBeVisible()
 }
 
 test('a converter board maps its component near field', async ({ page }) => {
@@ -25,21 +31,26 @@ test('a converter board maps its component near field', async ({ page }) => {
   page.on('console', m => { if (m.type() === 'error') errs.push(m.text()) })
   page.on('pageerror', e => errs.push(String(e)))
 
+  // off by default, then rendered ON THE BOARD like the radiation layer
+  await page.goto('/')
+  await expect(page.getByTestId('nf-bar')).toHaveCount(0)
+
   await openNearField(page)
   await expect(page.getByTestId('nf-error')).toHaveCount(0)
+  await expect(page.getByTestId('nf-bar')).toContainText('λ/2π')
 
-  // the regime context must be on screen: the whole board is inside lambda/2pi,
-  // which is the reason this is not the radiation map
-  await expect(page.getByTestId('nf-context')).toContainText('λ/2π')
-
-  // the field picture is actually drawn
-  const colours = await page.getByTestId('nf-canvas').evaluate(cv => {
+  // the field is washed onto the board canvas itself
+  const colours = await page.getByTestId('board-canvas').evaluate(cv => {
     const d = cv.getContext('2d').getImageData(0, 0, cv.width, cv.height).data
     const s = new Set()
     for (let i = 0; i < d.length; i += 4) s.add(`${d[i]},${d[i+1]},${d[i+2]}`)
     return s.size
   })
   expect(colours).toBeGreaterThan(12)
+
+  // and it toggles back off
+  await page.getByTestId('nf-toggle').click()
+  await expect(page.getByTestId('nf-bar')).toHaveCount(0)
 
   expect(errs).toEqual([])
 })
@@ -48,27 +59,28 @@ test('the panel refuses to look like a compliance verdict', async ({ page }) => 
   // The single most important assertion in this file. A near-field map that
   // implies chamber compliance is worse than no map.
   await openNearField(page)
-  const c = page.getByTestId('nf-caveat')
-  await expect(c).toBeVisible()
+  const c = page.getByTestId('nf-bar')
   await expect(c).toContainText('not a radiation map')
-  await expect(c).toContainText('no dBµV/m')
+  await expect(c).toContainText('no limit line')
   await expect(c).toContainText('your assumption')
-  await expect(c).toContainText('Cable common-mode')
 
   // No standard may be NAMED and no field-strength unit quoted. Matching bare
   // words like "limit line" is wrong — the caveat says "no limit line", and an
   // assertion that cannot tell a denial from a claim is worse than none.
-  const body = await page.getByTestId('nearfield').textContent()
+  const body = await page.getByTestId('nf-bar').textContent()
   expect(body, 'no standard may be named in a near-field panel')
     .not.toMatch(/CISPR|EN ?55|FCC|Class [AB]\b/i)
-  expect(body, 'dBuV/m is a far-field unit and has no meaning here')
-    .not.toMatch(/dB[µu]V\/m(?!\s+here)/i)
+  // A dBuV/m VALUE is forbidden; the bar's own denial of it ("No dBµV/m") is
+  // the opposite of a claim, so match a number in front of the unit rather
+  // than the bare words.
+  expect(body, 'no dBuV/m value may be quoted in a near-field panel')
+    .not.toMatch(/[\d.]+\s*dB[µu]V\/m/i)
   // the units it DOES use are the near-field ones
   expect(body).toMatch(/dB[µu]A\/m|A\/m/)
 })
 
 test('raising the probe lowers the field, steeply', async ({ page }) => {
-  await openNearField(page)
+  await openDetail(page)
   // Read the CELL, not the table's textContent: cells concatenate without a
   // separator, so "36.5" + "126 dBµA/m" reads as "5126" to a naive regex.
   const worstH = () => page.getByTestId('nf-victims').evaluate(t => {
@@ -91,7 +103,7 @@ test('raising the probe lowers the field, steeply', async ({ page }) => {
 })
 
 test('current scales the map and is presented as an assumption', async ({ page }) => {
-  await openNearField(page)
+  await openDetail(page)
   const level = () => page.getByTestId('nf-victims').evaluate(t => {
     const c = t.querySelector('tbody tr td:nth-child(4)')
     if (!c) return null
@@ -116,7 +128,7 @@ test('close-in parts get a real number from the exact integral', async ({ page }
   // 267 mm2 loop — most of a 100 mm board, and every part beside the switcher.
   // Biot-Savart over the loop polygon answers at any distance, so EVERY row
   // must carry a field.
-  await openNearField(page)
+  await openDetail(page)
   const rows = await page.getByTestId('nf-victims').evaluate(t =>
     [...t.querySelectorAll('tbody tr')].map(r =>
       [...r.querySelectorAll('td')].map(d => d.textContent.trim())))
@@ -126,7 +138,35 @@ test('close-in parts get a real number from the exact integral', async ({ page }
     expect(r[4], 'every victim must get an induced voltage').toMatch(/[µm]V/)
   }
   // and the dipole caveat is context, not a refusal
-  const body = await page.getByTestId('nearfield').textContent()
-  if (/\*/.test(body))
-    await expect(page.getByTestId('nf-caveat')).toContainText('still get a real number')
+  const body = await page.getByTestId('nf-panel').textContent()
+  expect(body).toMatch(/dB[µu]A\/m/)
 })
+
+test('a shield can is offered as a conditional, with the binding regime named',
+  async ({ page }) => {
+    await openDetail(page)
+    const sh = page.getByTestId('nf-shield')
+    await expect(sh).toBeVisible()
+
+    // At the default 130 MHz ring the wall is opaque, so the SEAM must bind —
+    // that is the whole point: above a few MHz the alloy on the datasheet is
+    // not the variable that matters.
+    await expect(page.getByTestId('nf-limited')).toHaveText('seam')
+
+    // and widening the contact pitch must cost shielding effectiveness
+    const se = () => sh.evaluate(el => {
+      const m = el.textContent.match(/delivered\s*(-?[\d.]+) dB/)
+      return m ? Number(m[1]) : null
+    })
+    const before = await se()
+    expect(before).not.toBeNull()
+    const pitch = page.getByTestId('nf-shield-seam')
+    await pitch.fill('20')
+    await pitch.dispatchEvent('input')
+    await expect.poll(se).toBeLessThan(before)
+
+    // the honest limits are stated, not buried
+    await expect(sh).toContainText('contact pitch')
+    await expect(sh).toContainText('nothing')
+    await expect(sh).toContainText('common-mode')
+  })
