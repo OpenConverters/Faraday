@@ -5,6 +5,12 @@ import { test, expect } from '@playwright/test'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+// Loading a 1.16 MB board means downloading a 656 kB WASM engine and parsing
+// the layout. Locally both are cached; against a deployed site neither is, and
+// under a serialized suite that legitimately exceeds 30 s. One constant so the
+// budget cannot drift between specs.
+const LOAD_MS = process.env.FARADAY_E2E_BASE ? 75000 : 30000
+
 const here = path.dirname(fileURLToPath(import.meta.url))
 const MPPT = path.join(here, '../../../cpp/tests/fixtures/real/mppt-2420-hc.kicad_pcb')
 
@@ -13,9 +19,9 @@ async function openNearField(page) {
   await page.getByTestId('file-input').setInputFiles(MPPT)
   const card = page.getByTestId('stackup-card')
   await expect(card.or(page.getByTestId('finding-F-0001')).first())
-    .toBeVisible({ timeout: 30000 })
+    .toBeVisible({ timeout: LOAD_MS })
   if (await card.count()) await card.getByText('Default 4-layer').click()
-  await expect(page.getByTestId('finding-F-0001')).toBeVisible({ timeout: 30000 })
+  await expect(page.getByTestId('finding-F-0001')).toBeVisible({ timeout: LOAD_MS })
   await page.getByTestId('nf-toggle').click()
   await expect(page.getByTestId('nf-bar')).toBeVisible()
 }

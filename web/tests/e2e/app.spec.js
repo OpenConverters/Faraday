@@ -138,3 +138,26 @@ test('tooltip appears when hovering routed copper', async ({ page }) => {
   }
   expect(seen).toBe(true)
 })
+
+test('a board dropped before the engine has loaded is not silently lost',
+  async ({ page }) => {
+    // The engine is a 650 kB WASM download and compile. Locally it wins the
+    // race against any human, so this path never runs — but over a real
+    // network it loses, and the app used to hit `if (!engine) return` and drop
+    // the board with no analysis, no error and no retry. Found by the live
+    // suite: the FIRST test in every spec failed while the rest passed in ~2 s,
+    // because only the first paid for a cold engine.
+    await page.route('**/faraday.wasm', async route => {
+      await new Promise(r => setTimeout(r, 3000))
+      await route.continue()
+    })
+    await page.goto('/')
+    // pick a board immediately — before the engine can possibly be ready
+    await page.getByTestId('file-input').setInputFiles(FIXTURE)
+    await expect(page.getByTestId('engine-loading')).toBeVisible()
+
+    // and it must still analyse once the engine arrives, rather than sitting
+    // there having quietly discarded the file
+    await expect(page.getByTestId('finding-F-0001')).toBeVisible({ timeout: 30000 })
+    await expect(page.getByTestId('engine-loading')).toHaveCount(0)
+  })

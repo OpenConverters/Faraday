@@ -7,7 +7,11 @@ const remote = process.env.FARADAY_E2E_BASE
 
 export default defineConfig({
   testDir: 'tests/e2e',
-  timeout: 30000,
+  // Against a deployed site every board test pays for a 656 kB WASM download
+  // and a 1.16 MB layout over the network, where locally both are cached. That
+  // is real work, not flakiness, and 30 s is not enough for it — the failures
+  // were the test clock expiring, not the app.
+  timeout: remote ? 150000 : 30000,
   use: { baseURL: remote || 'http://localhost:5199' },
   ...(remote ? {} : {
     webServer: {

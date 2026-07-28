@@ -16,12 +16,35 @@ const stackupChoice = ref('')   // '' = from board file
 const selectedId = ref('')
 const dragOver = ref(false)
 
+// The engine is a 650 kB WASM download and compile. On a fast local connection
+// it is ready before anyone can pick a file; on a real one it is not, and a
+// board dropped in that window used to hit `if (!engine) return` and vanish —
+// no analysis, no error, no retry, forever. Holding the promise and awaiting it
+// means a board is never silently dropped, whichever wins the race.
+const enginePromise = window.createFaraday()
+const engineLoading = ref(true)
 onMounted(async () => {
-  engine.value = await window.createFaraday()
+  try {
+    engine.value = await enginePromise
+  } catch (e) {
+    error.value = 'the analysis engine failed to load: ' + String(e)
+  } finally {
+    engineLoading.value = false
+  }
 })
 
-function analyze() {
-  if (!engine.value || !boardText.value) return
+async function analyze() {
+  if (!boardText.value) return
+  if (!engine.value) {
+    // waiting on the engine is a state, not a failure — say so and continue
+    engineLoading.value = true
+    try { engine.value = await enginePromise } catch (e) {
+      error.value = 'the analysis engine failed to load: ' + String(e)
+      engineLoading.value = false
+      return
+    }
+    engineLoading.value = false
+  }
   error.value = ''
   needStackup.value = false
   const out = JSON.parse(engine.value.analyze(boardText.value, stackupChoice.value))
@@ -44,7 +67,7 @@ async function onFile(file) {
   fileName.value = file.name
   boardText.value = await file.text()
   stackupChoice.value = ''
-  analyze()
+  await analyze()
 }
 
 function onDrop(e) {
@@ -157,6 +180,9 @@ function toggleRule(rule) {
     </header>
 
     <div v-if="error" class="banner error" data-testid="error-banner">{{ error }}</div>
+
+    <div v-if="engineLoading && fileName" class="banner wait" data-testid="engine-loading">
+      Loading the analysis engine…</div>
     <div v-if="radError" class="banner error" data-testid="rad-error">{{ radError }}</div>
 
     <div v-if="nfError" class="banner error" data-testid="nf-error">{{ nfError }}</div>
@@ -298,6 +324,7 @@ function toggleRule(rule) {
 
 .banner { padding: 12px 16px; font-size: 13.5px; }
 .banner.error { background: #3a1a1e; color: #ffb3b8; font-family: var(--mono); }
+.banner.wait { background: var(--resin); color: var(--tin); font-family: var(--mono); }
 .banner.ask { background: #2a2418; color: var(--silk); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .chip {
   border: 1px solid var(--heat-med); color: var(--heat-med);
