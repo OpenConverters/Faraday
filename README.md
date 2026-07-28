@@ -104,6 +104,28 @@ incoherently, with an assumed current that scales the whole thing linearly. It i
 deliberately not coloured in absolute field units, because coloured that way it would
 look like a full-wave solve and it is not one.
 
+## The component near-field map
+
+The **near field** chip opens a different regime from the radiation layer. At component
+scale below ~1 GHz, `k·r ≪ 1` and the fields *are* the magnetostatic dipole fields:
+decay is **1/r³ — 18 dB per doubling**, not 6, and E and H are independent (wave
+impedance spans five orders of magnitude at 5 mm, so the far-field `+51.5 dB` conversion
+is wrong by ±40–55 dB there).
+
+It shows |H| in A/m at a stated probe height, and for each sensitive component the
+voltage induced in its own loop against the threshold for its class — a precision
+current-sense amp is judged at 15 µV, a 12-bit ADC at 806 µV.
+
+**This is why some components get shielded**, and the answer has two halves that are
+routinely conflated. A thin conductive can is excellent against a *voltage-driven*
+E-field source (reflection dominates; the bond to ground is the limit, not the metal)
+and **nearly useless against a low-frequency magnetic near field** — single-digit dB
+below ~10 MHz regardless of material. A magnetically shielded inductor is not shielded
+by a can at all; it has a closed magnetic path.
+
+It carries no dBµV/m, no limit line and no pass/fail: there is no reliable near-field to
+far-field transform. See [docs/near-field-map-design.md](docs/near-field-map-design.md).
+
 ## Stackup policy
 
 Z₀ and coupling depend on the stackup. If the board file carries none, Faraday **refuses** rather

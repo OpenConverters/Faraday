@@ -4,6 +4,7 @@ import BoardView from './components/BoardView.vue'
 import FindingsList from './components/FindingsList.vue'
 import BenchPanel from './components/BenchPanel.vue'
 import EmissionsPanel from './components/EmissionsPanel.vue'
+import NearFieldPanel from './components/NearFieldPanel.vue'
 
 const engine = ref(null)
 const boardText = ref('')
@@ -98,6 +99,11 @@ function toggleRadiation() {
 }
 watch(report, () => { radiation.value = null; radError.value = '' })
 
+// The component near-field map: a different regime from the far-field
+// attribution, so it is a separate panel with its own units and its own caveat.
+const nearFieldOpen = ref(false)
+watch(report, () => { nearFieldOpen.value = false })
+
 const emitId = ref('')
 const emitFinding = computed(() =>
   findings.value.find(f => f.id === emitId.value && f.emit) ?? null)
@@ -163,7 +169,8 @@ function toggleRule(rule) {
       <BoardView :report="report" :findings="visibleFindings" :selected-id="selectedId"
                  :radiation="radiation"
                  @select="id => selectedId = id"
-                 @toggle-radiation="toggleRadiation" />
+                 @toggle-radiation="toggleRadiation"
+                 @near-field="nearFieldOpen = true" />
       <FindingsList :findings="visibleFindings" :report="report" :selected-id="selectedId"
                     :rules="ruleCounts" :hidden-rules="hiddenRules" :total="findings.length"
                     @select="id => selectedId = selectedId === id ? '' : id"
@@ -193,6 +200,9 @@ function toggleRule(rule) {
 
     <EmissionsPanel v-if="emitFinding && engine" :engine="engine"
                     :finding="emitFinding" @close="emitId = ''" />
+
+    <NearFieldPanel v-if="nearFieldOpen && engine && report" :engine="engine"
+                    :report="report" @close="nearFieldOpen = false" />
 
     <footer v-if="meta" class="metastrip" data-testid="meta-strip">
       <span class="m">format: <b>{{ report.format }}</b></span>

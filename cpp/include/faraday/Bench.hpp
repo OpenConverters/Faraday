@@ -13,6 +13,7 @@
 
 #include "Bem2d.hpp"
 #include "Emissions.hpp"
+#include "NearFieldMap.hpp"
 #include "RadiationMap.hpp"
 #include "Mna.hpp"
 #include "Rlgc.hpp"
@@ -499,6 +500,79 @@ inline radmap::MapParams radmap_params_from_json(const nlohmann::json& j) {
     p.r_m = opt("distanceM", 3.0);
     p.ground_reflection = j.value("groundReflection", true);
     return p;
+}
+
+// The component near-field map. Units are A/m and volts induced — never
+// dBuV/m, never a limit line, never a margin. There is no reliable near-field
+// to far-field transform and the UI has to say so.
+inline nlohmann::json near_field_json(const BoardIR& board,
+                                      const Screener& screener,
+                                      const nfmap::MapParams& p) {
+    const nfmap::MapResult r = nfmap::compute(board, screener, p);
+    nlohmann::json ag = nlohmann::json::array();
+    for (const auto& a : r.aggressors)
+        ag.push_back({{"net", a.net}, {"xMm", a.x_mm}, {"yMm", a.y_mm},
+                      {"areaMm2", a.area_mm2}, {"momentAm2", a.moment_am2},
+                      {"aEffMm", a.a_eff_mm}, {"validFromMm", a.valid_from_mm},
+                      {"hull", [&] {
+                          nlohmann::json h = nlohmann::json::array();
+                          for (const auto& pt : a.hull)
+                              h.push_back({pt.x, pt.y});
+                          return h;
+                      }()}});
+    nlohmann::json vi = nlohmann::json::array();
+    for (const auto& v : r.victims) {
+        const auto& vc = nf::victim_by_id(v.victim_class);
+        vi.push_back({{"component", v.component}, {"net", v.net},
+                      {"class", v.victim_class}, {"classLabel", vc.label},
+                      {"why", vc.why},
+                      {"kind", vc.kind == nf::VictimKind::DcAccuracy
+                                   ? "dc-accuracy" : "peak-volts"},
+                      {"xMm", v.x_mm}, {"yMm", v.y_mm},
+                      {"distanceMm", v.distance_mm},
+                      {"hAPerM", v.h_a_per_m},
+                      {"hDbuaM", nf::to_dbua_m(v.h_a_per_m)},
+                      {"bMicroT", v.b_tesla * 1e6},
+                      {"inducedMv", v.induced_v * 1e3},
+                      {"thresholdMv", v.threshold_v * 1e3},
+                      {"ratio", v.ratio},
+                      {"dipoleValid", v.dipole_valid},
+                      {"aggressor", v.aggressor},
+                      {"level", v.ratio >= 1.0 ? "over"
+                                : (v.ratio >= 0.25 ? "watch" : "ok")}});
+    }
+    return {{"aggressors", ag}, {"victims", vi},
+            {"maxHAPerM", r.max_h},
+            {"tooCloseCount", (int)r.too_close_count},
+            {"probeHeightMm", r.probe_height_mm},
+            {"ringMhz", r.ring_hz * 1e-6},
+            {"ringCurrentA", p.ring_current_a},
+            {"lambdaOver2PiMm", r.lambda_over_2pi_mm}};
+}
+
+inline nfmap::MapParams nfmap_params_from_json(const nlohmann::json& j) {
+    nfmap::MapParams p;
+    auto opt = [&](const char* k, double d) {
+        return (j.contains(k) && j.at(k).is_number()) ? j.at(k).get<double>() : d;
+    };
+    p.sw_current_a = opt("currentA", 10.0);
+    p.ring_current_a = opt("ringCurrentA", 2.0);
+    p.ring_hz = opt("ringMhz", 130.0) * 1e6;
+    p.f_sw_hz = opt("fSwKhz", 500.0) * 1e3;
+    p.probe_height_mm = opt("probeHeightMm", 3.0);
+    p.default_victim_area_mm2 = opt("victimAreaMm2", 4.0);
+    return p;
+}
+
+inline nlohmann::json victim_classes_json() {
+    nlohmann::json a = nlohmann::json::array();
+    for (const auto& v : nf::victim_classes())
+        a.push_back({{"id", v.id}, {"label", v.label},
+                     {"thresholdMv", v.threshold_v * 1e3},
+                     {"kind", v.kind == nf::VictimKind::DcAccuracy
+                                  ? "dc-accuracy" : "peak-volts"},
+                     {"why", v.why}});
+    return a;
 }
 
 inline nlohmann::json limit_lines_json() {

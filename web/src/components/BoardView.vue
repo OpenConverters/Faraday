@@ -9,7 +9,7 @@ const props = defineProps({
   findings: { type: Array, required: true },
   selectedId: { type: String, default: '' },
 })
-const emit = defineEmits(['select', 'toggleRadiation'])
+const emit = defineEmits(['select', 'toggleRadiation', 'nearField'])
 
 // Radiation attribution, decoded once per map into a byte per segment. Null
 // when the map is off, and every draw path checks for that rather than
@@ -369,6 +369,9 @@ watch(() => props.findings, () => draw())
       <button class="lchip rad" :class="{ off: !radiation }" data-testid="rad-toggle"
               :style="{ '--c': '#ffb454' }"
               @click="emit('toggleRadiation')">radiation</button>
+      <button class="lchip rad off" data-testid="nf-toggle"
+              :style="{ '--c': '#58c79a' }"
+              @click="emit('nearField')">near field</button>
     </div>
     <div v-if="hover" class="tooltip" data-testid="board-tooltip"
          :style="{ left: Math.min(hover.x + 14, 9999) + 'px', top: hover.y + 14 + 'px' }">

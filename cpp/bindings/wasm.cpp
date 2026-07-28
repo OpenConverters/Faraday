@@ -81,6 +81,25 @@ static std::string radiation_map(std::string request_json) {
     }
 }
 
+static std::string near_field(std::string request_json) {
+    try {
+        if (!g_board)
+            throw std::runtime_error(
+                "no board loaded — open a layout before asking what the field "
+                "above it looks like");
+        const nlohmann::json j = nlohmann::json::parse(request_json);
+        faraday::Screener sc(*g_board);
+        return faraday::bench::near_field_json(
+                   *g_board, sc, faraday::bench::nfmap_params_from_json(j)).dump();
+    } catch (const std::exception& e) {
+        return nlohmann::json{{"error", e.what()}}.dump();
+    }
+}
+
+static std::string victim_classes() {
+    return faraday::bench::victim_classes_json().dump();
+}
+
 static std::string limit_lines() { return faraday::bench::limit_lines_json().dump(); }
 
 static std::string logic_families() {
@@ -95,6 +114,8 @@ EMSCRIPTEN_BINDINGS(faraday) {
     emscripten::function("predictEmissions", &predict_emissions);
     emscripten::function("cmBudget", &cm_budget);
     emscripten::function("radiationMap", &radiation_map);
+    emscripten::function("nearField", &near_field);
+    emscripten::function("victimClasses", &victim_classes);
     emscripten::function("limitLines", &limit_lines);
     emscripten::function("logicFamilies", &logic_families);
     emscripten::function("version", &version);

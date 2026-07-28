@@ -225,6 +225,24 @@ class Screener {
     // they are the loudest copper on a converter by a wide margin.
     bool is_switch_node(int net) const { return sw_nets_.count(net) > 0; }
 
+    // The nets the switch-node rule identified. The near-field map is built
+    // around switching aggressors, so it needs the set, not just a predicate.
+    const std::set<int>& switch_nets() const { return sw_nets_; }
+
+    // The commutation loop of a switch net: enclosed area, the hull that
+    // bounds it, and the nearest bulk capacitor. Public because the near-field
+    // map reduces that loop to a magnetic dipole — the area is the one factor
+    // in m = N*I*A that geometry supplies exactly.
+    struct LoopResult {
+        double area_mm2 = 0;
+        double cap_dist_mm = 0;
+        std::string cap_ref;
+        std::vector<Point> hull;
+    };
+    std::optional<LoopResult> commutation_loop(int sw_net) const {
+        return commutation_loop_impl(sw_net);
+    }
+
     std::vector<Finding> run() {
         std::vector<Finding> out;
         find_no_reference_plane(out);
@@ -508,14 +526,7 @@ class Screener {
     // switch node, and the nearest capacitor bridging one of their other rails
     // to a pour net. Reported as a heuristic with the geometry drawn, so the
     // user can see exactly which loop was measured.
-    struct LoopResult {
-        double area_mm2 = 0;
-        double cap_dist_mm = 0;
-        std::string cap_ref;
-        std::vector<Point> hull;
-    };
-
-    std::optional<LoopResult> commutation_loop(int sw_net) const {
+    std::optional<LoopResult> commutation_loop_impl(int sw_net) const {
         // Switching devices on the node. A synchronous converter has two FETs;
         // an ASYNCHRONOUS one has a FET and a freewheel diode, and the diode
         // carries half the commutation current — omitting it left the
