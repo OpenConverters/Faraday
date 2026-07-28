@@ -8,8 +8,9 @@ const props = defineProps({
   rules: { type: Array, default: () => [] },
   hiddenRules: { type: Set, default: () => new Set() },
   total: { type: Number, default: 0 },
+  hiddenCount: { type: Number, default: 0 },
 })
-const emit = defineEmits(['select', 'toggleRule', 'bench', 'emissions'])
+const emit = defineEmits(['select', 'toggleRule', 'bench', 'emissions', 'hide', 'unhideAll', 'glossary'])
 
 const netName = id =>
   props.report.board.nets.find(n => n.id === id)?.name || (id >= 0 ? `net ${id}` : '')
@@ -29,7 +30,11 @@ const toolTitle = f => [
       Findings
       <span class="count" data-testid="finding-count">{{ findings.length }}</span>
       <span v-if="findings.length !== total" class="of">of {{ total }}</span>
+      <button class="gloss" data-testid="open-glossary" title="what every rule means"
+              @click="emit('glossary')">glossary</button>
     </h2>
+    <button v-if="hiddenCount" class="restore" data-testid="restore-hidden"
+            @click="emit('unhideAll')">restore {{ hiddenCount }} dismissed</button>
     <div v-if="rules.length > 1" class="filters" data-testid="rule-filters">
       <button v-for="[rule, n] in rules" :key="rule" class="rchip"
               :class="{ off: hiddenRules.has(rule) }"
@@ -88,6 +93,9 @@ const toolTitle = f => [
           <span class="fnum" v-if="f.nextDb !== undefined">{{ f.nextDb.toFixed(1) }} dB</span>
           <span class="fnum" v-else-if="f.rule === 'switch-node' || f.rule === 'commutation-loop'">{{ f.coupledLenMm.toFixed(0) }} mm²</span>
           <span class="fnum" v-else-if="f.coupledLenMm">{{ f.coupledLenMm.toFixed(1) }} mm</span>
+          <span class="dismiss" :data-testid="`dismiss-${f.id}`" role="button"
+                title="dismiss this finding for this review"
+                @click.stop="emit('hide', f.id)">✕</span>
         </button>
         <div v-if="f.id === selectedId" class="detail" data-testid="finding-detail">
           <p>{{ f.detail }}</p>
@@ -125,6 +133,16 @@ const toolTitle = f => [
   display: flex; align-items: baseline; gap: 8px;
 }
 .count { font-family: var(--mono); font-size: 13px; color: var(--copper); }
+.gloss { margin-left: auto; border: 1px solid var(--resin-edge); border-radius: 999px;
+  padding: 1px 12px; font-size: 11px; color: var(--tin); text-transform: none;
+  letter-spacing: 0; font-family: var(--sans); font-weight: 400; }
+.gloss:hover { border-color: var(--copper); color: var(--copper); }
+.restore { margin: 0 14px 8px; border: 1px dashed var(--resin-edge); border-radius: 999px;
+  padding: 2px 12px; font-size: 11px; color: var(--tin); }
+.restore:hover { border-color: var(--copper); color: var(--copper); }
+.dismiss { color: var(--tin); opacity: 0; font-size: 11px; padding: 0 2px; flex: none; }
+.row:hover .dismiss { opacity: 0.7; }
+.dismiss:hover { opacity: 1; color: var(--heat-high); }
 
 .tools { display: inline-flex; gap: 4px; align-items: center; flex: none; }
 .tool {
@@ -167,7 +185,9 @@ const toolTitle = f => [
   /* five columns: heat, id, title, capability marks, value. The marks are
      conditional, and with only four columns declared their presence pushed the
      value onto a second grid row. */
-  display: grid; grid-template-columns: 10px auto 1fr auto auto;
+  /* six columns: heat, id, title, tools, value, dismiss — a conditional child
+     beyond the declared columns wraps onto a second grid row (learned twice) */
+  display: grid; grid-template-columns: 10px auto 1fr auto auto auto;
   gap: 8px; align-items: center;
   width: 100%; text-align: left;
   padding: 8px 14px;

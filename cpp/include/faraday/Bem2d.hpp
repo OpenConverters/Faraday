@@ -705,6 +705,13 @@ inline FieldMap sample_field(const Solution& s, size_t excite, double x0,
 
 struct PairSection {
     double w1 = 0.2e-3, w2 = 0.2e-3;   // trace widths, m
+    // Three coplanar conductors: aggressor - victim - aggressor. The victim in
+    // the middle with an attacker either side is THE classic three-conductor
+    // case, and the BEM solver has been N-conductor all along — only this
+    // builder was a pair.
+    bool triple = false;
+    double w3 = 0.2e-3;
+    double gap2 = 0.2e-3;              // victim-to-second-aggressor gap
     double t = 35e-6;                  // copper thickness, m
     double gap = 0.2e-3;               // edge-to-edge gap (edge coupling), m
     double h = 0.2e-3;                 // height above the reference plane, m
@@ -721,6 +728,26 @@ inline Geometry geometry_for(const PairSection& s) {
         throw std::invalid_argument("bem: cross-section has a non-physical dimension");
     Geometry g;
     g.n_signal = 2;
+
+    if (s.triple) {
+        if (s.broadside || s.stripline)
+            throw std::invalid_argument(
+                "bem: the three-conductor section is microstrip-only for now — "
+                "broadside and stripline triples are not implemented, and "
+                "refusing beats guessing");
+        if (s.h <= 0) throw std::invalid_argument("bem: triple needs h > 0");
+        g.n_signal = 3;
+        // conductor 0: left aggressor, 1: middle victim, 2: right aggressor
+        double x = -(s.w1 + s.gap + s.w2 / 2);
+        g.conductors.push_back({x, s.h, x + s.w1, s.h + s.t, 0});
+        x = -s.w2 / 2;
+        g.conductors.push_back({x, s.h, x + s.w2, s.h + s.t, 1});
+        x = s.w2 / 2 + s.gap2;
+        g.conductors.push_back({x, s.h, x + s.w3, s.h + s.t, 2});
+        g.slabs.push_back({s.h, s.eps_r});
+        g.eps_top = 1.0;
+        return g;
+    }
 
     if (s.broadside) {
         if (s.h <= 0 || s.h_v <= 0)

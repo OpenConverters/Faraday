@@ -174,3 +174,62 @@ TEST_CASE("copper loss follows sqrt(f) above the skin crossover", "[bench]") {
     CHECK(out["rlgc"]["rAcOhmPerM"].get<double>() > 0.0);
     CHECK(out["rlgc"]["fKneeMhz"].get<double>() > 0.0);
 }
+
+TEST_CASE("two in-phase aggressors superpose exactly on a symmetric victim",
+          "[bench][triple]") {
+    // Linearity is the check: with identical terminations everywhere, zeroing
+    // one source leaves the identical network, so the two-aggressor response
+    // is EXACTLY the sum of the single-aggressor ones — and by symmetry, twice
+    // one of them, at every instant. If this fails, the multi-drive stamp is
+    // wrong; there is no tolerance to hide in.
+    bem::PairSection s;
+    s.triple = true;
+    s.w1 = s.w2 = s.w3 = 0.25e-3;
+    s.gap = s.gap2 = 0.25e-3;
+    s.h = 0.2e-3; s.t = 35e-6; s.eps_r = 4.3;
+    const bench::Extraction ex = bench::extract(s);
+    REQUIRE(ex.p.n == 3);
+
+    mna::DriveOptions one, two;
+    one.length_m = two.length_m = 0.06;
+    one.rise_s = two.rise_s = 0.5e-9;
+    // identical impedances at every port, so superposition is exact
+    const double z = ex.p.z0(1);
+    for (auto* o : {&one, &two}) {
+        o->z_src = z; o->z_term = z; o->z_victim_near = z;
+        o->sections = 24; o->max_steps = 4000;
+    }
+    one.aggressors = {0};
+    two.aggressors = {0, 2};
+
+    const mna::Waveforms w1 = mna::simulate(ex.p, one);
+    const mna::Waveforms w2 = mna::simulate(ex.p, two);
+    REQUIRE(w1.vic_near.size() == w2.vic_near.size());
+    // victim is line 1 in both runs (first non-aggressor)
+    CHECK_THAT(w2.next_peak_v, WithinRel(2.0 * w1.next_peak_v, 1e-6));
+    // and not just the peak: the whole waveform doubles
+    for (size_t i = 0; i < w1.vic_near.size(); i += 7)
+        if (std::abs(w1.vic_near[i]) > 1e-5)
+            CHECK_THAT((double)w2.vic_near[i],
+                       WithinRel(2.0 * (double)w1.vic_near[i], 1e-4));
+}
+
+TEST_CASE("the triple request runs end to end through the bench", "[bench][triple]") {
+    nlohmann::json req = base_request();
+    req["mode"] = "triple";
+    req["gap2Mm"] = 0.2;
+    req["field"] = false;
+    req["fix"] = false;
+    const auto out = bench::run(bench::request_from_json(req));
+    REQUIRE_FALSE(out.contains("error"));
+    // more attackers, more noise: the triple must exceed the same pair
+    nlohmann::json pj = base_request();
+    pj["field"] = false; pj["fix"] = false;
+    const auto pair = bench::run(bench::request_from_json(pj));
+    CHECK(out["verdict"]["peakMv"].get<double>() >
+          pair["verdict"]["peakMv"].get<double>());
+    // and a non-microstrip triple is refused, not guessed
+    req["mode"] = "triple";
+    req["hMm"] = 0;
+    CHECK_THROWS_AS(bench::run(bench::request_from_json(req)), std::invalid_argument);
+}

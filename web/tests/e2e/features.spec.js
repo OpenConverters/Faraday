@@ -120,3 +120,69 @@ test('victims carry a cos(theta) from their own routing', async ({ page }) => {
   const t = await page.getByTestId('nf-victims').textContent()
   expect(t).toContain('cosθ')
 })
+
+test('glossary explains every rule and can hide types from inside it',
+  async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('file-input').setInputFiles(FIXTURE)
+    await expect(page.getByTestId('finding-F-0001')).toBeVisible({ timeout: LOAD_MS })
+
+    await page.getByTestId('open-glossary').click()
+    await expect(page.getByTestId('glossary')).toBeVisible()
+    // every screening rule has an entry with the honest confidence stated
+    for (const id of ['coupled-run', 'plane-crossing', 'commutation-loop',
+                      'via-stub', 'diff-skew', 'decoupling-distance'])
+      await expect(page.getByTestId(`gloss-${id}`)).toContainText('confidence:')
+    // the ±6 dB caveat lives in the glossary too, not only in findings
+    await expect(page.getByTestId('gloss-coupled-run')).toContainText('6.5 dB optimistic')
+
+    // hiding a type from the glossary drives the same filter as the chips
+    const total = Number(await page.getByTestId('finding-count').textContent())
+    await page.getByTestId('gloss-toggle-plane-crossing').click()
+    await page.getByTestId('glossary').press('Escape')
+    await expect(page.getByTestId('finding-count')).not.toHaveText(String(total))
+  })
+
+test('individual findings can be dismissed and restored', async ({ page }) => {
+  await page.goto('/')
+  await page.getByTestId('file-input').setInputFiles(FIXTURE)
+  await expect(page.getByTestId('finding-F-0001')).toBeVisible({ timeout: LOAD_MS })
+  const total = Number(await page.getByTestId('finding-count').textContent())
+
+  await page.getByTestId('finding-F-0001').hover()
+  await page.getByTestId('dismiss-F-0001').click()
+  await expect(page.getByTestId('finding-F-0001')).toHaveCount(0)
+  await expect(page.getByTestId('finding-count')).toHaveText(String(total - 1))
+
+  await page.getByTestId('restore-hidden').click()
+  await expect(page.getByTestId('finding-F-0001')).toBeVisible()
+  await expect(page.getByTestId('finding-count')).toHaveText(String(total))
+})
+
+test('a board loads from a URL hash — the demo and the KiCad bridge path',
+  async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('load-demo').click()
+    // the demo board is served by the site itself and analysed locally
+    await expect(page.getByTestId('finding-F-0001')).toBeVisible({ timeout: LOAD_MS })
+    await expect(page.getByTestId('meta-strip')).toContainText('format: kicad')
+  })
+
+test('a second aggressor doubles the symmetric victim noise', async ({ page }) => {
+  await page.goto('/')
+  await page.getByTestId('file-input').setInputFiles(FIXTURE)
+  await expect(page.getByTestId('finding-F-0001')).toBeVisible({ timeout: LOAD_MS })
+  await page.getByTestId('finding-F-0001').click()
+  await page.getByTestId('bench-F-0001').click()
+  await expect(page.getByTestId('bench-verdict')).toBeVisible()
+
+  const peak = () => page.getByTestId('bench-verdict').evaluate(el => {
+    const m = el.textContent.match(/([\d.]+)\s*mV/)
+    return m ? Number(m[1]) : null
+  })
+  const one = await peak()
+  await page.getByTestId('bench-triple').check()
+  // in-phase superposition on a symmetric triple: +6 dB, i.e. exactly 2x
+  await expect.poll(peak).toBeGreaterThan(one * 1.7)
+  await expect.poll(peak).toBeLessThan(one * 2.3)
+})

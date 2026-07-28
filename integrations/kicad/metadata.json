@@ -1,0 +1,18 @@
+{
+  "$schema": "https://go.kicad.org/pcm/schemas/v1",
+  "name": "Faraday EMC Review",
+  "description": "One-click EMC design review of the current board, running locally in your browser.",
+  "description_full": "Adds a 'Review in Faraday' button that opens the current board in Faraday (faraday.openconverters.com): coupled-run crosstalk, return-path breaks, commutation loops, via stubs, a 2D field-solver bench, radiated-emission estimates against CISPR/FCC limit lines, near-field victim analysis and PDN impedance. The board file is served to the browser from localhost only — the analysis runs in WASM on your machine and nothing is uploaded.",
+  "identifier": "com.openconverters.faraday",
+  "type": "plugin",
+  "author": { "name": "OpenConverters", "contact": { "web": "https://github.com/OpenConverters/Faraday" } },
+  "license": "MIT",
+  "resources": { "homepage": "https://faraday.openconverters.com" },
+  "versions": [
+    {
+      "version": "0.1.0",
+      "status": "testing",
+      "kicad_version": "7.0"
+    }
+  ]
+}

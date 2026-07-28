@@ -7,6 +7,7 @@ import EmissionsPanel from './components/EmissionsPanel.vue'
 import NearFieldPanel from './components/NearFieldPanel.vue'
 import PdnPanel from './components/PdnPanel.vue'
 import ImpedancePanel from './components/ImpedancePanel.vue'
+import GlossaryPanel from './components/GlossaryPanel.vue'
 
 const engine = ref(null)
 const boardText = ref('')
@@ -25,6 +26,27 @@ const dragOver = ref(false)
 // means a board is never silently dropped, whichever wins the race.
 const enginePromise = window.createFaraday()
 const engineLoading = ref(true)
+// #load=<url>: fetch a board by URL. This is how the KiCad plugin hands the
+// open board across (it serves the file from localhost with CORS), and how
+// the demo button works — the fetch happens in the browser, so the privacy
+// property is unchanged: nothing is uploaded anywhere.
+async function loadFromHash() {
+  const m = location.hash.match(/^#load=(.+)$/)
+  if (!m) return
+  const url = decodeURIComponent(m[1])
+  try {
+    const res = await fetch(url)
+    if (!res.ok) throw new Error(`HTTP ${res.status}`)
+    const txt = await res.text()
+    fileName.value = url.split('/').pop() || 'board'
+    boardText.value = txt
+    stackupChoice.value = ''
+    await analyze()
+  } catch (e) {
+    error.value = `could not load ${url}: ${e.message || e}`
+  }
+}
+
 onMounted(async () => {
   try {
     engine.value = await enginePromise
@@ -33,6 +55,8 @@ onMounted(async () => {
   } finally {
     engineLoading.value = false
   }
+  await loadFromHash()
+  window.addEventListener('hashchange', loadFromHash)
 })
 
 async function analyze() {
@@ -94,7 +118,8 @@ const ruleCounts = computed(() => {
   return [...m.entries()].sort((a, b) => b[1] - a[1])
 })
 const visibleFindings = computed(() =>
-  findings.value.filter(f => !hiddenRules.value.has(f.rule)))
+  findings.value.filter(f => !hiddenRules.value.has(f.rule) &&
+                             !hiddenIds.value.has(f.id)))
 // The bench: the deep tier, opened on one finding. Only findings that carry a
 // cross-section can be solved — a run with no reference plane has no
 // cross-section, and the list says so rather than offering a dead button.
@@ -174,8 +199,22 @@ watch(report, () => { nearField.value = null; nfError.value = ''; nfDetail.value
 // none it has nothing to say. Better to disable the chip with the reason than
 // to let it error on click.
 const hasSwitchNode = computed(() => (meta.value?.switchNodes?.length ?? 0) > 0)
+const ruleCountMap = computed(() => Object.fromEntries(ruleCounts.value))
 
 const pdnOpen = ref(false)
+const glossaryOpen = ref(false)
+// Individually dismissed findings. Per board, not persisted: a dismissal is a
+// review decision for THIS review.
+const hiddenIds = ref(new Set())
+function hideFinding(id) {
+  const s2 = new Set(hiddenIds.value)
+  s2.add(id)
+  hiddenIds.value = s2
+  if (selectedId.value === id) selectedId.value = ''
+}
+function unhideAll() { hiddenIds.value = new Set() }
+function loadDemo() { window.location.hash = '#load=/demo.kicad_pcb' }
+watch(report, () => { hiddenIds.value = new Set() })
 const calcOpen = ref(false)
 watch(report, () => { pdnOpen.value = false })
 
@@ -341,9 +380,13 @@ function toggleRule(rule) {
       <FindingsList :findings="visibleFindings" :report="report" :selected-id="selectedId"
                     :rules="ruleCounts" :hidden-rules="hiddenRules" :total="findings.length"
                     @select="id => selectedId = selectedId === id ? '' : id"
+                    :hidden-count="hiddenIds.size"
                     @toggle-rule="toggleRule"
                     @bench="id => benchId = id"
-                    @emissions="id => emitId = id" />
+                    @emissions="id => emitId = id"
+                    @hide="hideFinding"
+                    @unhide-all="unhideAll"
+                    @glossary="glossaryOpen = true" />
     </main>
 
     <div v-else-if="!needStackup" class="empty" :class="{ over: dragOver }">
@@ -352,6 +395,8 @@ function toggleRule(rule) {
       <p class="formats"><code>.kicad_pcb</code> · <code>.hyp</code> · <code>IPC-2581 .xml</code></p>
       <button class="chip" data-testid="open-calc" @click="calcOpen = true">
         impedance calculator — no board needed</button>
+      <button class="chip" data-testid="load-demo" @click="loadDemo">
+        try the demo board</button>
       <p class="sub">Faraday screens the whole board for coupled runs, return-path breaks,
          via and open stubs, decoupling reach, and — on converters — switch nodes and
          commutation-loop area. It ranks the risk and renders it on the copper.
@@ -379,6 +424,10 @@ function toggleRule(rule) {
 
     <ImpedancePanel v-if="calcOpen && engine" :engine="engine"
                     @close="calcOpen = false" />
+
+    <GlossaryPanel v-if="glossaryOpen" :rule-counts="ruleCountMap"
+                   :hidden-rules="hiddenRules"
+                   @toggle-rule="toggleRule" @close="glossaryOpen = false" />
 
     <footer v-if="meta" class="metastrip" data-testid="meta-strip">
       <span class="m">format: <b>{{ report.format }}</b></span>

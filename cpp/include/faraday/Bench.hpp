@@ -96,6 +96,7 @@ inline Request request_from_json(const nlohmann::json& j) {
     const std::string mode = j.value("mode", "microstrip");
     r.section.broadside = (mode == "broadside");
     r.section.stripline = (mode == "stripline");
+    r.section.triple = (mode == "triple");
     r.section.w1 = need("w1Mm") * 1e-3;
     r.section.w2 = need("w2Mm") * 1e-3;
     r.section.t = opt("tMm", 0.035) * 1e-3;
@@ -105,6 +106,8 @@ inline Request request_from_json(const nlohmann::json& j) {
     r.section.h_v = opt("hvMm", 0.2) * 1e-3;
     r.section.lateral = opt("lateralMm", 0.0) * 1e-3;
     r.section.b = opt("bMm", 0.6) * 1e-3;
+    r.section.w3 = opt("w3Mm", opt("w1Mm", 0.2)) * 1e-3;
+    r.section.gap2 = opt("gap2Mm", opt("gapMm", 0.2)) * 1e-3;
 
     r.drive.length_m = need("lengthMm") * 1e-3;
     r.drive.rise_s = opt("riseNs", 1.0) * 1e-9;
@@ -112,6 +115,7 @@ inline Request request_from_json(const nlohmann::json& j) {
     r.drive.z_src = opt("zSrcOhm", 30.0);
     r.drive.z_term = opt("zTermOhm", 10000.0);
     r.drive.z_victim_near = opt("zVictimOhm", 30.0);
+    if (r.section.triple) r.drive.aggressors = {0, 2};   // victim in the middle
     r.family = j.value("family", std::string("lvcmos33"));
     r.want_field = j.value("field", true);
     r.want_fix = j.value("fix", true);
@@ -146,10 +150,13 @@ inline Extraction extract(const bem::PairSection& s, double f_knee_hz = 0) {
     bem::Geometry g = bem::geometry_for(s);
     bem::Solution sd = bem::solve(g, false);
     bem::Solution sv = bem::solve(g, true);
-    const size_t nt = 3;
+    // n-signal aware: the solver was N-conductor all along, and the triple
+    // section exercises it with three
+    const size_t ns = (size_t)sd.n_signal;
+    const size_t nt = ns + 1;
     std::vector<double> M(nt * nt, 0.0), M0(nt * nt, 0.0);
-    for (int i = 0; i < 2; ++i)
-        for (int j = 0; j < 2; ++j) {
+    for (size_t i = 0; i < ns; ++i)
+        for (size_t j = 0; j < ns; ++j) {
             M[i * nt + j] = sd.at(i, j);
             M0[i * nt + j] = sv.at(i, j);
         }
@@ -157,9 +164,10 @@ inline Extraction extract(const bem::PairSection& s, double f_knee_hz = 0) {
     // Copper loss at the edge's knee frequency. Small against 50 ohm on short
     // runs, but it is what damps the ringing on unterminated lines, and a
     // lossless model was reporting the stated-pessimistic peak (#325).
-    const std::vector<double> r = {r_ac_per_m(s.w1, s.t, f_knee_hz),
-                                   r_ac_per_m(s.w2, s.t, f_knee_hz)};
-    e.p = rlgc_from_maxwell(M, M0, nt, 2, r);
+    std::vector<double> r = {r_ac_per_m(s.w1, s.t, f_knee_hz),
+                             r_ac_per_m(s.w2, s.t, f_knee_hz)};
+    if (ns >= 3) r.push_back(r_ac_per_m(s.w3, s.t, f_knee_hz));
+    e.p = rlgc_from_maxwell(M, M0, nt, ns, r);
     e.panels = sd.panels.size();
     e.solved = std::move(sd);
     return e;
@@ -255,13 +263,18 @@ inline nlohmann::json run(const Request& r) {
     const auto t2 = clk::now();
 
     const Rlgc& p = ex.p;
+    const bool pair = (p.n == 2);
+    const size_t vic = pair ? 1 : 1;   // triple: victim is the middle line
     const double z0 = p.z0(0);
     // Effective permittivity is a MODAL quantity. Taking it from the diagonal
     // of L and C ignores the off-diagonal terms and reports a value above the
     // laminate's own eps_r for a buried pair, which is not a thing that can
     // happen. The even and odd modes are the ones that propagate.
-    const double eps_even = std::pow(bem::C_LIGHT / p.v_even(), 2.0);
-    const double eps_odd = std::pow(bem::C_LIGHT / p.v_odd(), 2.0);
+    // Even/odd are PAIR quantities; a triple reports the victim line's own
+    // velocity instead of pretending two modes describe three conductors.
+    const double eps_even = pair ? std::pow(bem::C_LIGHT / p.v_even(), 2.0)
+                                 : std::pow(bem::C_LIGHT / p.velocity(vic), 2.0);
+    const double eps_odd = pair ? std::pow(bem::C_LIGHT / p.v_odd(), 2.0) : eps_even;
     const double eps_eff = 0.5 * (eps_even + eps_odd);
 
     const double peak = std::max(std::abs(w.next_peak_v), std::abs(w.fext_peak_v));
@@ -279,14 +292,15 @@ inline nlohmann::json run(const Request& r) {
         {"panels", (int)ex.panels}};
     out["rlgc"] = {
         {"z0", z0},
-        {"zEven", p.z_even()},
-        {"zOdd", p.z_odd()},
-        {"zDiff", 2.0 * p.z_odd()},
-        {"velocity", 0.5 * (p.v_even() + p.v_odd())},
+        {"zEven", pair ? p.z_even() : p.z0(vic)},
+        {"zOdd", pair ? p.z_odd() : p.z0(vic)},
+        {"zDiff", pair ? 2.0 * p.z_odd() : 0.0},
+        {"velocity", pair ? 0.5 * (p.v_even() + p.v_odd()) : p.velocity(vic)},
         {"epsEff", eps_eff},
         {"epsEffEven", eps_even},
         {"epsEffOdd", eps_odd},
-        {"delayPsPerMm", 2e12 / (p.v_even() + p.v_odd()) * 1e-3},
+        {"delayPsPerMm", pair ? 2e12 / (p.v_even() + p.v_odd()) * 1e-3
+                              : 1e12 / p.velocity(vic) * 1e-3},
         {"lSelfNhPerMm", p.at(p.L, 0, 0) * 1e9 * 1e-3},
         {"cSelfPfPerMm", p.c_to_ref(0) * 1e12 * 1e-3},
         {"lMutualNhPerMm", p.at(p.L, 0, 1) * 1e9 * 1e-3},

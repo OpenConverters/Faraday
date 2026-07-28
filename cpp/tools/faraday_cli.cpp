@@ -11,11 +11,14 @@
 #include <sstream>
 
 int main(int argc, char** argv) {
-    std::string board_path, out_path, stackup_name;
+    std::string board_path, out_path, stackup_name, fail_on;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--stackup" && i + 1 < argc) stackup_name = argv[++i];
         else if (a == "-o" && i + 1 < argc) out_path = argv[++i];
+        // CI gate: exit 3 when any finding reaches this severity. "high" or
+        // "medium"; anything else is refused rather than silently ignored.
+        else if (a == "--fail-on" && i + 1 < argc) fail_on = argv[++i];
         else if (board_path.empty()) board_path = a;
         else {
             std::cerr << "unexpected argument: " << a << "\n";
@@ -24,7 +27,8 @@ int main(int argc, char** argv) {
     }
     if (board_path.empty()) {
         std::cerr << "usage: faraday_cli <board.kicad_pcb|board.hyp|board.xml> "
-                     "[--stackup default-<N>layer] [-o report.json]\n"
+                     "[--stackup default-<N>layer] [-o report.json] "
+                     "[--fail-on high|medium]\n"
                      "       format is detected from the file's contents\n";
         return 2;
     }
@@ -73,6 +77,21 @@ int main(int argc, char** argv) {
         if (arcs)
             std::cout << "\nnote: " << arcs
                       << " arc(s) approximated by chords in this analysis\n";
+        if (!fail_on.empty()) {
+            if (fail_on != "high" && fail_on != "medium")
+                throw std::runtime_error("--fail-on must be 'high' or 'medium', got '" +
+                                         fail_on + "'");
+            int hits = 0;
+            for (const auto& f : report["findings"]) {
+                const std::string sev = f.value("severityLabel", "");
+                if (sev == "high" || (fail_on == "medium" && sev == "medium")) ++hits;
+            }
+            if (hits > 0) {
+                std::cerr << "FAIL: " << hits << " finding(s) at or above '"
+                          << fail_on << "' severity\n";
+                return 3;
+            }
+        }
         return 0;
     } catch (const std::exception& e) {
         std::cerr << "faraday: " << e.what() << "\n";

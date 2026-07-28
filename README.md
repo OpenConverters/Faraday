@@ -158,6 +158,36 @@ the view that shows it.
   broadside overlaps over switch copper get their divider-ceiling bound, and inductors
   on switch nets are sources with a stated construction derating.
 
+## Formats — what is and is not supported
+
+| format | status |
+|---|---|
+| KiCad `.kicad_pcb` (v5–v9) | ✅ full |
+| HyperLynx `.hyp` | ✅ full |
+| IPC-2581 `.xml` | ✅ full |
+| Gerber / Excellon | ❌ not yet — plain RS-274X carries **no netlist**, and most of Faraday's rules are net-aware; X2 net attributes plus multi-file drop would make it possible |
+| ODB++ | ❌ not yet — a zipped directory tree, a substantially larger importer |
+| Altium / Eagle | ❌ export to IPC-2581 from those tools and load that |
+
+Detection is by content, not extension.
+
+## Glossary & dismissing findings
+
+The **glossary** button above the findings list explains every rule — what it detects,
+the physics, the fix, and what its confidence label really means. Rules can be hidden
+by type from the glossary or the filter chips, and any single finding can be dismissed
+with its ✕ (per review, restorable in one click).
+
+## Integrations
+
+- **KiCad plugin** (`integrations/kicad/`): a "Review in Faraday" button that serves the
+  open board from localhost and loads it via `#load=` — nothing is uploaded. PCM-format
+  zip included; official PCM submission is an external review step.
+- **GitHub Action** (`integrations/github-action/`): screen a board on every push,
+  `--fail-on high|medium` gates the build (exit 3), report JSON as an artifact.
+- **`#load=<url>`**: load any board by URL, CORS permitting — the fetch happens in your
+  browser.
+
 ## Stackup policy
 
 Z₀ and coupling depend on the stackup. If the board file carries none, Faraday **refuses** rather

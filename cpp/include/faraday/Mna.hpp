@@ -54,6 +54,10 @@ struct DriveOptions {
     double rise_s = 1e-9;        // 0-100% edge
     double amplitude_v = 3.3;
     size_t aggressor = 0;
+    // More than one attacker: every listed line is driven with the SAME edge,
+    // in phase — the worst case for near-end sum, and the case superposition
+    // makes exactly checkable. Empty means {aggressor}.
+    std::vector<size_t> aggressors;
     int sections = 0;            // 0 = choose from the rise time
     int max_steps = 2400;        // ceiling on transient steps
 };
@@ -93,12 +97,25 @@ inline Waveforms simulate(const Rlgc& p, const DriveOptions& o) {
     if (!(o.z_src > 0) || !(o.z_term > 0) || !(o.z_victim_near > 0))
         throw std::invalid_argument("mna: terminations must be positive resistances");
 
-    const size_t victim = (o.aggressor == 0) ? 1 : 0;
+    std::vector<size_t> aggs = o.aggressors.empty()
+                                   ? std::vector<size_t>{o.aggressor}
+                                   : o.aggressors;
+    for (size_t a : aggs)
+        if (a >= n) throw std::invalid_argument("mna: aggressor out of range");
+    auto is_agg = [&](size_t i) {
+        return std::find(aggs.begin(), aggs.end(), i) != aggs.end();
+    };
+    size_t victim = n;
+    for (size_t i = 0; i < n; ++i)
+        if (!is_agg(i)) { victim = i; break; }
+    if (victim == n)
+        throw std::invalid_argument("mna: every line is an aggressor — nothing "
+                                    "left to be the victim");
     // A single-ended edge on one line of a pair launches BOTH modes, which
     // travel at different speeds in mixed media. Size the ladder against the
     // slower of the two, so the section count is adequate for both.
     const double v_slow = (p.n == 2) ? std::min(p.v_even(), p.v_odd())
-                                     : p.velocity(o.aggressor);
+                                     : p.velocity(aggs.empty() ? 0 : aggs[0]);
     const double delay = o.length_m / v_slow;
     const int N = o.sections > 0 ? o.sections : sections_for(delay, o.rise_s);
     const double dl = o.length_m / N;
@@ -112,7 +129,7 @@ inline Waveforms simulate(const Rlgc& p, const DriveOptions& o) {
     // is nothing to wait for. Scaling the window by the loop gain |Gs*Gt|
     // therefore captures the true peak in the unterminated case without
     // spending steps on a matched one that settled after the first transit.
-    const double z0m = p.z0(o.aggressor);
+    const double z0m = p.z0(aggs[0]);
     auto gamma = [&](double z) { return std::abs((z - z0m) / (z + z0m)); };
     const double loop = gamma(o.z_src) * std::max(gamma(o.z_term), gamma(o.z_victim_near));
     const double rounds = 3.0 + 13.0 * std::clamp(loop, 0.0, 1.0);
@@ -149,7 +166,7 @@ inline Waveforms simulate(const Rlgc& p, const DriveOptions& o) {
             if (k > 0) A[r * M + cur(i, k - 1)] -= 1.0;    // arrives from k-1
             for (size_t j = 0; j < n; ++j)
                 A[r * M + node(j, k)] += 2.0 * p.at(p.C, i, j) * cscale(k) / h;
-            if (k == 0) A[r * M + node(i, k)] += (i == o.aggressor) ? gs : gvn;
+            if (k == 0) A[r * M + node(i, k)] += is_agg(i) ? gs : gvn;
             if (k == N) A[r * M + node(i, k)] += gt;
         }
     }
@@ -179,8 +196,8 @@ inline Waveforms simulate(const Rlgc& p, const DriveOptions& o) {
     };
     auto record = [&](double t) {
         w.t.push_back((float)t);
-        w.agg_near.push_back((float)x[node(o.aggressor, 0)]);
-        w.agg_far.push_back((float)x[node(o.aggressor, N)]);
+        w.agg_near.push_back((float)x[node(aggs[0], 0)]);
+        w.agg_far.push_back((float)x[node(aggs[0], N)]);
         w.vic_near.push_back((float)x[node(victim, 0)]);
         w.vic_far.push_back((float)x[node(victim, N)]);
     };
@@ -196,7 +213,7 @@ inline Waveforms simulate(const Rlgc& p, const DriveOptions& o) {
                 for (size_t j = 0; j < n; ++j)
                     ieq -= 2.0 * p.at(p.C, i, j) * cscale(k) / h * xprev[node(j, k)];
                 b[r] = -ieq;
-                if (k == 0 && i == o.aggressor) b[r] += gs * src(t);
+                if (k == 0 && is_agg(i)) b[r] += gs * src(t);
             }
         for (int k = 0; k < N; ++k)
             for (size_t i = 0; i < n; ++i) {

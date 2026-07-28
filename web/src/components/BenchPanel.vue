@@ -21,6 +21,10 @@ const amplitude = ref(3.3)
 const family = ref('lvcmos33')
 const termination = ref('cmos')
 const view = ref('e')
+// Three conductors: an identical aggressor mirrored on the victim's other
+// side, both driven in phase — the worst case, and by superposition exactly
+// twice the single-aggressor noise for a symmetric layout.
+const secondAggressor = ref(false)
 
 const TERMINATIONS = {
   cmos: { label: 'CMOS (unterminated)', zSrc: 30, zTerm: 1e4, zVictim: 30 },
@@ -37,6 +41,8 @@ function request(withField) {
   const t = TERMINATIONS[termination.value]
   return JSON.stringify({
     ...base,
+    ...(secondAggressor.value
+      ? { mode: 'triple', w3Mm: base.w1Mm, gap2Mm: gap.value } : {}),
     gapMm: gap.value,
     lengthMm: lengthMm.value,
     riseNs: rise.value,
@@ -75,6 +81,7 @@ function onInput() {
   }, 180)
   nextTick(draw)
 }
+watch(secondAggressor, () => { onInput() })
 watch([family, termination], () => {
   solve(true)
   runSweep()
@@ -431,6 +438,10 @@ const num = (x, d = 2) => (x === undefined || x === null ? '—' : x.toFixed(d))
           <select v-model="family" data-testid="bench-family">
             <option v-for="f in families" :key="f.id" :value="f.id">{{ f.label }}</option>
           </select></label>
+        <label class="chk2" v-if="(base.mode ?? 'microstrip') === 'microstrip'">
+          <input type="checkbox" v-model="secondAggressor"
+                 data-testid="bench-triple" />
+          <span>second aggressor, other side (in phase — worst case)</span></label>
         <label class="pick"><span>termination</span>
           <select v-model="termination" data-testid="bench-term">
             <option v-for="(t, k) in TERMINATIONS" :key="k" :value="k">{{ t.label }}</option>
@@ -540,6 +551,9 @@ figcaption button.on { border-color: var(--copper); color: var(--copper); }
 .sl, .pick { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--tin); }
 .sl span b, .pick span { color: var(--silk); font-family: var(--mono); }
 .sl input { width: 100%; accent-color: var(--copper); }
+.chk2 { display: flex; align-items: center; gap: 7px; font-size: 11.5px;
+  color: var(--tin); }
+.chk2 input { accent-color: var(--copper); }
 .pick select {
   background: var(--resin); color: var(--silk); font-family: var(--mono); font-size: 12px;
   border: 1px solid var(--resin-edge); border-radius: 3px; padding: 4px 6px;

@@ -1,0 +1,39 @@
+name: 'Faraday EMC review'
+description: >
+  Screen KiCad/HyperLynx/IPC-2581 boards for EMC risk (crosstalk, return-path
+  breaks, commutation loops, via stubs) and fail the build on findings at a
+  chosen severity. Analysis is Faraday's own C++ engine, built from this repo.
+inputs:
+  board:
+    description: 'Path to the board file (.kicad_pcb, .hyp, IPC-2581 .xml)'
+    required: true
+  stackup:
+    description: 'Fallback stackup when the board file carries none (default-2layer | default-4layer)'
+    default: ''
+  fail-on:
+    description: 'Fail the job when any finding reaches this severity (high | medium | none)'
+    default: 'high'
+  report:
+    description: 'Where to write the report JSON'
+    default: 'faraday-report.json'
+runs:
+  using: 'composite'
+  steps:
+    - name: Cache Faraday build
+      uses: actions/cache@v4
+      with:
+        path: ${{ github.action_path }}/build
+        key: faraday-cli-${{ runner.os }}-${{ hashFiles(format('{0}/cpp/**', github.action_path)) }}
+    - name: Build faraday_cli
+      shell: bash
+      run: |
+        cmake -S "${{ github.action_path }}/cpp" -B "${{ github.action_path }}/build" \
+              -DCMAKE_BUILD_TYPE=Release -DFARADAY_BUILD_TESTS=OFF
+        cmake --build "${{ github.action_path }}/build" --target faraday_cli -j
+    - name: Screen the board
+      shell: bash
+      run: |
+        ARGS=("${{ inputs.board }}" -o "${{ inputs.report }}")
+        [ -n "${{ inputs.stackup }}" ] && ARGS+=(--stackup "${{ inputs.stackup }}")
+        [ "${{ inputs.fail-on }}" != "none" ] && ARGS+=(--fail-on "${{ inputs.fail-on }}")
+        "${{ github.action_path }}/build/faraday_cli" "${ARGS[@]}"
