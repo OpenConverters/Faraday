@@ -111,3 +111,41 @@ test('switching standards changes the limit that is applied', async ({ page }) =
   const a = await margin(page)
   expect(a).toBeGreaterThan(b)
 })
+
+test('findings that carry a deep tool are marked in the collapsed row',
+  async ({ page }) => {
+    // The buttons live inside the detail, so without a mark in the row you have
+    // to open findings one by one to discover which ones support anything.
+    await page.goto('/')
+    await page.getByTestId('file-input').setInputFiles(MPPT)
+    const card = page.getByTestId('stackup-card')
+    await expect(card.or(page.getByTestId('finding-F-0001')).first())
+      .toBeVisible({ timeout: 30000 })
+    if (await card.count()) await card.getByText('Default 4-layer').click()
+    await expect(page.getByTestId('finding-F-0001')).toBeVisible({ timeout: 30000 })
+
+    await expect(page.getByTestId('tools-legend')).toBeVisible()
+
+    // F-0002 is the commutation loop, so it must carry the emissions mark
+    await expect(page.getByTestId('tools-F-0002')).toBeVisible()
+    await expect(page.getByTestId('tools-F-0002')).toHaveAttribute(
+      'title', /Emissions/)
+
+    // and a return-path break carries neither, so it gets no mark at all
+    await expect(page.getByTestId('tools-F-0001')).toHaveCount(0)
+
+    // every marked row must actually open the tool it advertises
+    const marked = await page.evaluate(() =>
+      [...document.querySelectorAll('[data-testid^="tools-F-"]')]
+        .map(e => e.dataset.testid.replace('tools-', '')).slice(0, 4))
+    expect(marked.length).toBeGreaterThan(0)
+    for (const id of marked) {
+      const title = await page.getByTestId(`tools-${id}`).getAttribute('title')
+      await page.getByTestId(`finding-${id}`).click()
+      if (/Field solve/.test(title))
+        await expect(page.getByTestId(`bench-${id}`)).toBeVisible()
+      if (/Emissions/.test(title))
+        await expect(page.getByTestId(`emit-${id}`)).toBeVisible()
+      await page.getByTestId(`finding-${id}`).click()
+    }
+  })
