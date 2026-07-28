@@ -561,7 +561,15 @@ inline nlohmann::json near_field_json(const BoardIR& board,
                         {"ratio", ch.ratio},
                         {"level", ch.ratio >= 1.0 ? "over"
                                   : (ch.ratio >= 0.25 ? "watch" : "ok")}});
+    // Echo the cans with the SE each one earned at the ring frequency, so the
+    // COLOUR MAP can apply the same attenuation as the victim table — the two
+    // must never disagree about what a can does.
+    nlohmann::json shj = nlohmann::json::array();
+    for (const auto& sh : p.shields)
+        shj.push_back({{"x1", sh.x1}, {"y1", sh.y1}, {"x2", sh.x2},
+                       {"y2", sh.y2}, {"seDb", sh.se_db}});
     return {{"aggressors", ag}, {"victims", vi}, {"capacitive", caps},
+            {"shields", shj},
             {"maxHAPerM", r.max_h},
             {"tooCloseCount", (int)r.too_close_count},
             {"shieldedVictims", (int)r.shielded_victims},

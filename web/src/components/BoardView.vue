@@ -153,14 +153,36 @@ function drawNearField(ctx, w, h, toScreen, invScreen) {
   const nx = Math.ceil(w / step), ny = Math.ceil(h / step)
   const z = nfd.probeHeightMm
   const cur = nfd.ringCurrentA ?? 2
+  // Drawn cans attenuate the MAP by the same rule as the victim table (a can
+  // between point and aggressor applies its SE; around both or neither it
+  // does nothing) — the colours and the numbers must tell one story.
+  const cans = nfd.shields ?? []
+  const inCan = (c, x, y) =>
+    x >= Math.min(c.x1, c.x2) && x <= Math.max(c.x1, c.x2) &&
+    y >= Math.min(c.y1, c.y2) && y <= Math.max(c.y1, c.y2)
+  const centroid = a => {
+    // hull-less aggressors contribute no field (hLoop returns 0), so their
+    // centroid is never consulted — but mapping over them must not throw
+    if (!a.hull || a.hull.length < 3) return null
+    let cx = 0, cy = 0
+    for (const [hx, hy] of a.hull) { cx += hx; cy += hy }
+    return [cx / a.hull.length, cy / a.hull.length]
+  }
+  const aggC = nfd.aggressors.map(centroid)
   const f = new Float64Array(nx * ny)
   let peak = 0
   for (let iy = 0; iy < ny; iy++)
     for (let ix = 0; ix < nx; ix++) {
       const [mx, my] = invScreen(ix * step, iy * step)
       let p = 0
-      for (const a of nfd.aggressors) {
-        const v = hLoop(a.hull, mx, my, z, cur)
+      for (let ai = 0; ai < nfd.aggressors.length; ai++) {
+        let v = hLoop(nfd.aggressors[ai].hull, mx, my, z, cur)
+        let se = 0
+        if (aggC[ai])
+          for (const c of cans)
+            if (inCan(c, mx, my) !== inCan(c, aggC[ai][0], aggC[ai][1]))
+              se = Math.max(se, c.seDb)
+        if (se > 0) v *= Math.pow(10, -se / 20)
         p += v * v
       }
       const v = Math.sqrt(p)
@@ -211,6 +233,8 @@ function drawNearField(ctx, w, h, toScreen, invScreen) {
 function draw() {
   const el = canvas.value
   if (!el) return
+  // deterministic hook for tests: the current board->CSS-pixel transform
+  el.dataset.view = JSON.stringify({ scale: view.scale, ox: view.ox, oy: view.oy })
   const dpr = window.devicePixelRatio || 1
   if (el.width !== el.clientWidth * dpr || el.height !== el.clientHeight * dpr) {
     el.width = el.clientWidth * dpr

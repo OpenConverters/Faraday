@@ -128,7 +128,9 @@ function set(k, v) { emit('params', { [k]: Number(v) }) }
               spring spacing, not the alloy on the datasheet. Below a few MHz it inverts:
               the wall binds and permeability is worth tens of dB. And a can does
               <b>nothing</b> for cable common-mode current, which usually dominates real
-              failures — see the emissions panel for that budget.</p>
+              failures — see the emissions panel for that budget. Bond the rim at
+              many points: a can grounded at a <b>single</b> point can be worse than
+              none — the bond inductance makes it a resonant coupling plate.</p>
           </div>
 
           <div class="ctl">

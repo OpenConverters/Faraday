@@ -3,6 +3,7 @@
 // the numbers.
 import { test, expect } from '@playwright/test'
 import path from 'node:path'
+import fs from 'node:fs'
 import { fileURLToPath } from 'node:url'
 
 // Loading a 1.16 MB board means downloading a 656 kB WASM engine and parsing
@@ -212,4 +213,66 @@ test('a drawn can attenuates the victims it separates from the aggressor',
     await expect(page.getByTestId('nf-shield-clear')).toHaveCount(0)
     expect(await page.getByTestId('nf-bar').textContent()).toBe(before)
     expect(await worst()).not.toBeNull()
+  })
+
+test('a drawn can dims the FIELD MAP outside it — colours agree with numbers',
+  async ({ page }) => {
+    await openNearField(page)
+    const canvas = page.getByTestId('board-canvas')
+
+    // the engine names the aggressor hulls; the canvas names its transform —
+    // no guessed screen fractions anywhere
+    const boardText = fs.readFileSync(MPPT, 'utf8')
+    const hulls = await page.evaluate(async (board) => {
+      const eng = await window.createFaraday()
+      JSON.parse(eng.analyze(board, 'default-4layer'))
+      const r = JSON.parse(eng.nearField(JSON.stringify(
+        { probeHeightMm: 2, ringCurrentA: 2 })))
+      return r.aggressors.filter(a => a.hull && a.hull.length >= 3)
+        .map(a => a.hull)
+    }, boardText)
+    expect(hulls.length).toBeGreaterThan(1)
+
+    // wrap the SECOND aggressor's whole hull in the can, and probe 3.5 mm
+    // beyond its rightmost edge — off the white hull outline, outside the
+    // can (so no grey tint), where that aggressor's field dominates
+    const xs = hulls[1].map(p => p[0]), ys = hulls[1].map(p => p[1])
+    const can = { x1: Math.min(...xs) - 1, y1: Math.min(...ys) - 1,
+                  x2: Math.max(...xs) + 1, y2: Math.max(...ys) + 1 }
+    const probeMm = [can.x2 + 3.5, (can.y1 + can.y2) / 2]
+    // the point must owe its light to the encircled aggressor: every vertex
+    // of the OTHER hull stays at least twice as far away
+    const d2 = pts => Math.min(...pts.map(p => Math.hypot(p[0] - probeMm[0],
+                                                          p[1] - probeMm[1])))
+    expect(d2(hulls[0])).toBeGreaterThan(2 * d2(hulls[1]))
+
+    const view = JSON.parse(await canvas.getAttribute('data-view'))
+    const toScreen = ([x, y]) =>
+      [(x - view.ox) * view.scale, (y - view.oy) * view.scale]
+    const probe = () => canvas.evaluate((el, [x, y]) => {
+      const dpr = window.devicePixelRatio || 1
+      const d = el.getContext('2d')
+        .getImageData(x * dpr - 4, y * dpr - 4, 8, 8).data
+      let s = 0
+      for (let i = 0; i < d.length; i += 4) s += d[i] + d[i + 1] + d[i + 2]
+      return s / (d.length / 4)
+    }, toScreen(probeMm))
+    await expect.poll(probe, { timeout: 15000 }).toBeGreaterThan(40)
+    const before = await probe()
+
+    await page.getByTestId('nf-shield-draw').click()
+    const box = await canvas.boundingBox()
+    const [cx1, cy1] = toScreen([can.x1, can.y1])
+    const [cx2, cy2] = toScreen([can.x2, can.y2])
+    await page.mouse.move(box.x + cx1, box.y + cy1)
+    await page.mouse.down()
+    await page.mouse.move(box.x + cx2, box.y + cy2, { steps: 8 })
+    await page.mouse.up()
+    await expect(page.getByTestId('nf-shield-clear')).toBeVisible()
+
+    // The drop must be the FIELD attenuation, not incidental repainting.
+    // 15%: the probe still catches the OTHER aggressor's unshielded field
+    // (its nearest edge is ~1.3x the distance, and 1/1.3^3 of the light
+    // legitimately stays), while tint/antialias noise measures under 5%.
+    await expect.poll(probe, { timeout: 15000 }).toBeLessThan(before * 0.85)
   })

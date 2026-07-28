@@ -368,7 +368,10 @@ function toggleRule(rule) {
                    @near-field="toggleNearField"
                    @shield="addShield"
                    @pdn="pdnOpen = true" />
-      <div class="overlaybars" v-if="nearField || returnPath">
+      <!-- while drawing a shield the bars go click-through and faded — a
+           floating card must never steal the drag that draws underneath it -->
+      <div class="overlaybars" :class="{ ghost: drawingShield }"
+           v-if="nearField || returnPath">
       <div v-if="nearField" class="radbar nf" data-testid="nf-bar">
         <b>Near field</b>
         <span>|H| at {{ nfParams.probeHeightMm.toFixed(1) }} mm ·
@@ -569,6 +572,7 @@ function toggleRule(rule) {
   width: min(320px, 44%); display: flex; flex-direction: column; gap: 10px;
   overflow-y: auto; pointer-events: none;
 }
+.overlaybars.ghost .radbar { pointer-events: none; opacity: 0.25; }
 .radbar {
   pointer-events: auto; flex: none;
   display: flex; gap: 6px; flex-direction: column; align-items: flex-start;
