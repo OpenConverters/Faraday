@@ -67,15 +67,16 @@ static std::string cm_budget(std::string request_json) {
     }
 }
 
-static std::string radiation_map(std::string request_json) {
+static std::string return_path(std::string request_json) {
     try {
         if (!g_board)
             throw std::runtime_error(
-                "no board loaded — open a layout before asking what radiates");
+                "no board loaded — open a layout before asking where the "
+                "returns flow");
         const nlohmann::json j = nlohmann::json::parse(request_json);
         faraday::Screener sc(*g_board);
-        return faraday::bench::radiation_map_json(
-                   *g_board, sc, faraday::bench::radmap_params_from_json(j)).dump();
+        return faraday::bench::return_path_json(
+                   *g_board, sc, faraday::bench::rp_params_from_json(j)).dump();
     } catch (const std::exception& e) {
         return nlohmann::json{{"error", e.what()}}.dump();
     }
@@ -126,7 +127,7 @@ EMSCRIPTEN_BINDINGS(faraday) {
     emscripten::function("solvePair", &solve_pair);
     emscripten::function("predictEmissions", &predict_emissions);
     emscripten::function("cmBudget", &cm_budget);
-    emscripten::function("radiationMap", &radiation_map);
+    emscripten::function("returnPath", &return_path);
     emscripten::function("nearField", &near_field);
     emscripten::function("victimClasses", &victim_classes);
     emscripten::function("shielding", &shielding);

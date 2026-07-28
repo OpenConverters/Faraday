@@ -130,6 +130,17 @@ inline double seam_resonance_hz(double seam_mm) {
 
 enum class FieldKind { MagneticNear, ElectricNear, PlaneWave };
 
+// A shield can drawn over part of the board, carrying the SE its own material,
+// wall and seam earn at the frequency in question — never a flat assumption.
+struct Rect {
+    double x1 = 0, y1 = 0, x2 = 0, y2 = 0;   // mm
+    double se_db = 0;
+    bool contains(double x, double y) const {
+        return x >= std::min(x1, x2) && x <= std::max(x1, x2) &&
+               y >= std::min(y1, y2) && y <= std::max(y1, y2);
+    }
+};
+
 struct Can {
     std::string material = "tinsteel";
     double wall_mm = 0.2;

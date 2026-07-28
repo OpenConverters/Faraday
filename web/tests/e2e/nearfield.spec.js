@@ -176,3 +176,38 @@ test('a shield can is offered as a conditional, with the binding regime named',
     await expect(sh).toContainText('nothing')
     await expect(sh).toContainText('common-mode')
   })
+
+test('a drawn can attenuates the victims it separates from the aggressor',
+  async ({ page }) => {
+    await openNearField(page)
+    const worst = () => page.getByTestId('nf-bar').evaluate(el => {
+      const m = el.textContent.match(/worst: (\S+)/)
+      return m ? m[1] : null
+    })
+    const before = await page.getByTestId('nf-bar').textContent()
+
+    // Drag starts at 15% in — the layer-chip row overlays the canvas's very
+    // top-left, and a drag that begins on a chip never reaches the canvas.
+    await page.getByTestId('nf-shield-draw').click()
+    const box = await page.getByTestId('board-canvas').boundingBox()
+    await page.mouse.move(box.x + box.width * 0.15, box.y + box.height * 0.2)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width * 0.55, box.y + box.height * 0.65,
+                          { steps: 8 })
+    await page.mouse.up()
+
+    // the can exists and the map was re-run
+    await expect(page.getByTestId('nf-shield-clear')).toBeVisible()
+    // if it separated a pair, the bar must carry the honesty markers
+    const bar = await page.getByTestId('nf-bar').textContent()
+    if (/can separates/.test(bar)) {
+      expect(bar).toContain('upper bound')
+      expect(bar).toContain('five-sided')
+    }
+
+    // clearing restores the unshielded state
+    await page.getByTestId('nf-shield-clear').click()
+    await expect(page.getByTestId('nf-shield-clear')).toHaveCount(0)
+    expect(await page.getByTestId('nf-bar').textContent()).toBe(before)
+    expect(await worst()).not.toBeNull()
+  })

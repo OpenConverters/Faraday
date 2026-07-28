@@ -3,8 +3,8 @@ import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 
 const props = defineProps({
   report: { type: Object, required: true },
-  // per-segment radiation attribution, or null when the layer is off
-  radiation: { type: Object, default: null },
+  // per-segment return-path quality (effective loop height), or null
+  returnPath: { type: Object, default: null },
   // component near-field result, or null. Rendered as a heat wash UNDER the
   // copper: the field is what is in the air above the board, and putting the
   // copper on top is what lets you see which parts sit in the hot region.
@@ -18,13 +18,13 @@ const props = defineProps({
   findings: { type: Array, required: true },
   selectedId: { type: String, default: '' },
 })
-const emit = defineEmits(['select', 'toggleRadiation', 'nearField', 'shield'])
+const emit = defineEmits(['select', 'toggleReturnPath', 'nearField', 'shield'])
 
 // Radiation attribution, decoded once per map into a byte per segment. Null
 // when the map is off, and every draw path checks for that rather than
 // branching on a mode flag in five places.
 const heat = computed(() => {
-  const b64 = props.radiation?.heat
+  const b64 = props.returnPath?.heat
   if (!b64) return null
   const bin = atob(b64)
   const a = new Uint8Array(bin.length)
@@ -284,9 +284,9 @@ function draw() {
     for (let i = 0; i < b.segments.length; i++) {
       const s = b.segments[i]
       if (s.cu !== cu) continue
-      // In radiation mode the copper is coloured by how much of the board's
-      // differential-mode total it accounts for, and drawn a little heavier so
-      // the hot traces read at board zoom.
+      // In return-path mode the copper is coloured by its effective loop
+      // height — how far away its return current really is — drawn a little
+      // heavier so the hot traces read at board zoom.
       if (h) {
         ctx.strokeStyle = radColour(h[i] ?? 0)
         ctx.lineWidth = Math.max(s.w * view.scale, h[i] > 150 ? 2.2 : 1.1)
@@ -507,7 +507,7 @@ watch(() => props.selectedId, id => {
   if (f) zoomTo(f)
   else draw()
 })
-watch([layerVis, overlaysOn, () => props.radiation, () => props.nearField],
+watch([layerVis, overlaysOn, () => props.returnPath, () => props.nearField],
       () => draw())
 watch(() => props.findings, () => draw())
 </script>
@@ -528,10 +528,10 @@ watch(() => props.findings, () => draw())
               @click="layerVis[name] = !layerVis[name]">{{ name }}</button>
       <button class="lchip risk" :class="{ off: !overlaysOn }" data-testid="overlay-toggle"
               @click="overlaysOn = !overlaysOn">risk overlay</button>
-      <button class="lchip rad" :class="{ off: !radiation }" data-testid="rad-toggle"
+      <button class="lchip rad" :class="{ off: !returnPath }" data-testid="rp-toggle"
               :style="{ '--c': '#ffb454' }"
-              title="differential-mode attribution over every trace — what LEAVES the board"
-              @click="emit('toggleRadiation')">radiation</button>
+              title="effective loop height of every trace — where the return current really flows. Geometry only, no assumed currents"
+              @click="emit('toggleReturnPath')">return path</button>
       <button class="lchip rad" :class="{ off: !nearField, dis: !hasSwitchNode }"
               data-testid="nf-toggle" :style="{ '--c': '#58c79a' }"
               :disabled="!hasSwitchNode"

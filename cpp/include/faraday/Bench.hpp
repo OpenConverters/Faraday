@@ -15,7 +15,7 @@
 #include "Emissions.hpp"
 #include "NearFieldMap.hpp"
 #include "Shielding.hpp"
-#include "RadiationMap.hpp"
+#include "ReturnPath.hpp"
 #include "Mna.hpp"
 #include "Rlgc.hpp"
 
@@ -417,111 +417,52 @@ inline nlohmann::json cm_budget_json(const nlohmann::json& j) {
             {"limitId", b.limit_id}, {"limitLabel", b.limit_label}};
 }
 
-// Per-segment contributions, quantised to one byte on a log scale. A 4 MB
-// board has ~10k segments; as JSON numbers that is a megabyte, as bytes it is
-// 13 kB and the canvas only ever needs a colour index anyway. The floor is
-// four decades below the peak, which is well past the point where a trace stops
-// mattering.
-inline nlohmann::json radiation_map_json(const BoardIR& board,
-                                         const Screener& screener,
-                                         const radmap::MapParams& p) {
-    const radmap::MapResult r = radmap::compute(board, screener, p);
-    // Colour by loudness PER UNIT LENGTH, over three decades. Colouring by
-    // per-segment contribution instead put 89% of a real board's copper into
-    // the bottom half of the ramp — correct arithmetic, unreadable picture,
-    // because the router had chopped every trace into segments of wildly
-    // different length.
-    // Span the ramp over the data that is actually there, not a fixed number of
-    // decades. On a board whose only differentiator is switch-node current the
-    // real spread is 2.3 decades; a fixed 3-decade window then parks every
-    // signal trace at 0.25 and every switch node at 0.95, which reads as broken
-    // rather than as bimodal.
-    double lo_e = 1e300;
-    for (const auto& c : r.segments)
-        if (c.e_per_m > 0) lo_e = std::min(lo_e, c.e_per_m);
-    const double floor_e =
-        (r.max_e_per_m > 0 && lo_e < r.max_e_per_m) ? lo_e : r.max_e_per_m * 0.5;
-    const double span = std::log(r.max_e_per_m / floor_e);
+// The return-path map: effective loop height per segment, quantised to one
+// byte on a log scale over the span actually present. Geometry only — there is
+// no current, no field and no dB anywhere in it, because none of those are
+// derivable from a layout alone. The emissions panel carries the defensible
+// far-field number for the loops it covers.
+inline nlohmann::json return_path_json(const BoardIR& board,
+                                       const Screener& screener,
+                                       const rp::MapParams& p) {
+    const rp::MapResult r = rp::compute(board, screener, p);
+    const double lo = r.min_eff_mm, hi = r.max_eff_mm;
+    const double span = (hi > lo && lo > 0) ? std::log(hi / lo) : 0.0;
     std::vector<unsigned char> heat(r.segments.size(), 0);
     for (size_t i = 0; i < r.segments.size(); ++i) {
-        const double e = r.segments[i].e_per_m;
+        const double e = r.segments[i].eff_height_mm;
         if (!(e > 0)) continue;
         heat[i] = span > 1e-9
-            ? (unsigned char)std::clamp(255.0 * std::log(e / floor_e) / span, 0.0, 255.0)
+            ? (unsigned char)std::clamp(255.0 * std::log(e / lo) / span, 0.0, 255.0)
             : (unsigned char)128;
     }
-    // Aggregate by NET. A net split into a dozen segments listed itself a dozen
-    // times, which is why the same supply rail appeared twice in a top-four.
-    double power = 0;
-    std::map<int, double> by_net;
-    std::map<int, bool> net_no_ref, net_sw;
-    for (size_t i = 0; i < r.segments.size(); ++i) {
-        const double pw = r.segments[i].e_v_per_m * r.segments[i].e_v_per_m;
-        if (!(pw > 0)) continue;
-        power += pw;
-        const int net = board.segments[i].net;
-        by_net[net] += pw;
-        net_no_ref[net] = net_no_ref[net] || r.segments[i].no_reference;
-        net_sw[net] = net_sw[net] || r.segments[i].switch_node;
-    }
-    std::vector<std::pair<int, double>> ranked(by_net.begin(), by_net.end());
-    std::sort(ranked.begin(), ranked.end(),
-              [](const auto& a, const auto& b) { return a.second > b.second; });
-    nlohmann::json top = nlohmann::json::array();
-    for (const auto& [net, pw] : ranked) {
-        top.push_back({{"net", board.net_name(net)},
-                       {"sharePct", power > 0 ? 100.0 * pw / power : 0.0},
-                       {"noReference", net_no_ref[net]},
-                       {"switchNode", net_sw[net]}});
-        if (top.size() >= 10) break;
-    }
+    nlohmann::json worst = nlohmann::json::array();
+    for (const auto& w : r.worst)
+        worst.push_back({{"net", board.net_name(w.net)},
+                         {"areaMm2", w.area_mm2},
+                         {"worstEffMm", w.worst_eff_mm},
+                         {"overVoid", w.over_void},
+                         {"unstitched", w.unstitched},
+                         {"noReference", w.no_reference}});
     return {{"heat", base64(heat)},
-            {"nets", (int)by_net.size()},
             {"segments", (int)r.segments.size()},
             {"counted", (int)r.counted},
-            {"totalDbuvM", r.total_dbuv_m},
-            {"maxEVPerM", r.max_e_v_per_m},
+            {"minEffHeightMm", r.min_eff_mm},
+            {"maxEffHeightMm", r.max_eff_mm},
             {"noReferenceCount", (int)r.no_reference_count},
             {"overVoidCount", (int)r.over_void_count},
-            {"noReferenceSharePct", 100.0 * r.no_reference_share},
             {"layerChangeCount", (int)r.layer_change_count},
             {"unstitchedCount", (int)r.unstitched_count},
-            {"shieldedCount", (int)r.shielded_count},
-            {"totalDbuvMUnshielded", emc::to_dbuv_m(r.total_unshielded_v_per_m)},
-            {"shieldGainDb", emc::to_dbuv_m(r.total_unshielded_v_per_m) -
-                             emc::to_dbuv_m(r.total_v_per_m)},
-            {"distanceM", p.r_m},
-            {"top", top}};
+            {"worst", worst}};
 }
 
-inline radmap::MapParams radmap_params_from_json(const nlohmann::json& j) {
-    radmap::MapParams p;
+inline rp::MapParams rp_params_from_json(const nlohmann::json& j) {
+    rp::MapParams p;
     auto opt = [&](const char* k, double d) {
         return (j.contains(k) && j.at(k).is_number()) ? j.at(k).get<double>() : d;
     };
-    p.f_sw_hz = opt("fSwKhz", 500.0) * 1e3;
-    p.duty = opt("duty", 0.4);
-    p.rise_s = opt("riseNs", 20.0) * 1e-9;
-    p.swing_v = opt("swingV", 3.3);
-    p.sw_current_a = opt("currentA", 10.0);
-    p.r_m = opt("distanceM", 3.0);
-    p.ground_reflection = j.value("groundReflection", true);
-    // Shields, each with an SE computed from its own material, wall and seam
-    // at the frequency the user is looking at — never a flat assumption.
-    if (j.contains("shields") && j.at("shields").is_array()) {
-        const double f = j.value("shieldFMhz", 130.0) * 1e6;
-        for (const auto& sj : j.at("shields")) {
-            radmap::ShieldRect r;
-            r.x1 = sj.value("x1", 0.0); r.y1 = sj.value("y1", 0.0);
-            r.x2 = sj.value("x2", 0.0); r.y2 = sj.value("y2", 0.0);
-            shield::Can can;
-            can.material = sj.value("material", std::string("tinsteel"));
-            can.wall_mm = sj.value("wallMm", 0.2);
-            can.seam_pitch_mm = sj.value("seamPitchMm", 5.0);
-            r.se_db = shield::evaluate(can, f, shield::FieldKind::MagneticNear).se_db;
-            p.shields.push_back(r);
-        }
-    }
+    p.no_reference_height_mm = opt("noReferenceHeightMm", 1.6);
+    p.max_return_detour_mm = opt("maxReturnDetourMm", 25.0);
     return p;
 }
 
@@ -560,6 +501,7 @@ inline nlohmann::json near_field_json(const BoardIR& board,
                       {"thresholdMv", v.threshold_v * 1e3},
                       {"ratio", v.ratio},
                       {"dipoleValid", v.dipole_valid},
+                      {"shieldDb", v.shield_db},
                       {"aggressor", v.aggressor},
                       {"level", v.ratio >= 1.0 ? "over"
                                 : (v.ratio >= 0.25 ? "watch" : "ok")}});
@@ -567,6 +509,7 @@ inline nlohmann::json near_field_json(const BoardIR& board,
     return {{"aggressors", ag}, {"victims", vi},
             {"maxHAPerM", r.max_h},
             {"tooCloseCount", (int)r.too_close_count},
+            {"shieldedVictims", (int)r.shielded_victims},
             {"probeHeightMm", r.probe_height_mm},
             {"ringMhz", r.ring_hz * 1e-6},
             {"ringCurrentA", p.ring_current_a},
@@ -584,6 +527,22 @@ inline nfmap::MapParams nfmap_params_from_json(const nlohmann::json& j) {
     p.f_sw_hz = opt("fSwKhz", 500.0) * 1e3;
     p.probe_height_mm = opt("probeHeightMm", 3.0);
     p.default_victim_area_mm2 = opt("victimAreaMm2", 4.0);
+    // Shield cans, each with an SE its own material, wall and contact pitch
+    // earn at the RING frequency — the dominant coupling case.
+    if (j.contains("shields") && j.at("shields").is_array()) {
+        for (const auto& sj : j.at("shields")) {
+            shield::Rect r;
+            r.x1 = sj.value("x1", 0.0); r.y1 = sj.value("y1", 0.0);
+            r.x2 = sj.value("x2", 0.0); r.y2 = sj.value("y2", 0.0);
+            shield::Can can;
+            can.material = sj.value("material", std::string("tinsteel"));
+            can.wall_mm = sj.value("wallMm", 0.2);
+            can.seam_pitch_mm = sj.value("seamPitchMm", 5.0);
+            r.se_db = shield::evaluate(can, p.ring_hz,
+                                       shield::FieldKind::MagneticNear).se_db;
+            p.shields.push_back(r);
+        }
+    }
     return p;
 }
 

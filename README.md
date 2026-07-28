@@ -90,19 +90,19 @@ loop radiation only, no common-mode current on attached cables (which dominates 
 failures), no enclosure, no board resonances. A clean result means this loop is not your
 problem — not that the product passes.
 
-## The radiation layer
+## The return-path layer
 
-The **radiation** chip on the board view re-colours every trace by how much of the
-board's differential-mode emission it accounts for. Each segment plus its return forms a
-loop of `length × height-to-reference`; over an intact plane that is square micrometres,
-and where the reference is missing it becomes the trace length times the whole board. So
-the map answers *which twenty traces are eighty percent of this*, which is the question
-that changes a layout.
+The **return path** chip colours every trace by its *effective loop height* — how far
+away its return current really is, in millimetres. The regime is high frequency, where
+the return concentrates directly under the trace: the dielectric height where the plane
+is genuinely there (checked against the actual pour polygons), the lateral detour around
+a slot edge where it is not, and the hop to the nearest spanning stitching via at every
+layer change.
 
-It is an **attribution, not a field simulation** — a ranking of your own copper, summed
-incoherently, with an assumed current that scales the whole thing linearly. It is
-deliberately not coloured in absolute field units, because coloured that way it would
-look like a full-wave solve and it is not one.
+Every number in this layer is a **geometric fact of the layout** — no assumed currents,
+no field units, no dB. It replaced a "radiation attribution" whose ranking turned out to
+be 97% a restatement of the switch-node rule once measured; the defensible far-field
+number lives in the emissions panel, which has a limit line to check it against.
 
 ## The component near-field map
 

@@ -106,7 +106,7 @@ if(FARADAY_BUILD_TESTS)
         tests/test_mna.cpp
         tests/test_bench.cpp
         tests/test_emissions.cpp
-        tests/test_radmap.cpp
+        tests/test_returnpath.cpp
         tests/test_nearfield.cpp
         tests/test_nfmap.cpp
         tests/test_shielding.cpp)

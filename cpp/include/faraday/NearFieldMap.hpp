@@ -37,6 +37,7 @@
 // layout file. Both are surfaced rather than buried.
 
 #include "NearField.hpp"
+#include "Shielding.hpp"
 #include "Screener.hpp"
 
 #include <algorithm>
@@ -69,6 +70,11 @@ struct MapParams {
     // A victim's loop area, when its own routing has not been measured. Stated
     // rather than silently assumed.
     double default_victim_area_mm2 = 4.0;
+    // Shield cans drawn by the user. A can attenuates coupling only when it
+    // separates the pair — aggressor inside and victim outside, or the
+    // reverse. Both inside or both outside, it changes nothing, which is the
+    // behaviour that makes drawing a rectangle mean something.
+    std::vector<shield::Rect> shields;
 };
 
 // One radiating loop, reduced to a dipole at a location.
@@ -97,6 +103,10 @@ struct VictimHit {
     // The reported field does not depend on it — that comes from the exact
     // integral — but it tells the reader how far inside the source they are.
     bool dipole_valid = true;
+    // Attenuation from a drawn can separating this victim from its aggressor.
+    // An UPPER BOUND: the can is five-sided and flux routes around through the
+    // PCB, which the UI states rather than hides.
+    double shield_db = 0;
     std::string aggressor;
 };
 
@@ -104,7 +114,7 @@ struct MapResult {
     std::vector<Aggressor> aggressors;
     std::vector<VictimHit> victims;
     double max_h = 0;
-    size_t too_close_count = 0;   // how many are inside the dipole radius
+    size_t too_close_count = 0, shielded_victims = 0;   // how many are inside the dipole radius
     // context the reader needs to interpret any of it
     double lambda_over_2pi_mm = 0;
     double probe_height_mm = 0;
@@ -227,6 +237,17 @@ inline MapResult compute(const BoardIR& board, const Screener& screener,
             // is actually valid rather than extrapolating it
             if (!v.dipole_valid) { r.victims.push_back(std::move(v)); continue; }
             v.h_a_per_m = nf::h_equatorial(best->moment_am2, best_d * 1e-3);
+        }
+        // A can between the pair attenuates by its SE; around both or neither
+        // it does nothing.
+        for (const auto& sh : p.shields) {
+            const bool agg_in = sh.contains(best->x_mm, best->y_mm);
+            const bool vic_in = sh.contains(pad.x, pad.y);
+            if (agg_in != vic_in) v.shield_db = std::max(v.shield_db, sh.se_db);
+        }
+        if (v.shield_db > 0) {
+            v.h_a_per_m *= std::pow(10.0, -v.shield_db / 20.0);
+            ++r.shielded_victims;
         }
         v.b_tesla = nf::b_from_h(v.h_a_per_m);
         // cos(theta) = 1: worst case, because a layout tool cannot know the

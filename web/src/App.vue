@@ -106,41 +106,25 @@ const layerName = cu => report.value?.board.copperNames?.[cu] ?? `layer ${cu}`
 // Radiated emissions: offered on findings that carry an enclosed loop area,
 // which today means commutation loops. The loop area is the input nobody else
 // can supply, and it comes straight off the copper.
-// The radiation layer: a whole-board attribution of differential-mode
-// emissions to the copper that causes it. Off by default — it re-colours the
-// board, so it has to be asked for.
-const radiation = ref(null)
-const radError = ref('')
-// Shield cans the user has drawn. Each carries its own material, wall and
-// contact pitch, so the SE is computed per can at the frequency in question
-// rather than assumed.
-const shields = ref([])
-const shieldSpec = ref({ material: 'tinsteel', wallMm: 0.2, seamPitchMm: 5 })
-const drawingShield = ref(false)
-
-function runRadiation() {
+// The return-path layer: effective loop height per segment, geometry only.
+// It replaced the "radiation attribution" once a measurement showed that
+// ranking with the assumed current was 97% a restatement of the switch-node
+// rule — the current is gone, and what remains is what the layout proves.
+const returnPath = ref(null)
+const rpError = ref('')
+function runReturnPath() {
   try {
-    const out = JSON.parse(engine.value.radiationMap(JSON.stringify({
-      shields: shields.value.map(s => ({ ...s, ...shieldSpec.value })),
-      shieldFMhz: nfParams.value.ringMhz,
-    })))
-    if (out.error) { radError.value = out.error; return }
-    radError.value = ''
-    radiation.value = out
-  } catch (e) { radError.value = String(e) }
+    const out = JSON.parse(engine.value.returnPath(JSON.stringify({})))
+    if (out.error) { rpError.value = out.error; return }
+    rpError.value = ''
+    returnPath.value = out
+  } catch (e) { rpError.value = String(e) }
 }
-function toggleRadiation() {
-  if (radiation.value) { radiation.value = null; drawingShield.value = false; return }
-  runRadiation()
+function toggleReturnPath() {
+  if (returnPath.value) { returnPath.value = null; return }
+  runReturnPath()
 }
-function addShield(rect) {
-  shields.value = [...shields.value, rect]
-  drawingShield.value = false
-  runRadiation()
-}
-function clearShields() { shields.value = []; runRadiation() }
-watch(shieldSpec, () => { if (radiation.value) runRadiation() }, { deep: true })
-watch(report, () => { radiation.value = null; radError.value = '' })
+watch(report, () => { returnPath.value = null; rpError.value = '' })
 
 // The component near-field map: a different regime from the far-field
 // attribution, so it is a separate panel with its own units and its own caveat.
@@ -150,16 +134,35 @@ const nfDetail = ref(false)
 // The excitation the overlay is computed at. Held here rather than in the
 // panel because the board overlay needs it too.
 const nfParams = ref({ ringCurrentA: 2, ringMhz: 130, probeHeightMm: 3, victimAreaMm2: 4 })
+// Shield cans the user has drawn on the near-field layer. A can attenuates
+// coupling only when it separates aggressor from victim, and the SE comes from
+// its own material, wall and contact pitch at the ring frequency.
+const shields = ref([])
+const shieldSpec = ref({ material: 'tinsteel', wallMm: 0.2, seamPitchMm: 5 })
+const drawingShield = ref(false)
+function addShield(rect) {
+  shields.value = [...shields.value, rect]
+  drawingShield.value = false
+  runNearField()
+}
+function clearShields() { shields.value = []; runNearField() }
+watch(shieldSpec, () => { if (nearField.value) runNearField() }, { deep: true })
 function runNearField() {
   try {
-    const out = JSON.parse(engine.value.nearField(JSON.stringify(nfParams.value)))
+    const out = JSON.parse(engine.value.nearField(JSON.stringify({
+      ...nfParams.value,
+      shields: shields.value.map(s => ({ ...s, ...shieldSpec.value })),
+    })))
     if (out.error) { nfError.value = out.error; nearField.value = null; return }
     nfError.value = ''
     nearField.value = out
   } catch (e) { nfError.value = String(e) }
 }
 function toggleNearField() {
-  if (nearField.value) { nearField.value = null; nfError.value = ''; return }
+  if (nearField.value) {
+    nearField.value = null; nfError.value = ''; drawingShield.value = false
+    return
+  }
   runNearField()
 }
 function setNfParams(p) { nfParams.value = { ...nfParams.value, ...p }; runNearField() }
@@ -208,7 +211,7 @@ function toggleRule(rule) {
 
     <div v-if="engineLoading && fileName" class="banner wait" data-testid="engine-loading">
       Loading the analysis engine…</div>
-    <div v-if="radError" class="banner error" data-testid="rad-error">{{ radError }}</div>
+    <div v-if="rpError" class="banner error" data-testid="rp-error">{{ rpError }}</div>
 
     <div v-if="nfError" class="banner error" data-testid="nf-error">{{ nfError }}</div>
 
@@ -223,48 +226,49 @@ function toggleRule(rule) {
         {{ nearField.victims[0].ratio >= 10
            ? (20 * Math.log10(nearField.victims[0].ratio)).toFixed(0) + ' dB over'
            : (nearField.victims[0].ratio * 100).toFixed(0) + '% of' }} threshold</span>
+      <span v-if="nearField.shieldedVictims" class="top" data-testid="nf-shielded">
+        can separates <b>{{ nearField.shieldedVictims }}</b> victim(s) from the
+        aggressor — an upper bound, the can is five-sided</span>
+      <button class="detail" data-testid="nf-shield-draw"
+              @click="drawingShield = !drawingShield">
+        {{ drawingShield ? 'click-drag on the board…' : 'draw a shield can' }}</button>
+      <button v-if="shields.length" class="detail" data-testid="nf-shield-clear"
+              @click="clearShields">clear {{ shields.length }}</button>
+      <label v-if="shields.length" class="spec">pitch
+        <input type="range" min="1" max="40" step="0.5" data-testid="nf-shield-pitch"
+               v-model.number="shieldSpec.seamPitchMm" />
+        <b>{{ shieldSpec.seamPitchMm.toFixed(1) }} mm</b></label>
       <button class="detail" data-testid="nf-detail" @click="nfDetail = true">
         victims &amp; shielding →</button>
       <span class="cav"><b>What couples on the board.</b> Quasi-static induction
         at component scale, in A/m — not a radiation map, and only switching
         loops are modelled as sources. No dBµV/m, no limit line: there is no
         reliable near-field to far-field transform. The ring current is your
-        assumption. For what leaves the board, use the radiation layer.</span>
+        assumption. The return-path layer shows where returns detour; the
+        emissions panel covers what leaves the board.</span>
     </div>
 
-    <div v-if="radiation" class="radbar" data-testid="rad-bar">
-      <b>Radiation attribution</b>
-      <span>{{ radiation.totalDbuvM.toFixed(1) }} dBµV/m total at
-        {{ radiation.distanceM.toFixed(0) }} m, over {{ radiation.counted }} segments</span>
-      <span v-if="radiation.overVoidCount" class="warn" data-testid="rad-void">
-        {{ radiation.overVoidCount }} segments run over a plane void or split —
-        their return current detours, and the map shows what that costs</span>
-      <span v-if="radiation.noReferenceCount" class="warn">
-        {{ radiation.noReferenceCount }} segments have no reference plane —
-        {{ radiation.noReferenceSharePct.toFixed(0) }}% of the total</span>
-      <span class="top" v-for="t in radiation.top.slice(0, 4)" :key="t.seg">
-        {{ t.net || '(unnamed)' }} <b>{{ t.sharePct.toFixed(1) }}%</b></span>
-      <span v-if="radiation.layerChangeCount" class="top">
-        {{ radiation.layerChangeCount }} layer change(s),
-        <b :class="radiation.unstitchedCount ? 'bad' : ''">{{ radiation.unstitchedCount }}
+    <div v-if="returnPath" class="radbar" data-testid="rp-bar">
+      <b>Return path</b>
+      <span>effective loop height {{ returnPath.minEffHeightMm.toFixed(2) }}–{{
+        returnPath.maxEffHeightMm.toFixed(2) }} mm over {{ returnPath.counted }} segments
+        — geometry only, no assumed currents</span>
+      <span v-if="returnPath.overVoidCount" class="warn" data-testid="rp-void">
+        {{ returnPath.overVoidCount }} segment(s) over a plane void or split</span>
+      <span v-if="returnPath.layerChangeCount" class="top">
+        {{ returnPath.layerChangeCount }} layer change(s),
+        <b :class="returnPath.unstitchedCount ? 'bad' : ''">{{ returnPath.unstitchedCount }}
         with no stitching via in reach</b></span>
-      <span v-if="radiation.shieldedCount" class="top">
-        shield: {{ radiation.shieldedCount }} segments covered,
-        <b>{{ radiation.shieldGainDb.toFixed(1) }} dB</b> off the board total</span>
-      <button class="detail" data-testid="shield-draw"
-              @click="drawingShield = !drawingShield">
-        {{ drawingShield ? 'click-drag on the board…' : 'draw a shield can' }}</button>
-      <button v-if="shields.length" class="detail" data-testid="shield-clear"
-              @click="clearShields">clear {{ shields.length }}</button>
-      <label v-if="shields.length" class="spec">pitch
-        <input type="range" min="1" max="40" step="0.5" data-testid="shield-pitch"
-               v-model.number="shieldSpec.seamPitchMm" />
-        <b>{{ shieldSpec.seamPitchMm.toFixed(1) }} mm</b></label>
-      <span class="cav"><b>What leaves the board.</b> Differential-mode
-        attribution over every trace, including return-path detours at layer
-        changes — a ranking of your copper, not a chamber. Current is assumed and
-        scales it all linearly. For what couples ON the board into nearby parts,
-        use the near-field layer.</span>
+      <span class="top" v-for="w in returnPath.worst.slice(0, 3)" :key="w.net">
+        {{ w.net || '(unnamed)' }} <b>{{ w.areaMm2.toFixed(0) }} mm²</b><template
+        v-if="w.unstitched"> · unstitched</template><template
+        v-else-if="w.overVoid"> · over void</template></span>
+      <span class="cav"><b>How far away each trace's return current really is</b> —
+        the dielectric height where the plane is solid beneath it, the detour where
+        it is not, the hop at every layer change. Every number here is a geometric
+        fact of the layout. For a defensible far-field figure with a limit line, use
+        the emissions panel on a commutation-loop finding; for coupling into nearby
+        parts, the near-field layer.</span>
     </div>
 
     <div v-if="needStackup" class="banner ask" data-testid="stackup-card">
@@ -276,11 +280,11 @@ function toggleRule(rule) {
 
     <main class="work" v-if="report">
       <BoardView :report="report" :findings="visibleFindings" :selected-id="selectedId"
-                 :radiation="radiation" :near-field="nearField"
+                 :return-path="returnPath" :near-field="nearField"
                  :shields="shields" :drawing-shield="drawingShield"
                  :has-switch-node="hasSwitchNode"
                  @select="id => selectedId = id"
-                 @toggle-radiation="toggleRadiation"
+                 @toggle-return-path="toggleReturnPath"
                  @near-field="toggleNearField"
                  @shield="addShield" />
       <FindingsList :findings="visibleFindings" :report="report" :selected-id="selectedId"

@@ -253,3 +253,53 @@ TEST_CASE("a real converter board maps without inventing anything",
         CHECK(v.distance_mm > 0);
     }
 }
+
+TEST_CASE("a can attenuates only when it separates aggressor from victim",
+          "[nfmap][shield]") {
+    // Both inside or both outside, it changes nothing — which is what makes
+    // drawing a rectangle mean something rather than acting as a global knob.
+    const BoardIR b = converter();
+    Screener s(b);
+
+    const nfmap::MapResult bare = nfmap::compute(b, s, nfmap::MapParams{});
+    const nfmap::VictimHit* far0 = nullptr;
+    for (const auto& v : bare.victims) if (v.component == "U2") far0 = &v;
+    REQUIRE(far0);
+
+    // can around the switching cluster (Q1/Q2/L1 near x 8..20, y 8..17):
+    // U2 at (40,10) is outside -> attenuated; U3 at (12,13) is inside with the
+    // aggressor -> untouched
+    nfmap::MapParams p;
+    shield::Rect can;
+    can.x1 = 6; can.y1 = 6; can.x2 = 22; can.y2 = 18;
+    can.se_db = 20.0;
+    p.shields.push_back(can);
+    const nfmap::MapResult sh = nfmap::compute(b, s, p);
+
+    const nfmap::VictimHit* far1 = nullptr;
+    const nfmap::VictimHit* near1 = nullptr;
+    for (const auto& v : sh.victims) {
+        if (v.component == "U2") far1 = &v;
+        if (v.component == "U3") near1 = &v;
+    }
+    REQUIRE(far1);
+    CHECK_THAT(far1->shield_db, WithinAbs(20.0, 1e-9));
+    CHECK_THAT(20 * std::log10(far0->h_a_per_m / far1->h_a_per_m),
+               WithinAbs(20.0, 1e-6));
+    CHECK(sh.shielded_victims >= 1);
+    if (near1) {
+        CHECK(near1->shield_db == 0.0);   // same side as the aggressor
+    }
+
+    // a can somewhere irrelevant changes nothing at all
+    nfmap::MapParams q;
+    shield::Rect off;
+    off.x1 = 50; off.y1 = 30; off.x2 = 58; off.y2 = 38;
+    off.se_db = 40.0;
+    q.shields.push_back(off);
+    const nfmap::MapResult un = nfmap::compute(b, s, q);
+    CHECK(un.shielded_victims == 0);
+    for (size_t i = 0; i < un.victims.size(); ++i)
+        CHECK_THAT(un.victims[i].h_a_per_m,
+                   WithinRel(bare.victims[i].h_a_per_m, 1e-12));
+}
