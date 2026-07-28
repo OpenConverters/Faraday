@@ -42,6 +42,17 @@ static std::string solve_pair(std::string request_json) {
     }
 }
 
+static std::string predict_emissions(std::string request_json) {
+    try {
+        return faraday::bench::predict_emissions(
+                   nlohmann::json::parse(request_json)).dump();
+    } catch (const std::exception& e) {
+        return nlohmann::json{{"error", e.what()}}.dump();
+    }
+}
+
+static std::string limit_lines() { return faraday::bench::limit_lines_json().dump(); }
+
 static std::string logic_families() {
     return faraday::bench::families_json().dump();
 }
@@ -51,6 +62,8 @@ static std::string version() { return "0.2.0"; }
 EMSCRIPTEN_BINDINGS(faraday) {
     emscripten::function("analyze", &analyze);
     emscripten::function("solvePair", &solve_pair);
+    emscripten::function("predictEmissions", &predict_emissions);
+    emscripten::function("limitLines", &limit_lines);
     emscripten::function("logicFamilies", &logic_families);
     emscripten::function("version", &version);
 }

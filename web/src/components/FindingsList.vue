@@ -7,7 +7,7 @@ const props = defineProps({
   hiddenRules: { type: Set, default: () => new Set() },
   total: { type: Number, default: 0 },
 })
-const emit = defineEmits(['select', 'toggleRule', 'bench'])
+const emit = defineEmits(['select', 'toggleRule', 'bench', 'emissions'])
 
 const netName = id =>
   props.report.board.nets.find(n => n.id === id)?.name || (id >= 0 ? `net ${id}` : '')
@@ -56,6 +56,10 @@ const netName = id =>
           <button v-if="f.solve" class="bench" :data-testid="`bench-${f.id}`"
                   @click.stop="emit('bench', f.id)">
             Solve this cross-section →
+          </button>
+          <button v-if="f.emit" class="bench" :data-testid="`emit-${f.id}`"
+                  @click.stop="emit('emissions', f.id)">
+            Predict radiated emissions →
           </button>
         </div>
       </li>

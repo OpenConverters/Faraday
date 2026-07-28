@@ -3,6 +3,7 @@ import { ref, computed, onMounted } from 'vue'
 import BoardView from './components/BoardView.vue'
 import FindingsList from './components/FindingsList.vue'
 import BenchPanel from './components/BenchPanel.vue'
+import EmissionsPanel from './components/EmissionsPanel.vue'
 
 const engine = ref(null)
 const boardText = ref('')
@@ -78,6 +79,13 @@ const netName = id =>
   report.value?.board.nets.find(n => n.id === id)?.name || (id >= 0 ? `net ${id}` : '')
 const layerName = cu => report.value?.board.copperNames?.[cu] ?? `layer ${cu}`
 
+// Radiated emissions: offered on findings that carry an enclosed loop area,
+// which today means commutation loops. The loop area is the input nobody else
+// can supply, and it comes straight off the copper.
+const emitId = ref('')
+const emitFinding = computed(() =>
+  findings.value.find(f => f.id === emitId.value && f.emit) ?? null)
+
 function toggleRule(rule) {
   const s = new Set(hiddenRules.value)
   s.has(rule) ? s.delete(rule) : s.add(rule)
@@ -124,7 +132,8 @@ function toggleRule(rule) {
                     :rules="ruleCounts" :hidden-rules="hiddenRules" :total="findings.length"
                     @select="id => selectedId = selectedId === id ? '' : id"
                     @toggle-rule="toggleRule"
-                    @bench="id => benchId = id" />
+                    @bench="id => benchId = id"
+                    @emissions="id => emitId = id" />
     </main>
 
     <div v-else-if="!needStackup" class="empty" :class="{ over: dragOver }">
@@ -145,6 +154,9 @@ function toggleRule(rule) {
                 :title-a="netName(benchFinding.netA)" :title-b="netName(benchFinding.netB)"
                 :layer="layerName(benchFinding.cuA)"
                 @close="benchId = ''" />
+
+    <EmissionsPanel v-if="emitFinding && engine" :engine="engine"
+                    :finding="emitFinding" @close="emitId = ''" />
 
     <footer v-if="meta" class="metastrip" data-testid="meta-strip">
       <span class="m">format: <b>{{ report.format }}</b></span>

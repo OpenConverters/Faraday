@@ -67,6 +67,22 @@ coupled length, swing — re-solve the physics as they move. See
 [docs/browser-field-tier.md](docs/browser-field-tier.md) for the formulation, the
 validation table, and the modelling limits.
 
+## Radiated emissions — does it pass?
+
+On a converter, `commutation-loop` findings offer **Predict radiated emissions →**. The
+enclosed loop area comes off the copper — the one input every other estimator makes you
+measure by hand — and the panel puts the resulting spectrum against the **CISPR 32 /
+EN 55032** or **FCC Part 15** limit line, with a margin in dB.
+
+Sliders for switched current, switching frequency, edge rate and duty; the plateau above
+the edge knee is set by loop area, current and edge rate alone, so halving any one of
+them buys exactly 6 dB.
+
+It is an **estimate**, and the panel says so where it cannot be missed: differential-mode
+loop radiation only, no common-mode current on attached cables (which dominates most real
+failures), no enclosure, no board resonances. A clean result means this loop is not your
+problem — not that the product passes.
+
 ## Stackup policy
 
 Z₀ and coupling depend on the stackup. If the board file carries none, Faraday **refuses** rather

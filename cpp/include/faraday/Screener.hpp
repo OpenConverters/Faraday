@@ -90,6 +90,10 @@ struct Finding {
     // remove. Absent when the layer has no reference plane, because then
     // there is no cross-section to solve.
     std::optional<nlohmann::json> solve;
+    // Inputs for the radiated-emission estimate. Present on findings that
+    // enclose a current loop, whose AREA is the one term the layout uniquely
+    // determines and every other estimator makes you measure by hand.
+    std::optional<nlohmann::json> emit;
 };
 
 // Per-copper-layer derived model: plane classification + reference geometry.
@@ -611,6 +615,8 @@ class Screener {
             f.confidence = "heuristic";
             f.net_a = net;
             f.coupled_len_mm = loop->area_mm2;
+            f.emit = nlohmann::json{{"areaMm2", loop->area_mm2},
+                                    {"net", b_.net_name(net)}};
             char buf[280];
             std::snprintf(buf, sizeof buf,
                           "Commutation loop around %s encloses about %.0f mm^2; "
@@ -1499,6 +1505,7 @@ inline nlohmann::json to_json(const Finding& f) {
                      {"cuB", f.cu_b}};
     if (f.next_db) j["nextDb"] = *f.next_db;
     if (f.solve) j["solve"] = *f.solve;
+    if (f.emit) j["emit"] = *f.emit;
     nlohmann::json lines = nlohmann::json::array();
     for (const auto& s : f.geom.lines)
         lines.push_back({{"cu", s.cu}, {"x1", s.x1}, {"y1", s.y1},

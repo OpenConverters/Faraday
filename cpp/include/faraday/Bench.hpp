@@ -12,6 +12,7 @@
 // and — when that is too much — the separation that would fix it.
 
 #include "Bem2d.hpp"
+#include "Emissions.hpp"
 #include "Mna.hpp"
 #include "Rlgc.hpp"
 
@@ -318,6 +319,83 @@ inline nlohmann::json run(const Request& r) {
                        {"fix", ms(t2, t3)}, {"field", ms(t3, t4)},
                        {"total", ms(t0, t4)}};
     return out;
+}
+
+// ---------------------------------------------------------------------------
+// Radiated emissions
+// ---------------------------------------------------------------------------
+
+inline emc::Trapezoid trapezoid_from_json(const nlohmann::json& j) {
+    emc::Trapezoid t;
+    auto opt = [&](const char* k, double d) {
+        return (j.contains(k) && j.at(k).is_number()) ? j.at(k).get<double>() : d;
+    };
+    t.amplitude_a = opt("currentA", 5.0);
+    t.f_sw_hz = opt("fSwKhz", 500.0) * 1e3;
+    t.duty = opt("duty", 0.4);
+    t.rise_s = opt("riseNs", 20.0) * 1e-9;
+    return t;
+}
+
+// A 50 kHz switcher puts 19 000 harmonics under 1 GHz, which is neither
+// shippable as JSON nor drawable. Peak-hold into a bounded number of bins is
+// what a spectrum analyser does anyway, so the shape and every excursion
+// survive while the payload stays fixed.
+inline nlohmann::json emissions_json(const emc::Prediction& p, int max_points) {
+    if (max_points < 16) throw std::invalid_argument("emissions: need at least 16 bins");
+    const size_t stride =
+        std::max<size_t>(1, (p.harmonics.size() + max_points - 1) / max_points);
+    nlohmann::json f = nlohmann::json::array(), line = nlohmann::json::array(),
+                   env = nlohmann::json::array(), lim = nlohmann::json::array();
+    for (size_t i = 0; i < p.harmonics.size(); i += stride) {
+        const size_t end = std::min(i + stride, p.harmonics.size());
+        const emc::Harmonic* peak = &p.harmonics[i];
+        double e_env = -400;
+        for (size_t k = i; k < end; ++k) {
+            if (p.harmonics[k].e_dbuv_m > peak->e_dbuv_m) peak = &p.harmonics[k];
+            e_env = std::max(e_env, p.harmonics[k].envelope_dbuv_m);
+        }
+        f.push_back(peak->f_hz * 1e-6);
+        line.push_back(peak->e_dbuv_m);
+        env.push_back(e_env);
+        lim.push_back(peak->limit_dbuv_m);
+    }
+    return {{"fMhz", f}, {"lineDbuvM", line}, {"envelopeDbuvM", env},
+            {"limitDbuvM", lim},
+            {"worstMarginDb", p.worst_margin_db},
+            {"worstHarmonicMarginDb", p.worst_harmonic_margin_db},
+            {"worstFMhz", p.worst_f_hz * 1e-6},
+            {"worstLevelDbuvM", p.worst_level_dbuv_m},
+            {"plateauDbuvM", p.plateau_dbuv_m},
+            {"kneeMhz", p.knee_hz * 1e-6},
+            {"smallLoopMaxMhz", p.small_loop_max_hz * 1e-6},
+            {"beyondModelCount", p.beyond_model_count},
+            {"harmonicsUnresolved", p.harmonics_unresolved},
+            {"binnedFrom", (int)p.harmonics.size()},
+            {"limitId", p.limit_id}, {"limitLabel", p.limit_label},
+            {"distanceM", p.distance_m}, {"areaMm2", p.area_mm2},
+            {"level", p.worst_margin_db < 0 ? "fail"
+                      : (p.worst_margin_db < 6 ? "watch" : "ok")}};
+}
+
+inline nlohmann::json predict_emissions(const nlohmann::json& j) {
+    if (!j.contains("areaMm2") || !j.at("areaMm2").is_number())
+        throw std::invalid_argument(
+            "emissions: 'areaMm2' is required — the enclosed loop area is the "
+            "whole point, and it is what the layout supplies");
+    emc::PredictOptions o;
+    o.limit_id = j.value("limit", std::string("cispr32b"));
+    o.ground_reflection = j.value("groundReflection", true);
+    return emissions_json(
+        emc::predict_loop(j.at("areaMm2").get<double>(), trapezoid_from_json(j), o),
+        j.value("maxPoints", 900));
+}
+
+inline nlohmann::json limit_lines_json() {
+    nlohmann::json a = nlohmann::json::array();
+    for (const auto& l : emc::limit_lines())
+        a.push_back({{"id", l.id}, {"label", l.label}, {"distanceM", l.distance_m}});
+    return a;
 }
 
 inline nlohmann::json families_json() {
