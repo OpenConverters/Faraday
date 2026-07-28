@@ -75,9 +75,14 @@ test('the solve is fast enough to sit behind a slider', async ({ page }) => {
 test('widening the separation lowers the noise, and the fix keeps its promise',
   async ({ page }) => {
     await openBench(page)
+    // Return null rather than throwing when the panel is mid-render:
+    // expect.poll retries a value, but a helper that dereferences a null match
+    // takes the whole test down on the first unlucky frame. Cost one flake on
+    // a cold-deployed site, where every solve arrives a little later.
     const peak = async () => {
       const t = await page.getByTestId('bench-verdict').textContent()
-      return Number(t.match(/([\d.]+)\s*mV/)[1])
+      const m = t && t.match(/([\d.]+)\s*mV/)
+      return m ? Number(m[1]) : null
     }
     const before = await peak()
 
@@ -91,11 +96,15 @@ test('widening the separation lowers the noise, and the fix keeps its promise',
     await slider.dispatchEvent('input')
     const fix = page.getByTestId('bench-fix')
     if (await fix.count()) {
-      const promised = Number((await fix.textContent()).match(/→\s*(\d+)%/)[1])
+      const ft = await fix.textContent()
+      const fm = ft && ft.match(/→\s*(\d+)%/)
+      expect(fm, 'the fix button must state the percentage it promises').not.toBeNull()
+      const promised = Number(fm[1])
       await fix.click()
       await expect.poll(async () => {
         const t = await page.getByTestId('bench-verdict').textContent()
-        return Number(t.match(/([\d.]+)% of budget/)[1])
+        const m = t && t.match(/([\d.]+)% of budget/)
+        return m ? Number(m[1]) : null
       }).toBeLessThanOrEqual(promised + 2)
     }
   })
