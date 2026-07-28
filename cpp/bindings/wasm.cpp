@@ -40,6 +40,31 @@ static std::string analyze(std::string board_text, std::string stackup_name) {
     }
 }
 
+// A Gerber board is a SET of files. The browser sends them as
+// {"files":[{"name","text"},...],"stackup":"..."} — one call, one report,
+// identical shape to analyze()'s.
+static std::string analyze_set(std::string request_json) {
+    try {
+        const nlohmann::json j = nlohmann::json::parse(request_json);
+        std::vector<faraday::gerber::NamedFile> files;
+        for (const auto& f : j.at("files"))
+            files.push_back({f.at("name").get<std::string>(),
+                             f.at("text").get<std::string>()});
+        std::optional<faraday::Stackup> user;
+        const std::string sn = j.value("stackup", "");
+        if (!sn.empty()) user = faraday::builtin_stackup(sn);
+        faraday::BoardFormat fmt;
+        faraday::BoardIR board =
+            faraday::import_board_set(files, std::move(user), &fmt);
+        nlohmann::json out = faraday::analyze_board(board);
+        out["format"] = faraday::format_name(fmt);
+        g_board = std::move(board);
+        return out.dump();
+    } catch (const std::exception& e) {
+        return nlohmann::json{{"error", e.what()}}.dump();
+    }
+}
+
 static std::string solve_pair(std::string request_json) {
     try {
         const nlohmann::json j = nlohmann::json::parse(request_json);
@@ -137,6 +162,7 @@ static std::string version() { return "0.2.0"; }
 
 EMSCRIPTEN_BINDINGS(faraday) {
     emscripten::function("analyze", &analyze);
+    emscripten::function("analyzeSet", &analyze_set);
     emscripten::function("solvePair", &solve_pair);
     emscripten::function("predictEmissions", &predict_emissions);
     emscripten::function("cmBudget", &cm_budget);

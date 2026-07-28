@@ -11,7 +11,7 @@ jobs:
       - uses: actions/checkout@v4
       - uses: OpenConverters/Faraday/integrations/github-action@main
         with:
-          board: hardware/main.kicad_pcb
+          board: hardware/main.kicad_pcb   # or a directory holding a Gerber X2 set
           stackup: default-4layer     # only used if the board has no stackup
           fail-on: high
       - uses: actions/upload-artifact@v4

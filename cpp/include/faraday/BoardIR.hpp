@@ -165,6 +165,10 @@ struct BoardIR {
     bool bbox_from_outline = false;  // false → computed from geometry (reported)
     int approximated_arcs = 0;       // arcs collapsed to chords (reported, no silent caps)
     int vias_without_drill = 0;      // drill inherited from netclass (reported)
+    // Gerber clear-polarity (LPC) objects skipped by the importer: treating a
+    // cleared area as copper would make pours look solid where they are not,
+    // so the skip is counted and surfaced instead of silent.
+    int gerber_clear_skipped = 0;
 
     const std::string& net_name(int id) const {
         static const std::string unknown = "?";
@@ -222,6 +226,7 @@ inline nlohmann::json to_json(const BoardIR& b) {
     j["bboxFromOutline"] = b.bbox_from_outline;
     j["approximatedArcs"] = b.approximated_arcs;
     j["viasWithoutDrill"] = b.vias_without_drill;
+    j["gerberClearSkipped"] = b.gerber_clear_skipped;
     return j;
 }
 

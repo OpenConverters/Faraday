@@ -150,8 +150,9 @@ TEST_CASE("import: format is detected from CONTENT, not the file name",
     CHECK(detect_format(read_fixture("fixture_4layer.xml")) == BoardFormat::Ipc2581);
     CHECK(detect_format(read_fixture("fixture_4layer.hyp")) == BoardFormat::Hyp);
     CHECK(detect_format(read_fixture("fixture_2layer.kicad_pcb")) == BoardFormat::Kicad);
+    // a lone Gerber layer is now RECOGNISED — and told it needs the full set
     CHECK_THROWS_WITH(detect_format("G04 this is a gerber*\n"),
-                      Catch::Matchers::ContainsSubstring("unrecognised board file"));
+                      Catch::Matchers::ContainsSubstring("fabrication set"));
     // and the one-call entry point routes each to the right importer
     BoardFormat f;
     BoardIR b = import_board(read_fixture("fixture_4layer.hyp"), std::nullopt, &f);

@@ -1,17 +1,29 @@
-// faraday_cli: board.kicad_pcb [--stackup default-2layer|default-4layer]
-//              [-o report.json]
+// faraday_cli: board.kicad_pcb | gerber-dir/ | file1.gbr file2.gbr ...
+//              [--stackup default-<N>layer] [-o report.json]
 // Screens the board and prints the ranked findings; writes the full report
 // JSON (board geometry + findings + meta) for the web viewer.
 
 #include <faraday/Import.hpp>
 #include <faraday/Screener.hpp>
 
+#include <filesystem>
 #include <fstream>
 #include <iostream>
 #include <sstream>
 
+static std::string slurp(const std::string& path) {
+    std::ifstream in(path, std::ios::binary);
+    if (!in) throw std::runtime_error("cannot open " + path);
+    std::stringstream ss;
+    ss << in.rdbuf();
+    return ss.str();
+}
+
 int main(int argc, char** argv) {
-    std::string board_path, out_path, stackup_name, fail_on;
+    // A board is one file (KiCad/HYP/IPC-2581) OR many (a Gerber X2 set) OR
+    // a directory holding the set.
+    std::vector<std::string> board_paths;
+    std::string out_path, stackup_name, fail_on;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--stackup" && i + 1 < argc) stackup_name = argv[++i];
@@ -19,13 +31,21 @@ int main(int argc, char** argv) {
         // CI gate: exit 3 when any finding reaches this severity. "high" or
         // "medium"; anything else is refused rather than silently ignored.
         else if (a == "--fail-on" && i + 1 < argc) fail_on = argv[++i];
-        else if (board_path.empty()) board_path = a;
-        else {
-            std::cerr << "unexpected argument: " << a << "\n";
+        else board_paths.push_back(a);
+    }
+    if (board_paths.size() == 1 &&
+        std::filesystem::is_directory(board_paths[0])) {
+        const std::string dir = board_paths[0];
+        board_paths.clear();
+        for (const auto& e : std::filesystem::directory_iterator(dir))
+            if (e.is_regular_file()) board_paths.push_back(e.path().string());
+        std::sort(board_paths.begin(), board_paths.end());
+        if (board_paths.empty()) {
+            std::cerr << dir << " contains no files\n";
             return 2;
         }
     }
-    if (board_path.empty()) {
+    if (board_paths.empty()) {
         std::cerr << "usage: faraday_cli <board.kicad_pcb|board.hyp|board.xml> "
                      "[--stackup default-<N>layer] [-o report.json] "
                      "[--fail-on high|medium]\n"
@@ -34,16 +54,16 @@ int main(int argc, char** argv) {
     }
 
     try {
-        std::ifstream in(board_path);
-        if (!in) throw std::runtime_error("cannot open " + board_path);
-        std::stringstream ss;
-        ss << in.rdbuf();
+        std::vector<faraday::gerber::NamedFile> files;
+        for (const auto& p : board_paths)
+            files.push_back({std::filesystem::path(p).filename().string(),
+                             slurp(p)});
 
         std::optional<faraday::Stackup> user;
         if (!stackup_name.empty()) user = faraday::builtin_stackup(stackup_name);
         faraday::BoardFormat fmt;
         faraday::BoardIR board =
-            faraday::import_board(ss.str(), std::move(user), &fmt);
+            faraday::import_board_set(files, std::move(user), &fmt);
         std::cout << "format: " << faraday::format_name(fmt) << "\n";
 
         nlohmann::json report = faraday::analyze_board(board);

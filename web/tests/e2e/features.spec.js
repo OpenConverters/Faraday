@@ -186,3 +186,40 @@ test('a second aggressor doubles the symmetric victim noise', async ({ page }) =
   await expect.poll(peak).toBeGreaterThan(one * 1.7)
   await expect.poll(peak).toBeLessThan(one * 2.3)
 })
+
+test('a gerber X2 zip imports as a set, asks for a stackup, and analyses',
+  async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('file-input').setInputFiles(
+      path.join(here, '../../../cpp/tests/fixtures/gerber_set.zip'))
+    // gerber carries no stackup — the card must appear, never a silent default
+    await expect(page.getByTestId('stackup-card')).toBeVisible({ timeout: LOAD_MS })
+    await page.getByTestId('stackup-card')
+      .getByText('Default 2-layer FR4').click()
+    await expect(page.getByTestId('meta-strip'))
+      .toContainText('format: gerber-x2', { timeout: LOAD_MS })
+    // and the analysis actually ran: the set's open-ended trace is found
+    await expect(page.getByTestId('finding-F-0001')).toBeVisible()
+  })
+
+test('toggling the return-path overlay does not move the board', async ({ page }) => {
+  await page.goto('/')
+  await page.getByTestId('file-input').setInputFiles(FIXTURE)
+  await expect(page.getByTestId('finding-F-0001')).toBeVisible({ timeout: LOAD_MS })
+  const canvas = page.locator('.boardcell canvas').first()
+  const before = await canvas.boundingBox()
+
+  await page.getByTestId('rp-toggle').click()
+  await expect(page.getByTestId('rp-bar')).toBeVisible({ timeout: LOAD_MS })
+  const during = await canvas.boundingBox()
+  // the summary floats over the board's left edge; the copper must not shift
+  expect(during.y).toBe(before.y)
+  expect(during.height).toBe(before.height)
+
+  // toggling back off must not move it either
+  await page.getByTestId('rp-toggle').click()
+  await expect(page.getByTestId('rp-bar')).toHaveCount(0)
+  const after = await canvas.boundingBox()
+  expect(after.y).toBe(before.y)
+  expect(after.height).toBe(before.height)
+})

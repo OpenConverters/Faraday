@@ -101,6 +101,7 @@ if(FARADAY_BUILD_TESTS)
         tests/test_real_boards.cpp
         tests/test_hyp.cpp
         tests/test_ipc.cpp
+        tests/test_gerber.cpp
         tests/test_rlgc.cpp
         tests/test_bem.cpp
         tests/test_mna.cpp

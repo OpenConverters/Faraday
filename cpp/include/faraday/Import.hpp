@@ -4,6 +4,7 @@
 // arbitrary name, and IPC-2581 exports in particular are often just ".xml".
 
 #include "BoardIR.hpp"
+#include "GerberImporter.hpp"
 #include "HypImporter.hpp"
 #include "IpcImporter.hpp"
 #include "KicadImporter.hpp"
@@ -13,13 +14,14 @@
 
 namespace faraday {
 
-enum class BoardFormat { Kicad, Hyp, Ipc2581 };
+enum class BoardFormat { Kicad, Hyp, Ipc2581, GerberSet };
 
 inline const char* format_name(BoardFormat f) {
     switch (f) {
         case BoardFormat::Kicad: return "kicad";
         case BoardFormat::Hyp: return "hyp";
         case BoardFormat::Ipc2581: return "ipc2581";
+        case BoardFormat::GerberSet: return "gerber-x2";
     }
     return "?";
 }
@@ -37,10 +39,15 @@ inline BoardFormat detect_format(const std::string& text) {
         head.find("{UNITS=") != std::string::npos ||
         head.find("{STACKUP") != std::string::npos)
         return BoardFormat::Hyp;
+    if (gerber::looks_gerber(head) || gerber::looks_excellon(head))
+        throw BoardError(
+            "this is a single Gerber/drill layer — a Gerber board is a SET "
+            "(one file per copper layer + drills + profile). Drop the whole "
+            "fabrication set, or a zip of it.");
     throw BoardError(
         "unrecognised board file. Faraday reads KiCad (.kicad_pcb), "
-        "HyperLynx (.hyp) and IPC-2581 (.xml); none of their signatures "
-        "appear in this file.");
+        "HyperLynx (.hyp), IPC-2581 (.xml) and Gerber X2 sets (all files "
+        "or a zip); none of their signatures appear in this file.");
 }
 
 // Import any supported format. user_stackup, when given, overrides whatever
@@ -56,6 +63,27 @@ inline BoardIR import_board(const std::string& text,
         case BoardFormat::Hyp: return import_hyp(text);
     }
     throw BoardError("import_board: unreachable");
+}
+
+// Import a SET of files. One file that is not Gerber → the single-file path;
+// anything containing Gerber/Excellon → the X2 set importer. A multi-file
+// drop with no Gerber in it is an error, not a guess.
+inline BoardIR import_board_set(const std::vector<gerber::NamedFile>& files,
+                                std::optional<Stackup> user_stackup = std::nullopt,
+                                BoardFormat* detected = nullptr) {
+    if (files.empty()) throw BoardError("import_board_set: no files");
+    bool any_gerber = false;
+    for (const auto& f : files)
+        any_gerber = any_gerber || gerber::looks_gerber(f.text) ||
+                     gerber::looks_excellon(f.text);
+    if (files.size() == 1 && !any_gerber)
+        return import_board(files[0].text, std::move(user_stackup), detected);
+    if (!any_gerber)
+        throw BoardError(
+            "multiple files, none of them Gerber — Faraday takes one KiCad/"
+            "HyperLynx/IPC-2581 file, or a Gerber X2 set.");
+    if (detected) *detected = BoardFormat::GerberSet;
+    return gerber::import_gerber_set(files, std::move(user_stackup));
 }
 
 }  // namespace faraday

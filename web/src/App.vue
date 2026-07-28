@@ -8,9 +8,16 @@ import NearFieldPanel from './components/NearFieldPanel.vue'
 import PdnPanel from './components/PdnPanel.vue'
 import ImpedancePanel from './components/ImpedancePanel.vue'
 import GlossaryPanel from './components/GlossaryPanel.vue'
+import { unzip } from './zip.js'
 
 const engine = ref(null)
 const boardText = ref('')
+// A Gerber board is a SET of files ({name, text}); non-empty means the set
+// path (analyzeSet) instead of the single-file one.
+const boardFiles = ref([])
+// when the engine names the copper count ("choose default-6layer"), the
+// stackup card offers exactly that button
+const stackupSuggest = ref('')
 const fileName = ref('')
 const report = ref(null)
 const error = ref('')
@@ -40,6 +47,7 @@ async function loadFromHash() {
     const txt = await res.text()
     fileName.value = url.split('/').pop() || 'board'
     boardText.value = txt
+    boardFiles.value = []
     stackupChoice.value = ''
     await analyze()
   } catch (e) {
@@ -60,7 +68,7 @@ onMounted(async () => {
 })
 
 async function analyze() {
-  if (!boardText.value) return
+  if (!boardText.value && !boardFiles.value.length) return
   if (!engine.value) {
     // waiting on the engine is a state, not a failure — say so and continue
     engineLoading.value = true
@@ -73,12 +81,16 @@ async function analyze() {
   }
   error.value = ''
   needStackup.value = false
-  const out = JSON.parse(engine.value.analyze(boardText.value, stackupChoice.value))
+  const out = boardFiles.value.length
+    ? JSON.parse(engine.value.analyzeSet(JSON.stringify(
+        { files: boardFiles.value, stackup: stackupChoice.value })))
+    : JSON.parse(engine.value.analyze(boardText.value, stackupChoice.value))
   if (out.error) {
     report.value = null
     if (out.error.includes('no stackup')) {
       // explicit choice required — Faraday never assumes a stackup silently
       needStackup.value = true
+      stackupSuggest.value = (out.error.match(/default-\d+layer/) || [''])[0]
     } else {
       error.value = out.error
     }
@@ -88,17 +100,41 @@ async function analyze() {
   selectedId.value = ''
 }
 
-async function onFile(file) {
-  if (!file) return
-  fileName.value = file.name
-  boardText.value = await file.text()
+async function onFiles(list) {
+  const picked = Array.from(list || []).filter(Boolean)
+  if (!picked.length) return
+  error.value = ''
+  try {
+    let files = []
+    for (const f of picked) {
+      if (/\.zip$/i.test(f.name)) {
+        files.push(...await unzip(await f.arrayBuffer()))
+      } else {
+        files.push({ name: f.name, text: await f.text() })
+      }
+    }
+    if (files.length === 1) {
+      // the single-file formats keep their fast path
+      fileName.value = files[0].name
+      boardText.value = files[0].text
+      boardFiles.value = []
+    } else {
+      fileName.value = picked.length === 1
+        ? picked[0].name : `${files.length} files (Gerber set)`
+      boardText.value = ''
+      boardFiles.value = files
+    }
+  } catch (e) {
+    error.value = String(e.message || e)
+    return
+  }
   stackupChoice.value = ''
   await analyze()
 }
 
 function onDrop(e) {
   dragOver.value = false
-  onFile(e.dataTransfer?.files?.[0])
+  onFiles(e.dataTransfer?.files)
 }
 
 function chooseStackup(name) {
@@ -281,8 +317,9 @@ function toggleRule(rule) {
       <span class="tagline">EMC design review — runs in your browser, nothing is uploaded</span>
       <div class="spacer" />
       <label class="filebtn">
-        <input data-testid="file-input" type="file" accept=".kicad_pcb,.hyp,.HYP,.xml"
-               @change="e => onFile(e.target.files[0])" />
+        <input data-testid="file-input" type="file" multiple
+               accept=".kicad_pcb,.hyp,.HYP,.xml,.zip,.gbr,.gtl,.gbl,.g1,.g2,.g3,.g4,.gm1,.gko,.drl,.xln,.txt"
+               @change="e => onFiles(e.target.files)" />
         {{ fileName || 'Open board file' }}
       </label>
       <button v-if="report" class="filebtn" data-testid="export-report"
@@ -304,79 +341,91 @@ function toggleRule(rule) {
 
     <div v-if="nfError" class="banner error" data-testid="nf-error">{{ nfError }}</div>
 
-    <div v-if="nearField" class="radbar nf" data-testid="nf-bar">
-      <b>Near field</b>
-      <span>|H| at {{ nfParams.probeHeightMm.toFixed(1) }} mm ·
-        {{ nfParams.ringCurrentA.toFixed(1) }} A ring at {{ nfParams.ringMhz.toFixed(0) }} MHz ·
-        λ/2π = {{ nearField.lambdaOver2PiMm.toFixed(0) }} mm, the whole board is inside it</span>
-      <span v-if="nearField.victims?.length" class="top">
-        worst: <b>{{ nearField.victims[0].component }}</b>
-        ({{ nearField.victims[0].class }})
-        {{ nearField.victims[0].ratio >= 10
-           ? (20 * Math.log10(nearField.victims[0].ratio)).toFixed(0) + ' dB over'
-           : (nearField.victims[0].ratio * 100).toFixed(0) + '% of' }} threshold</span>
-      <span v-if="nearField.shieldedVictims" class="top" data-testid="nf-shielded">
-        can separates <b>{{ nearField.shieldedVictims }}</b> victim(s) from the
-        aggressor — an upper bound, the can is five-sided</span>
-      <button class="detail" data-testid="nf-shield-draw"
-              @click="drawingShield = !drawingShield">
-        {{ drawingShield ? 'click-drag on the board…' : 'draw a shield can' }}</button>
-      <button v-if="shields.length" class="detail" data-testid="nf-shield-clear"
-              @click="clearShields">clear {{ shields.length }}</button>
-      <label v-if="shields.length" class="spec">pitch
-        <input type="range" min="1" max="40" step="0.5" data-testid="nf-shield-pitch"
-               v-model.number="shieldSpec.seamPitchMm" />
-        <b>{{ shieldSpec.seamPitchMm.toFixed(1) }} mm</b></label>
-      <button class="detail" data-testid="nf-detail" @click="nfDetail = true">
-        victims &amp; shielding →</button>
-      <span class="cav"><b>What couples on the board.</b> Quasi-static induction
-        at component scale, in A/m — not a radiation map, and only switching
-        loops are modelled as sources. No dBµV/m, no limit line: there is no
-        reliable near-field to far-field transform. The ring current is your
-        assumption. The return-path layer shows where returns detour; the
-        emissions panel covers what leaves the board.</span>
-    </div>
-
-    <div v-if="returnPath" class="radbar" data-testid="rp-bar">
-      <b>Return path</b>
-      <span>effective loop height {{ returnPath.minEffHeightMm.toFixed(2) }}–{{
-        returnPath.maxEffHeightMm.toFixed(2) }} mm over {{ returnPath.counted }} segments
-        — geometry only, no assumed currents</span>
-      <span v-if="returnPath.overVoidCount" class="warn" data-testid="rp-void">
-        {{ returnPath.overVoidCount }} segment(s) over a plane void or split</span>
-      <span v-if="returnPath.layerChangeCount" class="top">
-        {{ returnPath.layerChangeCount }} layer change(s),
-        <b :class="returnPath.unstitchedCount ? 'bad' : ''">{{ returnPath.unstitchedCount }}
-        with no stitching via in reach</b></span>
-      <span class="top" v-for="w in returnPath.worst.slice(0, 3)" :key="w.net">
-        {{ w.net || '(unnamed)' }} <b>{{ w.areaMm2.toFixed(0) }} mm²</b><template
-        v-if="w.unstitched"> · unstitched</template><template
-        v-else-if="w.overVoid"> · over void</template></span>
-      <span class="cav"><b>How far away each trace's return current really is</b> —
-        the dielectric height where the plane is solid beneath it, the detour where
-        it is not, the hop at every layer change. Every number here is a geometric
-        fact of the layout. For a defensible far-field figure with a limit line, use
-        the emissions panel on a commutation-loop finding; for coupling into nearby
-        parts, the near-field layer.</span>
-    </div>
-
     <div v-if="needStackup" class="banner ask" data-testid="stackup-card">
       <p>This board file carries no stackup. Z₀ and coupling need one — choose what the
          board is built on (the report will state your choice):</p>
       <button class="chip" @click="chooseStackup('default-2layer')">Default 2-layer FR4 (1.6 mm)</button>
       <button class="chip" @click="chooseStackup('default-4layer')">Default 4-layer FR4 (1.6 mm)</button>
+      <button v-if="stackupSuggest && !['default-2layer', 'default-4layer'].includes(stackupSuggest)"
+              class="chip" data-testid="stackup-suggest"
+              @click="chooseStackup(stackupSuggest)">
+        Default {{ stackupSuggest.match(/\d+/)[0] }}-layer FR4 (this set's copper count)</button>
     </div>
 
     <main class="work" v-if="report">
-      <BoardView :report="report" :findings="visibleFindings" :selected-id="selectedId"
-                 :return-path="returnPath" :near-field="nearField"
-                 :shields="shields" :drawing-shield="drawingShield"
-                 :has-switch-node="hasSwitchNode"
-                 @select="id => selectedId = id"
-                 @toggle-return-path="toggleReturnPath"
-                 @near-field="toggleNearField"
-                 @shield="addShield"
-                 @pdn="pdnOpen = true" />
+      <!-- The board cell is a fixed grid cell; the return-path / near-field
+           summaries float over its LEFT edge instead of sitting above the
+           board, so toggling an overlay never moves or rescales the copper —
+           the point of toggling is comparing, and comparing needs a still
+           board. -->
+      <div class="boardcell">
+        <BoardView :report="report" :findings="visibleFindings" :selected-id="selectedId"
+                   :return-path="returnPath" :near-field="nearField"
+                   :shields="shields" :drawing-shield="drawingShield"
+                   :has-switch-node="hasSwitchNode"
+                   @select="id => selectedId = id"
+                   @toggle-return-path="toggleReturnPath"
+                   @near-field="toggleNearField"
+                   @shield="addShield"
+                   @pdn="pdnOpen = true" />
+      <div class="overlaybars" v-if="nearField || returnPath">
+      <div v-if="nearField" class="radbar nf" data-testid="nf-bar">
+        <b>Near field</b>
+        <span>|H| at {{ nfParams.probeHeightMm.toFixed(1) }} mm ·
+          {{ nfParams.ringCurrentA.toFixed(1) }} A ring at {{ nfParams.ringMhz.toFixed(0) }} MHz ·
+          λ/2π = {{ nearField.lambdaOver2PiMm.toFixed(0) }} mm, the whole board is inside it</span>
+        <span v-if="nearField.victims?.length" class="top">
+          worst: <b>{{ nearField.victims[0].component }}</b>
+          ({{ nearField.victims[0].class }})
+          {{ nearField.victims[0].ratio >= 10
+             ? (20 * Math.log10(nearField.victims[0].ratio)).toFixed(0) + ' dB over'
+             : (nearField.victims[0].ratio * 100).toFixed(0) + '% of' }} threshold</span>
+        <span v-if="nearField.shieldedVictims" class="top" data-testid="nf-shielded">
+          can separates <b>{{ nearField.shieldedVictims }}</b> victim(s) from the
+          aggressor — an upper bound, the can is five-sided</span>
+        <button class="detail" data-testid="nf-shield-draw"
+                @click="drawingShield = !drawingShield">
+          {{ drawingShield ? 'click-drag on the board…' : 'draw a shield can' }}</button>
+        <button v-if="shields.length" class="detail" data-testid="nf-shield-clear"
+                @click="clearShields">clear {{ shields.length }}</button>
+        <label v-if="shields.length" class="spec">pitch
+          <input type="range" min="1" max="40" step="0.5" data-testid="nf-shield-pitch"
+                 v-model.number="shieldSpec.seamPitchMm" />
+          <b>{{ shieldSpec.seamPitchMm.toFixed(1) }} mm</b></label>
+        <button class="detail" data-testid="nf-detail" @click="nfDetail = true">
+          victims &amp; shielding →</button>
+        <span class="cav"><b>What couples on the board.</b> Quasi-static induction
+          at component scale, in A/m — not a radiation map, and only switching
+          loops are modelled as sources. No dBµV/m, no limit line: there is no
+          reliable near-field to far-field transform. The ring current is your
+          assumption. The return-path layer shows where returns detour; the
+          emissions panel covers what leaves the board.</span>
+      </div>
+
+      <div v-if="returnPath" class="radbar" data-testid="rp-bar">
+        <b>Return path</b>
+        <span>effective loop height {{ returnPath.minEffHeightMm.toFixed(2) }}–{{
+          returnPath.maxEffHeightMm.toFixed(2) }} mm over {{ returnPath.counted }} segments
+          — geometry only, no assumed currents</span>
+        <span v-if="returnPath.overVoidCount" class="warn" data-testid="rp-void">
+          {{ returnPath.overVoidCount }} segment(s) over a plane void or split</span>
+        <span v-if="returnPath.layerChangeCount" class="top">
+          {{ returnPath.layerChangeCount }} layer change(s),
+          <b :class="returnPath.unstitchedCount ? 'bad' : ''">{{ returnPath.unstitchedCount }}
+          with no stitching via in reach</b></span>
+        <span class="top" v-for="w in returnPath.worst.slice(0, 3)" :key="w.net">
+          {{ w.net || '(unnamed)' }} <b>{{ w.areaMm2.toFixed(0) }} mm²</b><template
+          v-if="w.unstitched"> · unstitched</template><template
+          v-else-if="w.overVoid"> · over void</template></span>
+        <span class="cav"><b>How far away each trace's return current really is</b> —
+          the dielectric height where the plane is solid beneath it, the detour where
+          it is not, the hop at every layer change. Every number here is a geometric
+          fact of the layout. For a defensible far-field figure with a limit line, use
+          the emissions panel on a commutation-loop finding; for coupling into nearby
+          parts, the near-field layer.</span>
+      </div>
+      </div>
+      </div>
       <FindingsList :findings="visibleFindings" :report="report" :selected-id="selectedId"
                     :rules="ruleCounts" :hidden-rules="hiddenRules" :total="findings.length"
                     @select="id => selectedId = selectedId === id ? '' : id"
@@ -392,7 +441,8 @@ function toggleRule(rule) {
     <div v-else-if="!needStackup" class="empty" :class="{ over: dragOver }">
       <div class="board-ghost" aria-hidden="true" />
       <p class="invite">Drop a board here</p>
-      <p class="formats"><code>.kicad_pcb</code> · <code>.hyp</code> · <code>IPC-2581 .xml</code></p>
+      <p class="formats"><code>.kicad_pcb</code> · <code>.hyp</code> · <code>IPC-2581 .xml</code>
+         · <code>Gerber X2 set</code> (all files, or one zip)</p>
       <button class="chip" data-testid="open-calc" @click="calcOpen = true">
         impedance calculator — no board needed</button>
       <button class="chip" data-testid="load-demo" @click="loadDemo">
@@ -512,11 +562,19 @@ function toggleRule(rule) {
 .invite code { font-family: var(--mono); color: var(--copper); font-size: 22px; }
 .sub { max-width: 520px; color: var(--tin); font-size: 13.5px; }
 
+.boardcell { position: relative; display: grid; min-width: 0; min-height: 0; }
+.overlaybars {
+  /* below the layer chips (top: 10px + chip height), clear of the toggles */
+  position: absolute; left: 10px; top: 46px; bottom: 44px; z-index: 6;
+  width: min(320px, 44%); display: flex; flex-direction: column; gap: 10px;
+  overflow-y: auto; pointer-events: none;
+}
 .radbar {
-  display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap;
-  padding: 7px 16px; border-bottom: 1px solid var(--resin-edge);
-  background: var(--resin); font-family: var(--mono); font-size: 11.5px;
-  color: var(--tin);
+  pointer-events: auto; flex: none;
+  display: flex; gap: 6px; flex-direction: column; align-items: flex-start;
+  padding: 10px 13px; border: 1px solid var(--resin-edge); border-radius: 8px;
+  background: rgba(16, 22, 19, 0.9); backdrop-filter: blur(3px);
+  font-family: var(--mono); font-size: 11.5px; color: var(--tin);
 }
 .radbar > b { color: var(--copper); letter-spacing: 0.06em; }
 .radbar.nf > b { color: var(--heat-low); }

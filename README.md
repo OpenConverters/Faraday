@@ -165,9 +165,9 @@ the view that shows it.
 | KiCad `.kicad_pcb` (v5–v9) | ✅ full |
 | HyperLynx `.hyp` | ✅ full |
 | IPC-2581 `.xml` | ✅ full |
-| Gerber / Excellon | ❌ not yet — plain RS-274X carries **no netlist**, and most of Faraday's rules are net-aware; X2 net attributes plus multi-file drop would make it possible |
-| ODB++ | ❌ not yet — a zipped directory tree, a substantially larger importer |
-| Altium / Eagle | ❌ export to IPC-2581 from those tools and load that |
+| Gerber X2 set + Excellon | ✅ full — drop all files (or one zip); needs X2 `%TO.N` net attributes (KiCad's default), because plain RS-274X carries **no netlist** and a netless board would make most rules meaningless. Through vias only; clear-polarity objects are skipped and counted |
+| ODB++ | ❌ not yet — a zipped directory tree, a substantially larger importer (tracked) |
+| Altium / Eagle | ❌ export to IPC-2581 (or Gerber X2) from those tools and load that |
 
 Detection is by content, not extension.
 
