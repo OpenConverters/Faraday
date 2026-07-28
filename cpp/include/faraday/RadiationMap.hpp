@@ -38,10 +38,64 @@
 
 #include <algorithm>
 #include <cmath>
+#include <map>
 #include <numeric>
+#include <set>
 #include <vector>
 
 namespace faraday::radmap {
+
+// Vias, indexed on a coarse grid so a nearest-stitch query is affordable per
+// segment on a 4000-segment board.
+struct ViaIndex {
+    struct Entry { double x, y; int cu_from, cu_to; };
+    double cell = 5.0;                       // mm
+    std::map<std::pair<int,int>, std::vector<Entry>> grid;
+
+    ViaIndex(const BoardIR& b, const std::set<int>& ref_nets) {
+        for (const auto& v : b.vias) {
+            if (!ref_nets.count(v.net)) continue;
+            grid[{(int)std::floor(v.x / cell), (int)std::floor(v.y / cell)}]
+                .push_back({v.x, v.y, v.cu_from, v.cu_to});
+        }
+    }
+
+    // Distance to the nearest reference-net via that SPANS the layer pair the
+    // return current has to cross. A via that does not span the pair is no use
+    // to that return, which is the whole point of checking the span.
+    double nearest_spanning(double x, double y, int cu_a, int cu_b,
+                            double max_mm) const {
+        const int lo = std::min(cu_a, cu_b), hi = std::max(cu_a, cu_b);
+        const int rings = (int)std::ceil(max_mm / cell);
+        const int gx = (int)std::floor(x / cell), gy = (int)std::floor(y / cell);
+        double best = max_mm;
+        for (int dx = -rings; dx <= rings; ++dx)
+            for (int dy = -rings; dy <= rings; ++dy) {
+                auto it = grid.find({gx + dx, gy + dy});
+                if (it == grid.end()) continue;
+                for (const auto& e : it->second) {
+                    if (std::min(e.cu_from, e.cu_to) > lo ||
+                        std::max(e.cu_from, e.cu_to) < hi) continue;
+                    const double d = std::hypot(e.x - x, e.y - y);
+                    if (d < best) best = d;
+                }
+            }
+        return best;
+    }
+};
+
+// A shield can drawn over part of the board. Copper inside it is attenuated
+// by the can's shielding effectiveness AT THE FREQUENCY IN QUESTION, which is
+// the honest way to model it: at HF the metal is opaque and only the seam
+// matters, at LF the wall binds and permeability is worth tens of dB.
+struct ShieldRect {
+    double x1 = 0, y1 = 0, x2 = 0, y2 = 0;   // mm
+    double se_db = 0;                        // computed by Shielding.hpp
+    bool contains(double x, double y) const {
+        return x >= std::min(x1, x2) && x <= std::max(x1, x2) &&
+               y >= std::min(y1, y2) && y <= std::max(y1, y2);
+    }
+};
 
 struct MapParams {
     // source waveform, shared by every net — a screening assumption, stated
@@ -61,9 +115,29 @@ struct MapParams {
     // height and the count is reported so the reader knows how much of the
     // total rests on it.
     double no_reference_height_mm = 1.6;
+    // How far a return current is allowed to detour looking for a stitch
+    // before the loop is simply closed over the board. Beyond this the exact
+    // distance stops mattering — it is already a bad loop.
+    double max_return_detour_mm = 25.0;
+    // Shields drawn by the user. Empty by default: a board has no can until
+    // someone says it does.
+    std::vector<ShieldRect> shields;
 };
 
 struct SegmentContribution {
+    double shield_db = 0;         // attenuation applied, 0 when unshielded
+    // Return-path detour at a LAYER CHANGE. When a signal changes layers its
+    // return must transfer between reference planes, and it can only do that
+    // through a stitching via or an interplane capacitor. With none nearby the
+    // return travels a long way round — a large loop, and one of the classic
+    // ways a board fails. Before this the map added NO penalty for it at all,
+    // so a via-heavy signal with the nearest ground stitch 20 mm away coloured
+    // identically to one that never changed layers. That is the map being
+    // silent exactly where it should have been loudest.
+    double stitch_distance_mm = 0;
+    double return_area_m2 = 0;    // extra loop the detour encloses
+    bool layer_change = false;
+    bool unstitched = false;      // no reference via within the search radius
     // Contribution per unit length — height x current, stripped of the
     // segment's own length. THIS is what the map should be coloured by: a
     // router splits one trace into a dozen segments, so per-segment
@@ -89,6 +163,8 @@ struct MapResult {
     double max_e_v_per_m = 0;
     double max_e_per_m = 0;      // peak loudness per unit length, for colouring
     size_t counted = 0, no_reference_count = 0, over_void_count = 0;
+    size_t layer_change_count = 0, unstitched_count = 0, shielded_count = 0;
+    double total_unshielded_v_per_m = 0;   // for the before/after comparison
     double no_reference_share = 0;  // fraction of total POWER from those
     std::vector<size_t> top;        // segment indices, largest first
 };
@@ -146,9 +222,22 @@ inline MapResult compute(const BoardIR& board, const Screener& screener,
     const double gain = p.ground_reflection ? emc::GROUND_REFLECTION : 1.0;
     const PlaneLookup planes(board, layers.size());
 
+    // Which nets a return current may actually use, and where their vias are.
+    std::set<int> ref_nets;
+    for (const auto& lm : layers)
+        if (lm.is_plane && lm.plane_net >= 0) ref_nets.insert(lm.plane_net);
+    const ViaIndex vias(board, ref_nets);
+
+    // Where each net changes layers: a via on the signal's OWN net. That is
+    // the point at which its return has to hop planes.
+    std::map<int, std::vector<const Via*>> net_vias;
+    for (const auto& v : board.vias)
+        if (v.net > 0 && !ref_nets.count(v.net) && v.cu_from != v.cu_to)
+            net_vias[v.net].push_back(&v);
+
     MapResult r;
     r.segments.resize(board.segments.size());
-    double power = 0, power_no_ref = 0;
+    double power = 0, power_no_ref = 0, power_unshielded = 0;
 
     for (size_t i = 0; i < board.segments.size(); ++i) {
         const Segment& s = board.segments[i];
@@ -199,7 +288,43 @@ inline MapResult compute(const BoardIR& board, const Screener& screener,
                 c.over_void = true;
             }
         }
-        c.area_m2 = (len_mm * 1e-3) * (c.height_mm * 1e-3);
+        // ---- return path through vias ----
+        // A layer change on this net near this segment means the return has to
+        // cross between planes. The nearest reference-net via that spans the
+        // same pair is how far it detours; that detour times the plane
+        // separation is loop area the trace geometry alone cannot see.
+        auto nv = net_vias.find(s.net);
+        if (nv != net_vias.end() && ref_cu >= 0) {
+            const double mx = 0.5 * (s.x1 + s.x2), my = 0.5 * (s.y1 + s.y2);
+            for (const Via* v : nv->second) {
+                // only vias belonging to this segment's own run
+                if (std::hypot(v->x - mx, v->y - my) > len_mm + 2.0) continue;
+                c.layer_change = true;
+                const double d = vias.nearest_spanning(v->x, v->y, v->cu_from,
+                                                       v->cu_to,
+                                                       p.max_return_detour_mm);
+                c.stitch_distance_mm = c.stitch_distance_mm > 0
+                                           ? std::min(c.stitch_distance_mm, d) : d;
+            }
+            if (c.layer_change) {
+                c.unstitched = c.stitch_distance_mm >= p.max_return_detour_mm;
+                // the detour encloses stitch_distance x plane separation, ON
+                // TOP of the segment's own loop; a stitch right beside the via
+                // adds nothing, which is the behaviour a designer is aiming for
+                double hv = 0, eps = 0;
+                double sep = c.height_mm;
+                for (size_t j = 0; j < layers.size(); ++j) {
+                    if (!layers[j].is_plane || (int)j == ref_cu) continue;
+                    board.stackup.dielectric_between(std::min((size_t)ref_cu, j),
+                                                     std::max((size_t)ref_cu, j),
+                                                     hv, eps);
+                    if (hv > 0) { sep = std::max(sep, hv); break; }
+                }
+                c.return_area_m2 = (c.stitch_distance_mm * 1e-3) * (sep * 1e-3);
+            }
+        }
+
+        c.area_m2 = (len_mm * 1e-3) * (c.height_mm * 1e-3) + c.return_area_m2;
 
         // current: switch nodes carry what the user says they switch; signals
         // carry swing / Z0, with Z0 taken from the real cross-section where the
@@ -226,12 +351,35 @@ inline MapResult compute(const BoardIR& board, const Screener& screener,
         c.e_v_per_m = gain * emc::plateau_v_per_m(c.area_m2, t, p.r_m);
         c.e_per_m = c.e_v_per_m / (len_mm * 1e-3);
 
+        // A can attenuates what is inside it as seen from outside. Applied to
+        // the segment's contribution, not to the field everywhere — the can
+        // does nothing for copper outside it, which is the point of drawing a
+        // rectangle rather than a global slider.
+        const double mx = 0.5 * (s.x1 + s.x2), my = 0.5 * (s.y1 + s.y2);
+        for (const auto& sh : p.shields)
+            if (sh.contains(mx, my)) {
+                c.shield_db = std::max(c.shield_db, sh.se_db);
+            }
+        if (c.shield_db > 0) {
+            const double f = std::pow(10.0, -c.shield_db / 20.0);
+            c.e_v_per_m *= f;
+            c.e_per_m *= f;
+        }
+
         power += c.e_v_per_m * c.e_v_per_m;
         if (c.no_reference) {
             ++r.no_reference_count;
             power_no_ref += c.e_v_per_m * c.e_v_per_m;
         }
         if (c.over_void) ++r.over_void_count;
+        if (c.layer_change) ++r.layer_change_count;
+        if (c.unstitched) ++r.unstitched_count;
+        if (c.shield_db > 0) ++r.shielded_count;
+        {   // what the total would have been without any can
+            const double un = c.shield_db > 0
+                ? c.e_v_per_m * std::pow(10.0, c.shield_db / 20.0) : c.e_v_per_m;
+            power_unshielded += un * un;
+        }
         r.max_e_v_per_m = std::max(r.max_e_v_per_m, c.e_v_per_m);
         r.max_e_per_m = std::max(r.max_e_per_m, c.e_per_m);
         ++r.counted;
@@ -242,6 +390,7 @@ inline MapResult compute(const BoardIR& board, const Screener& screener,
             "radmap: no routed copper with a known layer — nothing to attribute");
 
     r.total_v_per_m = std::sqrt(power);
+    r.total_unshielded_v_per_m = std::sqrt(power_unshielded);
     r.total_dbuv_m = emc::to_dbuv_m(r.total_v_per_m);
     r.no_reference_share = power > 0 ? power_no_ref / power : 0.0;
 

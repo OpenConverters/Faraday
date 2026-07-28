@@ -243,3 +243,153 @@ TEST_CASE("a real board attributes its radiation to a handful of traces",
     CHECK(top_power / power > 0.05);
     CHECK(r.top.size() <= 40);
 }
+
+TEST_CASE("a layer change with no stitching via nearby costs loop area",
+          "[radmap]") {
+    // The gap this closes: when a signal changes layers its return must hop
+    // between planes, and it can only do that through a stitching via. With
+    // none nearby the return travels a long way round — a classic failure —
+    // and the map used to add NO penalty at all, colouring it identically to a
+    // trace that never changed layers. Silent exactly where it should be
+    // loudest.
+    auto board_with = [](double stitch_dx) {
+        BoardIR b;
+        b.copper_names = {"F.Cu", "In1.Cu", "In2.Cu", "B.Cu"};
+        b.stackup.layers = {
+            {LayerKind::Copper, "F.Cu", 0.035, std::nullopt, "signal"},
+            {LayerKind::Dielectric, "d1", 0.2, 4.3, ""},
+            {LayerKind::Copper, "In1.Cu", 0.035, std::nullopt, "signal"},
+            {LayerKind::Dielectric, "d2", 1.0, 4.3, ""},
+            {LayerKind::Copper, "In2.Cu", 0.035, std::nullopt, "signal"},
+            {LayerKind::Dielectric, "d3", 0.2, 4.3, ""},
+            {LayerKind::Copper, "B.Cu", 0.035, std::nullopt, "signal"},
+        };
+        b.stackup.source = "test";
+        b.nets = {{0, ""}, {1, "SIG"}, {2, "GND"}};
+        b.bbox_x1 = 0; b.bbox_y1 = 0; b.bbox_x2 = 60; b.bbox_y2 = 40;
+        b.bbox_from_outline = true;
+        // signal runs on F.Cu then drops to B.Cu through a via at (20,10)
+        b.segments.push_back({1, 0, 5.0, 10.0, 20.0, 10.0, 0.25});
+        b.vias.push_back({1, 20.0, 10.0, 0.6, 0.3, 0, 3});
+        // the ground stitch, placed at a settable distance from that via
+        b.vias.push_back({2, 20.0 + stitch_dx, 10.0, 0.6, 0.3, 0, 3});
+        // two planes, so there is a pair to hop between
+        b.zones.push_back({2, 1, {{0, 0}, {60, 0}, {60, 40}, {0, 40}}});
+        b.zones.push_back({2, 2, {{0, 0}, {60, 0}, {60, 40}, {0, 40}}});
+        return b;
+    };
+
+    const radmap::MapResult tight = run(board_with(0.6));    // stitch adjacent
+    const radmap::MapResult loose = run(board_with(18.0));   // stitch far away
+
+    REQUIRE(tight.segments[0].layer_change);
+    REQUIRE(loose.segments[0].layer_change);
+    CHECK(tight.segments[0].stitch_distance_mm < loose.segments[0].stitch_distance_mm);
+
+    // a stitch beside the via costs almost nothing; one 18 mm away costs real
+    // loop area, and that is the whole point
+    CHECK(tight.segments[0].return_area_m2 < loose.segments[0].return_area_m2);
+    CHECK(loose.segments[0].e_v_per_m > tight.segments[0].e_v_per_m);
+    CHECK(tight.layer_change_count == 1);
+}
+
+TEST_CASE("no stitch at all within reach is flagged, not silently capped",
+          "[radmap]") {
+    BoardIR b;
+    b.copper_names = {"F.Cu", "In1.Cu", "B.Cu"};
+    b.stackup.layers = {
+        {LayerKind::Copper, "F.Cu", 0.035, std::nullopt, "signal"},
+        {LayerKind::Dielectric, "d1", 0.2, 4.3, ""},
+        {LayerKind::Copper, "In1.Cu", 0.035, std::nullopt, "signal"},
+        {LayerKind::Dielectric, "d2", 1.0, 4.3, ""},
+        {LayerKind::Copper, "B.Cu", 0.035, std::nullopt, "signal"},
+    };
+    b.stackup.source = "test";
+    b.nets = {{0, ""}, {1, "SIG"}, {2, "GND"}};
+    b.bbox_x1 = 0; b.bbox_y1 = 0; b.bbox_x2 = 60; b.bbox_y2 = 40;
+    b.bbox_from_outline = true;
+    b.segments.push_back({1, 0, 5.0, 10.0, 20.0, 10.0, 0.25});
+    b.vias.push_back({1, 20.0, 10.0, 0.6, 0.3, 0, 2});   // no ground via at all
+    b.zones.push_back({2, 1, {{0, 0}, {60, 0}, {60, 40}, {0, 40}}});
+    b.zones.push_back({2, 2, {{0, 0}, {60, 0}, {60, 40}, {0, 40}}});
+
+    const radmap::MapResult r = run(b);
+    CHECK(r.segments[0].layer_change);
+    CHECK(r.segments[0].unstitched);
+    CHECK(r.unstitched_count == 1);
+    CHECK(r.segments[0].return_area_m2 > 0);
+}
+
+TEST_CASE("a trace that never changes layers gets no return penalty",
+          "[radmap]") {
+    // The penalty must be specific to layer changes, not applied to everything
+    // with a via somewhere on the board.
+    const radmap::MapResult r = run(toy(true));
+    for (const auto& c : r.segments) {
+        CHECK_FALSE(c.layer_change);
+        CHECK(c.return_area_m2 == 0.0);
+    }
+    CHECK(r.layer_change_count == 0);
+}
+
+TEST_CASE("a shield rectangle attenuates only the copper inside it",
+          "[radmap][shield]") {
+    // A can does nothing for copper outside it — which is the entire reason
+    // this is a drawn rectangle and not a global slider.
+    BoardIR b = toy(true);
+    b.segments.clear();
+    b.segments.push_back({1, 0, 1.0, 2.0, 9.0, 2.0, 0.25});    // inside
+    b.segments.push_back({1, 0, 1.0, 18.0, 9.0, 18.0, 0.25});  // outside
+
+    radmap::MapParams p;
+    radmap::ShieldRect sh;
+    sh.x1 = 0; sh.y1 = 0; sh.x2 = 12; sh.y2 = 6;
+    sh.se_db = 20.0;
+    p.shields.push_back(sh);
+
+    const radmap::MapResult bare = run(b);
+    const radmap::MapResult shielded = run(b, p);
+
+    CHECK(shielded.shielded_count == 1);
+    // the covered segment is down by exactly the stated SE
+    CHECK_THAT(20 * std::log10(bare.segments[0].e_v_per_m /
+                               shielded.segments[0].e_v_per_m),
+               WithinAbs(20.0, 1e-6));
+    // and the one outside is untouched
+    CHECK_THAT(shielded.segments[1].e_v_per_m,
+               WithinRel(bare.segments[1].e_v_per_m, 1e-12));
+    CHECK(shielded.segments[1].shield_db == 0.0);
+}
+
+TEST_CASE("the shield reports what it actually bought, not what it promises",
+          "[radmap][shield]") {
+    // Covering half the board with a 20 dB can does NOT buy 20 dB overall —
+    // the unshielded half still radiates, and the total is dominated by
+    // whatever is left. Showing the delivered figure against the unshielded
+    // one is the honest way to say that.
+    BoardIR b = toy(true);
+    b.segments.clear();
+    b.segments.push_back({1, 0, 1.0, 2.0, 9.0, 2.0, 0.25});
+    b.segments.push_back({1, 0, 1.0, 18.0, 9.0, 18.0, 0.25});
+
+    radmap::MapParams p;
+    radmap::ShieldRect sh;
+    sh.x1 = 0; sh.y1 = 0; sh.x2 = 12; sh.y2 = 6;
+    sh.se_db = 40.0;
+    p.shields.push_back(sh);
+    const radmap::MapResult r = run(b, p);
+
+    const double gain = emc::to_dbuv_m(r.total_unshielded_v_per_m) -
+                        emc::to_dbuv_m(r.total_v_per_m);
+    // two equal radiators, one shielded by 40 dB: the total can only improve by
+    // 3 dB, because the other one is still there
+    CHECK(gain > 2.5);
+    CHECK(gain < 3.5);
+}
+
+TEST_CASE("no shield means no change at all", "[radmap][shield]") {
+    const radmap::MapResult r = run(toy(true));
+    CHECK(r.shielded_count == 0);
+    CHECK_THAT(r.total_unshielded_v_per_m, WithinRel(r.total_v_per_m, 1e-12));
+    for (const auto& c : r.segments) CHECK(c.shield_db == 0.0);
+}

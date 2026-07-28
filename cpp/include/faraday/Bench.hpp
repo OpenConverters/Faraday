@@ -484,6 +484,12 @@ inline nlohmann::json radiation_map_json(const BoardIR& board,
             {"noReferenceCount", (int)r.no_reference_count},
             {"overVoidCount", (int)r.over_void_count},
             {"noReferenceSharePct", 100.0 * r.no_reference_share},
+            {"layerChangeCount", (int)r.layer_change_count},
+            {"unstitchedCount", (int)r.unstitched_count},
+            {"shieldedCount", (int)r.shielded_count},
+            {"totalDbuvMUnshielded", emc::to_dbuv_m(r.total_unshielded_v_per_m)},
+            {"shieldGainDb", emc::to_dbuv_m(r.total_unshielded_v_per_m) -
+                             emc::to_dbuv_m(r.total_v_per_m)},
             {"distanceM", p.r_m},
             {"top", top}};
 }
@@ -500,6 +506,22 @@ inline radmap::MapParams radmap_params_from_json(const nlohmann::json& j) {
     p.sw_current_a = opt("currentA", 10.0);
     p.r_m = opt("distanceM", 3.0);
     p.ground_reflection = j.value("groundReflection", true);
+    // Shields, each with an SE computed from its own material, wall and seam
+    // at the frequency the user is looking at — never a flat assumption.
+    if (j.contains("shields") && j.at("shields").is_array()) {
+        const double f = j.value("shieldFMhz", 130.0) * 1e6;
+        for (const auto& sj : j.at("shields")) {
+            radmap::ShieldRect r;
+            r.x1 = sj.value("x1", 0.0); r.y1 = sj.value("y1", 0.0);
+            r.x2 = sj.value("x2", 0.0); r.y2 = sj.value("y2", 0.0);
+            shield::Can can;
+            can.material = sj.value("material", std::string("tinsteel"));
+            can.wall_mm = sj.value("wallMm", 0.2);
+            can.seam_pitch_mm = sj.value("seamPitchMm", 5.0);
+            r.se_db = shield::evaluate(can, f, shield::FieldKind::MagneticNear).se_db;
+            p.shields.push_back(r);
+        }
+    }
     return p;
 }
 

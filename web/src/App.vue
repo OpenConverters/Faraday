@@ -111,15 +111,35 @@ const layerName = cu => report.value?.board.copperNames?.[cu] ?? `layer ${cu}`
 // board, so it has to be asked for.
 const radiation = ref(null)
 const radError = ref('')
-function toggleRadiation() {
-  if (radiation.value) { radiation.value = null; return }
+// Shield cans the user has drawn. Each carries its own material, wall and
+// contact pitch, so the SE is computed per can at the frequency in question
+// rather than assumed.
+const shields = ref([])
+const shieldSpec = ref({ material: 'tinsteel', wallMm: 0.2, seamPitchMm: 5 })
+const drawingShield = ref(false)
+
+function runRadiation() {
   try {
-    const out = JSON.parse(engine.value.radiationMap(JSON.stringify({})))
+    const out = JSON.parse(engine.value.radiationMap(JSON.stringify({
+      shields: shields.value.map(s => ({ ...s, ...shieldSpec.value })),
+      shieldFMhz: nfParams.value.ringMhz,
+    })))
     if (out.error) { radError.value = out.error; return }
     radError.value = ''
     radiation.value = out
   } catch (e) { radError.value = String(e) }
 }
+function toggleRadiation() {
+  if (radiation.value) { radiation.value = null; drawingShield.value = false; return }
+  runRadiation()
+}
+function addShield(rect) {
+  shields.value = [...shields.value, rect]
+  drawingShield.value = false
+  runRadiation()
+}
+function clearShields() { shields.value = []; runRadiation() }
+watch(shieldSpec, () => { if (radiation.value) runRadiation() }, { deep: true })
 watch(report, () => { radiation.value = null; radError.value = '' })
 
 // The component near-field map: a different regime from the far-field
@@ -144,6 +164,11 @@ function toggleNearField() {
 }
 function setNfParams(p) { nfParams.value = { ...nfParams.value, ...p }; runNearField() }
 watch(report, () => { nearField.value = null; nfError.value = ''; nfDetail.value = false })
+
+// The near-field map is built around switching aggressors, so on a board with
+// none it has nothing to say. Better to disable the chip with the reason than
+// to let it error on click.
+const hasSwitchNode = computed(() => (meta.value?.switchNodes?.length ?? 0) > 0)
 
 const emitId = ref('')
 const emitFinding = computed(() =>
@@ -200,9 +225,11 @@ function toggleRule(rule) {
            : (nearField.victims[0].ratio * 100).toFixed(0) + '% of' }} threshold</span>
       <button class="detail" data-testid="nf-detail" @click="nfDetail = true">
         victims &amp; shielding →</button>
-      <span class="cav">Quasi-static induction at component scale, in A/m — not a
-        radiation map. No dBµV/m, no limit line: there is no reliable near-field to
-        far-field transform. The ring current is your assumption.</span>
+      <span class="cav"><b>What couples on the board.</b> Quasi-static induction
+        at component scale, in A/m — not a radiation map, and only switching
+        loops are modelled as sources. No dBµV/m, no limit line: there is no
+        reliable near-field to far-field transform. The ring current is your
+        assumption. For what leaves the board, use the radiation layer.</span>
     </div>
 
     <div v-if="radiation" class="radbar" data-testid="rad-bar">
@@ -217,9 +244,27 @@ function toggleRule(rule) {
         {{ radiation.noReferenceSharePct.toFixed(0) }}% of the total</span>
       <span class="top" v-for="t in radiation.top.slice(0, 4)" :key="t.seg">
         {{ t.net || '(unnamed)' }} <b>{{ t.sharePct.toFixed(1) }}%</b></span>
-      <span class="cav">Differential-mode attribution from loop area × current —
-        a ranking of your copper, not a chamber. Current is assumed, and scales
-        it all linearly.</span>
+      <span v-if="radiation.layerChangeCount" class="top">
+        {{ radiation.layerChangeCount }} layer change(s),
+        <b :class="radiation.unstitchedCount ? 'bad' : ''">{{ radiation.unstitchedCount }}
+        with no stitching via in reach</b></span>
+      <span v-if="radiation.shieldedCount" class="top">
+        shield: {{ radiation.shieldedCount }} segments covered,
+        <b>{{ radiation.shieldGainDb.toFixed(1) }} dB</b> off the board total</span>
+      <button class="detail" data-testid="shield-draw"
+              @click="drawingShield = !drawingShield">
+        {{ drawingShield ? 'click-drag on the board…' : 'draw a shield can' }}</button>
+      <button v-if="shields.length" class="detail" data-testid="shield-clear"
+              @click="clearShields">clear {{ shields.length }}</button>
+      <label v-if="shields.length" class="spec">pitch
+        <input type="range" min="1" max="40" step="0.5" data-testid="shield-pitch"
+               v-model.number="shieldSpec.seamPitchMm" />
+        <b>{{ shieldSpec.seamPitchMm.toFixed(1) }} mm</b></label>
+      <span class="cav"><b>What leaves the board.</b> Differential-mode
+        attribution over every trace, including return-path detours at layer
+        changes — a ranking of your copper, not a chamber. Current is assumed and
+        scales it all linearly. For what couples ON the board into nearby parts,
+        use the near-field layer.</span>
     </div>
 
     <div v-if="needStackup" class="banner ask" data-testid="stackup-card">
@@ -232,9 +277,12 @@ function toggleRule(rule) {
     <main class="work" v-if="report">
       <BoardView :report="report" :findings="visibleFindings" :selected-id="selectedId"
                  :radiation="radiation" :near-field="nearField"
+                 :shields="shields" :drawing-shield="drawingShield"
+                 :has-switch-node="hasSwitchNode"
                  @select="id => selectedId = id"
                  @toggle-radiation="toggleRadiation"
-                 @near-field="toggleNearField" />
+                 @near-field="toggleNearField"
+                 @shield="addShield" />
       <FindingsList :findings="visibleFindings" :report="report" :selected-id="selectedId"
                     :rules="ruleCounts" :hidden-rules="hiddenRules" :total="findings.length"
                     @select="id => selectedId = selectedId === id ? '' : id"
@@ -367,6 +415,9 @@ function toggleRule(rule) {
 .radbar .detail:hover { background: var(--heat-low); color: var(--bare-fr4); }
 .radbar .warn { color: var(--heat-med); }
 .radbar .top b { color: var(--silk); }
+.radbar .top b.bad { color: var(--heat-high); }
+.radbar .spec { display: flex; align-items: center; gap: 6px; }
+.radbar .spec input { width: 90px; accent-color: var(--copper); }
 .radbar .cav { flex: 1 1 100%; opacity: 0.75; font-family: var(--sans); font-size: 11px; }
 
 .metastrip {

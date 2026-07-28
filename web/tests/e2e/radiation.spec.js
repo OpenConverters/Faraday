@@ -108,3 +108,59 @@ test('the map is fast enough to recompute over a whole board', async ({ page }) 
   expect(elapsed, `radiation map took ${elapsed} ms over the whole board`)
     .toBeLessThan(2000)
 })
+
+test('a shield can drawn on the board attenuates only what it covers',
+  async ({ page }) => {
+    await load(page)
+    await page.getByTestId('rad-toggle').click()
+    await expect(page.getByTestId('rad-bar')).toBeVisible()
+
+    const total = () => page.getByTestId('rad-bar').evaluate(el => {
+      const m = el.textContent.match(/(-?[\d.]+) dBµV\/m total/)
+      return m ? Number(m[1]) : null
+    })
+    const before = await total()
+    expect(before).not.toBeNull()
+
+    // draw a can over the middle of the board
+    await page.getByTestId('shield-draw').click()
+    const box = await page.getByTestId('board-canvas').boundingBox()
+    await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.3)
+    await page.mouse.down()
+    await page.mouse.move(box.x + box.width * 0.7, box.y + box.height * 0.7, { steps: 8 })
+    await page.mouse.up()
+
+    // it must report what it ACTUALLY bought, which is never the can's own SE:
+    // whatever is left outside still radiates
+    await expect(page.getByTestId('rad-bar')).toContainText('off the board total')
+    await expect.poll(total).toBeLessThan(before)
+
+    // Widening the contact pitch weakens the can. The board total is displayed
+    // to one decimal and the covered copper is a minority of it, so the change
+    // can be smaller than the rounding — assert it never IMPROVES, which is
+    // the claim that matters, rather than a strict rise the display cannot
+    // always show.
+    const after = await total()
+    const pitch = page.getByTestId('shield-pitch')
+    await pitch.fill('35')
+    await pitch.dispatchEvent('input')
+    await page.waitForTimeout(500)
+    expect(await total()).toBeGreaterThanOrEqual(after)
+
+    // and clearing it returns to where we started
+    await page.getByTestId('shield-clear').click()
+    await expect.poll(total).toBeCloseTo(before, 1)
+  })
+
+test('the two overlays say what they are each for', async ({ page }) => {
+    // They colour the same board and invite the assumption that one supersedes
+    // the other. Each must state its own question at the point of use.
+    await load(page)
+    await page.getByTestId('rad-toggle').click()
+    await expect(page.getByTestId('rad-bar')).toContainText('What leaves the board')
+    await expect(page.getByTestId('rad-bar')).toContainText('near-field layer')
+
+    await page.getByTestId('nf-toggle').click()
+    await expect(page.getByTestId('nf-bar')).toContainText('What couples on the board')
+    await expect(page.getByTestId('nf-bar')).toContainText('radiation layer')
+  })

@@ -9,11 +9,16 @@ const props = defineProps({
   // copper: the field is what is in the air above the board, and putting the
   // copper on top is what lets you see which parts sit in the hot region.
   nearField: { type: Object, default: null },
+  shields: { type: Array, default: () => [] },
+  drawingShield: { type: Boolean, default: false },
+  // The near-field map is built around switching aggressors. Without one it
+  // has nothing to say, and the chip should show that rather than erroring.
+  hasSwitchNode: { type: Boolean, default: true },
   // already filtered by the rule chips — the board shows exactly what the list shows
   findings: { type: Array, required: true },
   selectedId: { type: String, default: '' },
 })
-const emit = defineEmits(['select', 'toggleRadiation', 'nearField'])
+const emit = defineEmits(['select', 'toggleRadiation', 'nearField', 'shield'])
 
 // Radiation attribution, decoded once per map into a byte per segment. Null
 // when the map is off, and every draw path checks for that rather than
@@ -52,6 +57,10 @@ const canvas = ref(null)
 const view = reactive({ scale: 1, ox: 0, oy: 0 })
 const layerVis = reactive({})
 const overlaysOn = ref(true)
+// Shield-can rubber band. Declared with the rest of the reactive state rather
+// than beside its handlers, because draw() reads it and a `const` further down
+// the file is in the temporal dead zone when the first draw fires.
+const drag = reactive({ on: false, x0: 0, y0: 0, x1: 0, y1: 0 })
 const hover = ref(null) // { x, y, kind, lines: [...] , findingId? }
 
 const board = computed(() => props.report.board)
@@ -235,6 +244,22 @@ function draw() {
     ctx.restore()
   }
 
+  // shield cans, drawn over everything so they read as an enclosure
+  const paintShields = () => {
+    const boxes = [...props.shields]
+    if (drag.on) boxes.push({ x1: drag.x0, y1: drag.y0, x2: drag.x1, y2: drag.y1 })
+    for (const sh of boxes) {
+      const [ax, ay] = toScreen(Math.min(sh.x1, sh.x2), Math.min(sh.y1, sh.y2))
+      const [cx, cy] = toScreen(Math.max(sh.x1, sh.x2), Math.max(sh.y1, sh.y2))
+      ctx.fillStyle = 'rgba(157,180,173,0.10)'
+      ctx.fillRect(ax, ay, cx - ax, cy - ay)
+      ctx.strokeStyle = 'rgba(157,180,173,0.75)'
+      ctx.setLineDash([5, 3]); ctx.lineWidth = 1.5
+      ctx.strokeRect(ax, ay, cx - ax, cy - ay)
+      ctx.setLineDash([])
+    }
+  }
+
   const nCu = b.copperNames.length
   // bottom -> top so F.Cu renders on top
   for (let cu = nCu - 1; cu >= 0; --cu) {
@@ -293,6 +318,8 @@ function draw() {
     ctx.fillStyle = '#101613'
     ctx.beginPath(); ctx.arc(vx, vy, (v.drill / 2) * view.scale, 0, 7); ctx.fill()
   }
+
+  paintShields()
 
   // risk overlays: heat on copper (the signature)
   if (overlaysOn.value) {
@@ -430,6 +457,36 @@ function onWheel(e) {
 
 // ---- lifecycle ----
 let ro = null
+// ---- drawing a shield can ----
+// Panning and drawing are mutually exclusive: sharing the pointer meant a drag
+// panned the board while the rubber band was measured against a moving
+// transform, so the rectangle landed somewhere else entirely.
+function shieldDown(e) {
+  if (!props.drawingShield) return
+  // Capture the pointer, or a drag that leaves the canvas stops delivering
+  // moves here and the rectangle collapses to a point, which the size guard
+  // then silently rejects.
+  try { e.currentTarget.setPointerCapture(e.pointerId) } catch { /* not fatal */ }
+  const r = canvas.value.getBoundingClientRect()
+  const [mx, my] = invScreen(e.clientX - r.left, e.clientY - r.top)
+  drag.on = true; drag.x0 = mx; drag.y0 = my; drag.x1 = mx; drag.y1 = my
+}
+function shieldMove(e) {
+  if (!drag.on) return
+  const r = canvas.value.getBoundingClientRect()
+  const [mx, my] = invScreen(e.clientX - r.left, e.clientY - r.top)
+  drag.x1 = mx; drag.y1 = my
+  draw()
+}
+function shieldUp(e) {
+  if (!drag.on) return
+  drag.on = false
+  try { e?.currentTarget?.releasePointerCapture?.(e.pointerId) } catch { /* fine */ }
+  if (Math.abs(drag.x1 - drag.x0) > 1 && Math.abs(drag.y1 - drag.y0) > 1)
+    emit('shield', { x1: drag.x0, y1: drag.y0, x2: drag.x1, y2: drag.y1 })
+  draw()
+}
+
 onMounted(() => {
   for (const n of board.value.copperNames) layerVis[n] = true
   fit()
@@ -458,8 +515,11 @@ watch(() => props.findings, () => draw())
 <template>
   <div ref="wrap" class="boardwrap">
     <canvas ref="canvas" data-testid="board-canvas"
-            @pointerdown="onPointerDown" @pointermove="onPointerMove"
-            @pointerup="onPointerUp" @wheel="onWheel"
+            :class="{ drawing: drawingShield }"
+            @pointerdown="e => drawingShield ? shieldDown(e) : onPointerDown(e)"
+            @pointermove="e => drawingShield ? shieldMove(e) : onPointerMove(e)"
+            @pointerup="e => drawingShield ? shieldUp(e) : onPointerUp(e)"
+            @wheel="onWheel"
             @pointerleave="hover = null" />
     <div class="chips">
       <button v-for="(name, cu) in board.copperNames" :key="name" class="lchip"
@@ -470,9 +530,14 @@ watch(() => props.findings, () => draw())
               @click="overlaysOn = !overlaysOn">risk overlay</button>
       <button class="lchip rad" :class="{ off: !radiation }" data-testid="rad-toggle"
               :style="{ '--c': '#ffb454' }"
+              title="differential-mode attribution over every trace — what LEAVES the board"
               @click="emit('toggleRadiation')">radiation</button>
-      <button class="lchip rad" :class="{ off: !nearField }" data-testid="nf-toggle"
-              :style="{ '--c': '#58c79a' }"
+      <button class="lchip rad" :class="{ off: !nearField, dis: !hasSwitchNode }"
+              data-testid="nf-toggle" :style="{ '--c': '#58c79a' }"
+              :disabled="!hasSwitchNode"
+              :title="hasSwitchNode
+                ? 'quasi-static field at component scale — what couples ON the board'
+                : 'no switching node on this board, so there is no near-field aggressor to model'"
               @click="emit('nearField')">near field</button>
     </div>
     <div v-if="hover" class="tooltip" data-testid="board-tooltip"
@@ -496,6 +561,8 @@ canvas { width: 100%; height: 100%; display: block; touch-action: none; }
   border: 1px solid var(--c, var(--tin)); color: var(--c, var(--tin));
   background: rgba(16, 22, 19, 0.82);
 }
+.canvas.drawing { cursor: crosshair; }
+.lchip.dis { opacity: 0.35; cursor: not-allowed; }
 .lchip.off { opacity: 0.35; border-style: dashed; }
 .lchip.risk { --c: var(--heat-high); }
 
