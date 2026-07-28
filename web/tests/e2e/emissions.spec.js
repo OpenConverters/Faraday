@@ -149,3 +149,36 @@ test('findings that carry a deep tool are marked in the collapsed row',
       await page.getByTestId(`finding-${id}`).click()
     }
   })
+
+test('the common-mode budget answers the caveat with a number', async ({ page }) => {
+  await openEmissions(page)
+  const b = page.getByTestId('cm-budget')
+  await expect(b).toBeVisible()
+  // the whole point is that it lands in microamps, not milliamps
+  await expect(b).toContainText('µA')
+  const ua = async () =>
+    Number((await page.getByTestId('cm-tightest').textContent()).match(/([\d.]+)/)[1])
+  const one = await ua()
+  expect(one).toBeGreaterThan(0.2)
+  expect(one).toBeLessThan(50)
+
+  // A SHORTER cable radiates less, so it is allowed more current.
+  const len = page.getByTestId('cm-cable')
+  await len.fill('0.2')
+  await len.dispatchEvent('input')
+  await expect.poll(ua).toBeGreaterThan(one)
+
+  // But past a quarter wave, length stops mattering: the tightest point sits at
+  // 230 MHz where lambda/4 is 0.33 m, so a 1 m and a 3 m cable are capped to
+  // the same effective length and get the same budget. Worth pinning — it is
+  // the least obvious consequence of the model and a real design insight.
+  await len.fill('3')
+  await len.dispatchEvent('input')
+  await expect.poll(ua).toBeCloseTo(one, 1)
+
+  await len.fill('1')
+  await len.dispatchEvent('input')
+  await expect.poll(ua).toBeCloseTo(one, 1)
+  await page.getByTestId('emissions-limit').selectOption('cispr32a')
+  await expect.poll(ua).toBeGreaterThan(one)
+})

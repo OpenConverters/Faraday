@@ -78,7 +78,14 @@ Sliders for switched current, switching frequency, edge rate and duty; the plate
 the edge knee is set by loop area, current and edge rate alone, so halving any one of
 them buys exactly 6 dB.
 
-It is an **estimate**, and the panel says so where it cannot be missed: differential-mode
+The same panel carries the **common-mode budget**: how much common-mode current an
+attached cable of a given length may carry and still pass. Faraday cannot predict your
+actual common-mode current — it comes from ground-plane impedance and return-path
+detours, not from geometry — but the inverse needs no unknowns, and it lands in
+*microamps*, which is why an ordinary current probe never sees the mechanism that fails
+most products.
+
+The loop figure is an **estimate**, and the panel says so where it cannot be missed: differential-mode
 loop radiation only, no common-mode current on attached cables (which dominates most real
 failures), no enclosure, no board resonances. A clean result means this loop is not your
 problem — not that the product passes.

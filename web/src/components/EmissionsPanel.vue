@@ -22,6 +22,20 @@ const limits = JSON.parse(props.engine.limitLines())
 const result = ref(null)
 const error = ref('')
 
+// The common-mode budget. The caveat below says cable common-mode current is
+// what usually fails a product; this is the number that makes that actionable.
+// It needs no unknowns — only the cable length and the standard.
+const cable = ref(1.0)
+const cm = ref(null)
+function runCm() {
+  try {
+    const out = JSON.parse(props.engine.cmBudget(JSON.stringify({
+      cableM: cable.value, limit: limit.value, groundReflection: ground.value,
+    })))
+    cm.value = out.error ? null : out
+  } catch { cm.value = null }
+}
+
 function run() {
   try {
     const out = JSON.parse(props.engine.predictEmissions(JSON.stringify({
@@ -40,7 +54,7 @@ function run() {
     error.value = String(e)
   }
 }
-function onInput() { run(); nextTick(draw) }
+function onInput() { run(); runCm(); nextTick(draw) }
 watch([limit, ground], onInput)
 
 // ---- the chart -----------------------------------------------------------
@@ -133,6 +147,7 @@ function draw() {
 const ro = new ResizeObserver(() => draw())
 onMounted(() => {
   run()
+  runCm()
   nextTick(() => { draw(); if (canvas.value) ro.observe(canvas.value) })
   window.addEventListener('keydown', onKey)
 })
@@ -148,6 +163,20 @@ const r = computed(() => result.value)
 // Above the edge knee the level is FLAT, so naming the single harmonic that
 // happened to be scanned first implies an offending frequency that does not
 // exist. When the worst point sits on the plateau, say so.
+// Past a quarter wave the effective length is lambda/4, which falls as 1/f
+// exactly as fast as the field rises with f — so the budget goes CONSTANT
+// across the rest of the band. Naming one frequency inside that flat stretch
+// implies a worst point that does not exist.
+const cmWhere = computed(() => {
+  const v = cm.value
+  if (!v) return ''
+  const flat = v.fMhz.filter((_, i) => v.budgetUa[i] <= v.tightestUa * 1.01)
+  if (flat.length < 3) return `worst at ${num(v.tightestFMhz, 0)} MHz`
+  const lo = Math.min(...flat), hi = Math.max(...flat)
+  return hi / lo < 1.3 ? `worst at ${num(v.tightestFMhz, 0)} MHz`
+                       : `flat across ${num(lo, 0)}\u2013${num(hi, 0)} MHz`
+})
+
 const where = computed(() => {
   const v = result.value
   if (!v) return ''
@@ -212,6 +241,29 @@ const where = computed(() => {
           {{ r.beyondModelCount }} harmonics lie above {{ num(r.smallLoopMaxMhz, 0) }} MHz
           where the loop is no longer electrically small; they are drawn but not
           counted in the margin.</span>
+      </div>
+
+      <div v-if="cm" class="cmbudget" data-testid="cm-budget">
+        <div class="cmhead">
+          <h3>Common-mode budget</h3>
+          <label class="cmlen">cable
+            <input data-testid="cm-cable" type="range" min="0.1" max="5" step="0.1"
+                   v-model.number="cable" @input="runCm" />
+            <b>{{ num(cable, 1) }} m</b></label>
+        </div>
+        <p class="cmbig">
+          <b data-testid="cm-tightest">{{ cm.tightestUa < 1 ? cm.tightestUa.toFixed(2)
+            : cm.tightestUa.toFixed(1) }} µA</b>
+          is all the common-mode current a {{ num(cm.cableM, 1) }} m cable may carry
+          and still meet {{ cm.limitLabel }} at {{ num(cm.distanceM, 0) }} m —
+          {{ cmWhere }}.
+        </p>
+        <p class="cmnote">Microamps, not milliamps: an ordinary current probe cannot
+          see this. Faraday cannot predict your actual common-mode current — it comes
+          from ground-plane impedance and return-path detours, not from geometry — but
+          this is the number it has to stay under. Above
+          {{ num(cm.quarterWaveMhz, 0) }} MHz the cable is longer than a quarter wave
+          and stops counting as longer still.</p>
       </div>
 
       <div class="controls">
@@ -292,6 +344,21 @@ figcaption { display: flex; gap: 14px; flex-wrap: wrap; padding-top: 6px;
   font-size: 12px; color: var(--tin); }
 .caveat b { color: var(--silk); }
 .caveat .warn { display: block; margin-top: 6px; color: var(--heat-med); }
+
+.cmbudget {
+  margin: 0 16px 12px; padding: 11px 13px; border-radius: 4px;
+  background: var(--bare-fr4); border: 1px solid var(--resin-edge);
+  border-left: 3px solid var(--heat-med);
+}
+.cmhead { display: flex; align-items: center; gap: 14px; flex-wrap: wrap; }
+.cmhead h3 { font-family: var(--display); font-size: 13.5px; font-weight: 700;
+  letter-spacing: 0.09em; text-transform: uppercase; color: var(--tin); }
+.cmlen { display: flex; align-items: center; gap: 7px; font-size: 11.5px; color: var(--tin); }
+.cmlen input { width: 110px; accent-color: var(--copper); }
+.cmlen b { font-family: var(--mono); color: var(--silk); }
+.cmbig { margin-top: 6px; font-size: 13px; }
+.cmbig b { font-family: var(--mono); font-size: 17px; color: var(--heat-med); }
+.cmnote { margin-top: 5px; font-size: 11.5px; color: var(--tin); }
 
 .controls { display: grid; gap: 10px 18px; padding: 12px 16px;
   grid-template-columns: repeat(auto-fit, minmax(190px, 1fr));

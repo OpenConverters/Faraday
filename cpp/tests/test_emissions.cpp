@@ -207,3 +207,106 @@ TEST_CASE("a realistic converter loop lands where an engineer expects", "[emc]")
     Prediction half = predict_loop(133.5, demo(), PredictOptions{});
     CHECK_THAT(half.worst_margin_db - p.worst_margin_db, WithinAbs(6.0206, 0.01));
 }
+
+// ---------------------------------------------------------------------------
+// Common-mode radiation from an attached cable
+// ---------------------------------------------------------------------------
+
+TEST_CASE("the common-mode constant is Ott's, composed not pasted", "[emc][cm]") {
+    // Ott quotes E = 1.257e-6 f I L / r for a cable over a ground plane. That
+    // is the free-space short-dipole value eta0/(2c) DOUBLED by the ground
+    // image, so with the reflection factor applied it must reproduce exactly.
+    CHECK_THAT(ETA0 / (2 * C_LIGHT), WithinRel(6.283e-7, 1e-3));
+    CHECK_THAT(GROUND_REFLECTION * ETA0 / (2 * C_LIGHT), WithinRel(1.2566e-6, 1e-3));
+
+    // one hand-checkable evaluation: 1 mA, 50 MHz, 1 m cable, 3 m away
+    CHECK_THAT(cm_e_field(50e6, 1e-3, 1.0, 3.0),
+               WithinRel(6.283e-7 * 50e6 * 1e-3 * 1.0 / 3.0, 1e-3));
+}
+
+TEST_CASE("a cable stops lengthening once it passes a quarter wave", "[emc][cm]") {
+    // Below lambda/4 the whole cable counts; above it the short-antenna formula
+    // would keep growing without bound, which is simply wrong.
+    CHECK_THAT(effective_length_m(1.0, 30e6), WithinRel(1.0, 1e-12));
+    CHECK_THAT(effective_length_m(1.0, 300e6),
+               WithinRel(C_LIGHT / (4 * 300e6), 1e-12));   // 0.2498 m, not 0.25
+    CHECK_THAT(effective_length_m(5.0, 30e6),
+               WithinRel(C_LIGHT / (4 * 30e6), 1e-12));
+    // so the field saturates rather than climbing with length
+    const double a = cm_e_field(300e6, 1e-3, 1.0, 3.0);
+    const double b = cm_e_field(300e6, 1e-3, 9.0, 3.0);
+    CHECK_THAT(b, WithinRel(a, 1e-12));
+}
+
+TEST_CASE("the current budget reproduces the classic rule of thumb", "[emc][cm]") {
+    // The number every EMC text quotes: to meet Class B at 3 m with a 1 m
+    // cable, common-mode current has to stay in the SINGLE MICROAMPS. That it
+    // is microamps and not milliamps is the whole point — an ordinary current
+    // probe cannot see it.
+    // With the quarter-wave cap in force the tightest point on a 1 m cable
+    // lands near 3 uA: above 75 MHz the cable stops counting as longer, so the
+    // budget falls more slowly than 1/f and never reaches the ~1 uA an uncapped
+    // formula would predict at 230 MHz.
+    const CmBudget b = cm_budget(1.0, "cispr32b");
+    CHECK(b.tightest_a > 1e-6);
+    CHECK(b.tightest_a < 5e-6);
+
+    // at the bottom of the band it is looser, around 8 uA
+    const double at30 = cm_current_budget_a(40.0, 30e6, 1.0, 3.0, GROUND_REFLECTION);
+    CHECK_THAT(at30, WithinRel(8e-6, 0.05));
+
+    // the budget falls as 1/f inside a band
+    const double at60 = cm_current_budget_a(40.0, 60e6, 1.0, 3.0, GROUND_REFLECTION);
+    CHECK_THAT(at60, WithinRel(at30 / 2, 1e-9));
+}
+
+TEST_CASE("the budget scales the way the antenna does", "[emc][cm]") {
+    // 30 MHz, where lambda/4 is 2.5 m, so both cables below are still short and
+    // the length term is the honest one rather than the capped one.
+    const double base = cm_current_budget_a(40.0, 30e6, 1.0, 3.0, GROUND_REFLECTION);
+    CHECK_THAT(cm_current_budget_a(40.0, 30e6, 2.0, 3.0, GROUND_REFLECTION),
+               WithinRel(base / 2, 1e-9));
+    CHECK_THAT(cm_current_budget_a(40.0, 30e6, 1.0, 6.0, GROUND_REFLECTION),
+               WithinRel(base * 2, 1e-9));
+    CHECK_THAT(cm_current_budget_a(46.0206, 30e6, 1.0, 3.0, GROUND_REFLECTION),
+               WithinRel(base * 2, 1e-3));
+    CHECK_THAT(cm_current_budget_a(40.0, 30e6, 1.0, 3.0, 1.0),
+               WithinRel(base * 2, 1e-9));
+
+    // and PAST the quarter wave the length term stops helping, which is the
+    // cap doing its job: a 2 m cable at 50 MHz counts as 1.5 m, not 2 m.
+    CHECK_THAT(cm_current_budget_a(40.0, 50e6, 2.0, 3.0, GROUND_REFLECTION),
+               WithinRel(cm_current_budget_a(40.0, 50e6, 1.5, 3.0, GROUND_REFLECTION),
+                         1e-9));
+}
+
+TEST_CASE("the budget curve is self-consistent and marks resonance", "[emc][cm]") {
+    const CmBudget b = cm_budget(1.0, "cispr32b");
+    REQUIRE(b.points.size() > 50);
+    CHECK_THAT(b.quarter_wave_hz, WithinRel(C_LIGHT / 4.0, 1e-12));
+
+    bool saw_tightest = false;
+    for (const auto& p : b.points) {
+        CHECK(p.budget_a >= b.tightest_a - 1e-18);
+        CHECK(p.resonant == (p.f_hz > b.quarter_wave_hz));
+        CHECK(p.eff_len_m <= 1.0 + 1e-12);
+        // every point must round-trip: put the budget current in, get the limit
+        CHECK_THAT(to_dbuv_m(GROUND_REFLECTION *
+                             cm_e_field(p.f_hz, p.budget_a, b.cable_m, b.distance_m)),
+                   WithinAbs(p.limit_dbuv_m, 1e-6));
+        if (std::abs(p.f_hz - b.tightest_f_hz) < 1e-6) saw_tightest = true;
+    }
+    CHECK(saw_tightest);
+}
+
+TEST_CASE("Class A at 10 m allows more common-mode current than Class B at 3 m",
+          "[emc][cm]") {
+    CHECK(cm_budget(1.0, "cispr32a").tightest_a >
+          cm_budget(1.0, "cispr32b").tightest_a);
+}
+
+TEST_CASE("a cable with no length is refused", "[emc][cm]") {
+    CHECK_THROWS_AS(cm_budget(0.0, "cispr32b"), std::invalid_argument);
+    CHECK_THROWS_AS(effective_length_m(-1.0, 50e6), std::invalid_argument);
+    CHECK_THROWS_AS(cm_budget(1.0, "mil-std-461"), std::invalid_argument);
+}

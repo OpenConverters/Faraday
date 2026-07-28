@@ -391,6 +391,28 @@ inline nlohmann::json predict_emissions(const nlohmann::json& j) {
         j.value("maxPoints", 900));
 }
 
+// The common-mode budget. Faraday cannot know the common-mode current — it
+// comes from ground-plane impedance and return-path detours, not from geometry
+// — so the shipped answer is the inverse: how much current this cable may carry
+// and still pass. That needs no unknowns.
+inline nlohmann::json cm_budget_json(const nlohmann::json& j) {
+    const double cable = j.value("cableM", 1.0);
+    const emc::CmBudget b = emc::cm_budget(
+        cable, j.value("limit", std::string("cispr32b")),
+        j.value("groundReflection", true), j.value("points", 140));
+    nlohmann::json f = nlohmann::json::array(), ua = nlohmann::json::array();
+    for (const auto& p : b.points) {
+        f.push_back(p.f_hz * 1e-6);
+        ua.push_back(p.budget_a * 1e6);
+    }
+    return {{"fMhz", f}, {"budgetUa", ua},
+            {"tightestUa", b.tightest_a * 1e6},
+            {"tightestFMhz", b.tightest_f_hz * 1e-6},
+            {"cableM", b.cable_m}, {"distanceM", b.distance_m},
+            {"quarterWaveMhz", b.quarter_wave_hz * 1e-6},
+            {"limitId", b.limit_id}, {"limitLabel", b.limit_label}};
+}
+
 inline nlohmann::json limit_lines_json() {
     nlohmann::json a = nlohmann::json::array();
     for (const auto& l : emc::limit_lines())

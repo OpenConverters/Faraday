@@ -189,6 +189,107 @@ inline std::optional<double> limit_at(const LimitLine& l, double f_hz) {
 }
 
 // ---------------------------------------------------------------------------
+// Common-mode radiation from an attached cable
+// ---------------------------------------------------------------------------
+//
+// The mechanism that fails most real products, and the one the loop model above
+// explicitly does not cover. A cable carrying common-mode current is a monopole
+// over the ground plane, and a short one radiates
+//
+//     E = eta0 * f * I_cm * L_eff / (2 * c * r)          (free space)
+//
+// With the ground-plane image included that doubles to eta0/(c) = 1.2566e-6,
+// which is the constant Ott quotes. It is composed here rather than pasted, and
+// the doubling goes through the SAME reflection factor the loop model uses, so
+// the toggle means one thing in both places.
+//
+// FARADAY CANNOT KNOW I_cm. It depends on the common-mode voltage driving the
+// cable, which comes from ground-plane impedance, return-path detours and
+// connector placement — not from geometry alone. So the useful direction is
+// the inverse: given the limit, how much common-mode current can this cable
+// carry? That budget needs no unknowns, and it is the number EMC engineers
+// actually quote — a few microamps, which is why this mechanism is so easily
+// missed with a current probe that reads in milliamps.
+
+// A monopole stops getting more effective once it passes a quarter wave; past
+// that it resonates and the short-antenna formula, which would keep growing
+// with length, is simply wrong. Capping at lambda/4 is the standard treatment.
+inline double effective_length_m(double len_m, double f_hz) {
+    if (!(len_m > 0) || !(f_hz > 0))
+        throw std::invalid_argument("emc: cable length and frequency must be > 0");
+    return std::min(len_m, C_LIGHT / (4.0 * f_hz));
+}
+
+inline double cm_e_field(double f_hz, double i_cm_a, double len_m, double r_m) {
+    if (!(r_m > 0)) throw std::invalid_argument("emc: distance must be > 0");
+    if (i_cm_a < 0) throw std::invalid_argument("emc: current must be >= 0");
+    return ETA0 * f_hz * i_cm_a * effective_length_m(len_m, f_hz) /
+           (2.0 * C_LIGHT * r_m);
+}
+
+// The inverse: the largest common-mode current that still meets `limit_dbuv_m`.
+inline double cm_current_budget_a(double limit_dbuv_m, double f_hz, double len_m,
+                                  double r_m, double gain) {
+    if (!(gain > 0)) throw std::invalid_argument("emc: reflection gain must be > 0");
+    const double e_limit = std::pow(10.0, limit_dbuv_m / 20.0) * 1e-6;   // V/m
+    const double per_amp = gain * cm_e_field(f_hz, 1.0, len_m, r_m);
+    if (!(per_amp > 0)) throw std::invalid_argument("emc: degenerate cable geometry");
+    return e_limit / per_amp;
+}
+
+struct CmPoint {
+    double f_hz = 0, budget_a = 0, limit_dbuv_m = 0, eff_len_m = 0;
+    bool resonant = false;      // cable longer than a quarter wave here
+};
+
+struct CmBudget {
+    std::vector<CmPoint> points;
+    double tightest_a = 0, tightest_f_hz = 0;
+    double cable_m = 0, distance_m = 0;
+    double quarter_wave_hz = 0;   // where the cable first reaches lambda/4
+    std::string limit_id, limit_label;
+};
+
+inline CmBudget cm_budget(double cable_m, const std::string& limit_id,
+                          bool ground_reflection = true, int points = 160) {
+    if (!(cable_m > 0)) throw std::invalid_argument("emc: cable length must be > 0");
+    if (points < 8) throw std::invalid_argument("emc: need at least 8 points");
+    const LimitLine& lim = limit_by_id(limit_id);
+    const double gain = ground_reflection ? GROUND_REFLECTION : 1.0;
+
+    CmBudget b;
+    b.cable_m = cable_m;
+    b.distance_m = lim.distance_m;
+    b.limit_id = lim.id;
+    b.limit_label = lim.label;
+    b.quarter_wave_hz = C_LIGHT / (4.0 * cable_m);
+
+    const double f_lo = lim.bands.front().f_lo_hz;
+    const double f_hi = lim.bands.back().f_hi_hz;
+    bool have = false;
+    for (int i = 0; i < points; ++i) {
+        // log spacing: the band spans a decade and a half
+        const double f = f_lo * std::pow(f_hi / f_lo, (double)i / (points - 1));
+        auto lv = limit_at(lim, f);
+        if (!lv) continue;
+        CmPoint p;
+        p.f_hz = f;
+        p.limit_dbuv_m = *lv;
+        p.eff_len_m = effective_length_m(cable_m, f);
+        p.resonant = p.eff_len_m < cable_m;
+        p.budget_a = cm_current_budget_a(*lv, f, cable_m, lim.distance_m, gain);
+        if (!have || p.budget_a < b.tightest_a) {
+            b.tightest_a = p.budget_a;
+            b.tightest_f_hz = f;
+            have = true;
+        }
+        b.points.push_back(p);
+    }
+    if (!have) throw std::invalid_argument("emc: no regulated frequency in this limit line");
+    return b;
+}
+
+// ---------------------------------------------------------------------------
 // The prediction
 // ---------------------------------------------------------------------------
 
