@@ -127,11 +127,6 @@ function toggleRule(rule) {
                     @bench="id => benchId = id" />
     </main>
 
-    <BenchPanel v-if="benchFinding && engine" :engine="engine" :finding="benchFinding"
-                :title-a="netName(benchFinding.netA)" :title-b="netName(benchFinding.netB)"
-                :layer="layerName(benchFinding.cuA)"
-                @close="benchId = ''" />
-
     <div v-else-if="!needStackup" class="empty" :class="{ over: dragOver }">
       <div class="board-ghost" aria-hidden="true" />
       <p class="invite">Drop a board here</p>
@@ -141,6 +136,15 @@ function toggleRule(rule) {
          commutation-loop area. It ranks the risk and renders it on the copper.
          Analysis runs here, in your browser — your layout never leaves this machine.</p>
     </div>
+
+    <!-- Must stay OUTSIDE the work/empty v-if chain. Sitting between them broke
+         the chain: the empty state's v-else-if bound to this element instead of
+         to <main v-if="report">, so the drop zone rendered underneath a loaded
+         board and split the flex height with it. -->
+    <BenchPanel v-if="benchFinding && engine" :engine="engine" :finding="benchFinding"
+                :title-a="netName(benchFinding.netA)" :title-b="netName(benchFinding.netB)"
+                :layer="layerName(benchFinding.cuA)"
+                @close="benchId = ''" />
 
     <footer v-if="meta" class="metastrip" data-testid="meta-strip">
       <span class="m">format: <b>{{ report.format }}</b></span>

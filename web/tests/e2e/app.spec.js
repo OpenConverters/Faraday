@@ -24,6 +24,12 @@ test('board loads, findings rank, selection links list and canvas', async ({ pag
   await expect(page.getByTestId('finding-F-0002')).toContainText('3W violation')
   await expect(page.getByTestId('board-canvas')).toBeVisible()
 
+  // The drop zone must be GONE once a board is loaded. It is a v-else-if on the
+  // work area, and an element inserted between the two silently re-chains it to
+  // whatever now precedes it — legal Vue, no warning, and the empty state ends
+  // up rendering underneath the board and splitting the flex height with it.
+  await expect(page.getByText('Drop a board here')).toBeHidden()
+
   // meta strip states the stackup source and plane classification
   const meta = page.getByTestId('meta-strip')
   await expect(meta).toContainText('board-file')
