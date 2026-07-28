@@ -90,6 +90,20 @@ loop radiation only, no common-mode current on attached cables (which dominates 
 failures), no enclosure, no board resonances. A clean result means this loop is not your
 problem — not that the product passes.
 
+## The radiation layer
+
+The **radiation** chip on the board view re-colours every trace by how much of the
+board's differential-mode emission it accounts for. Each segment plus its return forms a
+loop of `length × height-to-reference`; over an intact plane that is square micrometres,
+and where the reference is missing it becomes the trace length times the whole board. So
+the map answers *which twenty traces are eighty percent of this*, which is the question
+that changes a layout.
+
+It is an **attribution, not a field simulation** — a ranking of your own copper, summed
+incoherently, with an assumed current that scales the whole thing linearly. It is
+deliberately not coloured in absolute field units, because coloured that way it would
+look like a full-wave solve and it is not one.
+
 ## Stackup policy
 
 Z₀ and coupling depend on the stackup. If the board file carries none, Faraday **refuses** rather

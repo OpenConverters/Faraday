@@ -18,6 +18,12 @@
 #include <faraday/Import.hpp>
 #include <faraday/Screener.hpp>
 
+// The last imported board. radiationMap() re-runs over the WHOLE board on every
+// slider move, and re-parsing a 4 MB layout each time would cost half a second;
+// holding the IR makes it a few milliseconds. One board at a time is exactly
+// what the UI does, so the state is bounded and its lifetime is obvious.
+static std::optional<faraday::BoardIR> g_board;
+
 static std::string analyze(std::string board_text, std::string stackup_name) {
     try {
         std::optional<faraday::Stackup> user;
@@ -27,6 +33,7 @@ static std::string analyze(std::string board_text, std::string stackup_name) {
             faraday::import_board(board_text, std::move(user), &fmt);
         nlohmann::json out = faraday::analyze_board(board);
         out["format"] = faraday::format_name(fmt);
+        g_board = std::move(board);
         return out.dump();
     } catch (const std::exception& e) {
         return nlohmann::json{{"error", e.what()}}.dump();
@@ -60,6 +67,20 @@ static std::string cm_budget(std::string request_json) {
     }
 }
 
+static std::string radiation_map(std::string request_json) {
+    try {
+        if (!g_board)
+            throw std::runtime_error(
+                "no board loaded — open a layout before asking what radiates");
+        const nlohmann::json j = nlohmann::json::parse(request_json);
+        faraday::Screener sc(*g_board);
+        return faraday::bench::radiation_map_json(
+                   *g_board, sc, faraday::bench::radmap_params_from_json(j)).dump();
+    } catch (const std::exception& e) {
+        return nlohmann::json{{"error", e.what()}}.dump();
+    }
+}
+
 static std::string limit_lines() { return faraday::bench::limit_lines_json().dump(); }
 
 static std::string logic_families() {
@@ -73,6 +94,7 @@ EMSCRIPTEN_BINDINGS(faraday) {
     emscripten::function("solvePair", &solve_pair);
     emscripten::function("predictEmissions", &predict_emissions);
     emscripten::function("cmBudget", &cm_budget);
+    emscripten::function("radiationMap", &radiation_map);
     emscripten::function("limitLines", &limit_lines);
     emscripten::function("logicFamilies", &logic_families);
     emscripten::function("version", &version);

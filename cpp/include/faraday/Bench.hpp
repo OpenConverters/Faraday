@@ -13,6 +13,7 @@
 
 #include "Bem2d.hpp"
 #include "Emissions.hpp"
+#include "RadiationMap.hpp"
 #include "Mna.hpp"
 #include "Rlgc.hpp"
 
@@ -411,6 +412,66 @@ inline nlohmann::json cm_budget_json(const nlohmann::json& j) {
             {"cableM", b.cable_m}, {"distanceM", b.distance_m},
             {"quarterWaveMhz", b.quarter_wave_hz * 1e-6},
             {"limitId", b.limit_id}, {"limitLabel", b.limit_label}};
+}
+
+// Per-segment contributions, quantised to one byte on a log scale. A 4 MB
+// board has ~10k segments; as JSON numbers that is a megabyte, as bytes it is
+// 13 kB and the canvas only ever needs a colour index anyway. The floor is
+// four decades below the peak, which is well past the point where a trace stops
+// mattering.
+inline nlohmann::json radiation_map_json(const BoardIR& board,
+                                         const Screener& screener,
+                                         const radmap::MapParams& p) {
+    const radmap::MapResult r = radmap::compute(board, screener, p);
+    const double floor_e = r.max_e_v_per_m > 0 ? r.max_e_v_per_m * 1e-4 : 1.0;
+    std::vector<unsigned char> heat(r.segments.size(), 0);
+    for (size_t i = 0; i < r.segments.size(); ++i) {
+        const double e = r.segments[i].e_v_per_m;
+        if (!(e > floor_e)) continue;
+        heat[i] = (unsigned char)std::clamp(
+            255.0 * std::log(e / floor_e) / std::log(r.max_e_v_per_m / floor_e),
+            0.0, 255.0);
+    }
+    nlohmann::json top = nlohmann::json::array();
+    double power = 0;
+    for (const auto& c : r.segments) power += c.e_v_per_m * c.e_v_per_m;
+    for (size_t i : r.top) {
+        const auto& c = r.segments[i];
+        if (!(c.e_v_per_m > 0)) continue;
+        top.push_back({{"seg", (int)i},
+                       {"net", board.net_name(board.segments[i].net)},
+                       {"cu", board.copper_names[board.segments[i].cu]},
+                       {"sharePct", power > 0 ? 100.0 * c.e_v_per_m * c.e_v_per_m / power : 0.0},
+                       {"heightMm", c.height_mm},
+                       {"currentA", c.current_a},
+                       {"noReference", c.no_reference},
+                       {"switchNode", c.switch_node}});
+        if (top.size() >= 12) break;
+    }
+    return {{"heat", base64(heat)},
+            {"segments", (int)r.segments.size()},
+            {"counted", (int)r.counted},
+            {"totalDbuvM", r.total_dbuv_m},
+            {"maxEVPerM", r.max_e_v_per_m},
+            {"noReferenceCount", (int)r.no_reference_count},
+            {"noReferenceSharePct", 100.0 * r.no_reference_share},
+            {"distanceM", p.r_m},
+            {"top", top}};
+}
+
+inline radmap::MapParams radmap_params_from_json(const nlohmann::json& j) {
+    radmap::MapParams p;
+    auto opt = [&](const char* k, double d) {
+        return (j.contains(k) && j.at(k).is_number()) ? j.at(k).get<double>() : d;
+    };
+    p.f_sw_hz = opt("fSwKhz", 500.0) * 1e3;
+    p.duty = opt("duty", 0.4);
+    p.rise_s = opt("riseNs", 20.0) * 1e-9;
+    p.swing_v = opt("swingV", 3.3);
+    p.sw_current_a = opt("currentA", 10.0);
+    p.r_m = opt("distanceM", 3.0);
+    p.ground_reflection = j.value("groundReflection", true);
+    return p;
 }
 
 inline nlohmann::json limit_lines_json() {

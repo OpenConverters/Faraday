@@ -3,11 +3,36 @@ import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 
 const props = defineProps({
   report: { type: Object, required: true },
+  // per-segment radiation attribution, or null when the layer is off
+  radiation: { type: Object, default: null },
   // already filtered by the rule chips — the board shows exactly what the list shows
   findings: { type: Array, required: true },
   selectedId: { type: String, default: '' },
 })
-const emit = defineEmits(['select'])
+const emit = defineEmits(['select', 'toggleRadiation'])
+
+// Radiation attribution, decoded once per map into a byte per segment. Null
+// when the map is off, and every draw path checks for that rather than
+// branching on a mode flag in five places.
+const heat = computed(() => {
+  const b64 = props.radiation?.heat
+  if (!b64) return null
+  const bin = atob(b64)
+  const a = new Uint8Array(bin.length)
+  for (let i = 0; i < bin.length; i++) a[i] = bin.charCodeAt(i)
+  return a
+})
+
+// Cool copper through to white-hot. Below a tenth of the peak a trace is not
+// part of the answer, so it stays dark rather than tinting the whole board.
+function radColour(v) {
+  const t = v / 255
+  if (t < 0.45) return `rgba(60,80,72,${0.25 + t})`
+  if (t < 0.75) { const u = (t - 0.45) / 0.3
+    return `rgb(${Math.round(96 + 121 * u)},${Math.round(110 + 29 * u)},${Math.round(96 - 1 * u)})` }
+  const u = (t - 0.75) / 0.25
+  return `rgb(${Math.round(217 + 38 * u)},${Math.round(139 + 98 * u)},${Math.round(95 + 137 * u)})`
+}
 
 const wrap = ref(null)
 const canvas = ref(null)
@@ -120,9 +145,19 @@ function draw() {
     ctx.globalAlpha = 0.92
     ctx.strokeStyle = col
     ctx.lineCap = 'round'
-    for (const s of b.segments) {
+    const h = heat.value
+    for (let i = 0; i < b.segments.length; i++) {
+      const s = b.segments[i]
       if (s.cu !== cu) continue
-      ctx.lineWidth = Math.max(s.w * view.scale, 0.6)
+      // In radiation mode the copper is coloured by how much of the board's
+      // differential-mode total it accounts for, and drawn a little heavier so
+      // the hot traces read at board zoom.
+      if (h) {
+        ctx.strokeStyle = radColour(h[i] ?? 0)
+        ctx.lineWidth = Math.max(s.w * view.scale, h[i] > 150 ? 1.8 : 0.8)
+      } else {
+        ctx.lineWidth = Math.max(s.w * view.scale, 0.6)
+      }
       ctx.beginPath()
       const [ax, ay] = toScreen(s.x1, s.y1)
       const [ex, ey] = toScreen(s.x2, s.y2)
@@ -130,6 +165,7 @@ function draw() {
       ctx.lineTo(ex, ey)
       ctx.stroke()
     }
+    ctx.strokeStyle = col
     ctx.fillStyle = col
     for (const p of b.pads) {
       if (p.cu !== cu && !(p.th && cu === 0)) continue
@@ -304,7 +340,7 @@ watch(() => props.selectedId, id => {
   if (f) zoomTo(f)
   else draw()
 })
-watch([layerVis, overlaysOn], () => draw())
+watch([layerVis, overlaysOn, () => props.radiation], () => draw())
 watch(() => props.findings, () => draw())
 </script>
 
@@ -321,6 +357,9 @@ watch(() => props.findings, () => draw())
               @click="layerVis[name] = !layerVis[name]">{{ name }}</button>
       <button class="lchip risk" :class="{ off: !overlaysOn }" data-testid="overlay-toggle"
               @click="overlaysOn = !overlaysOn">risk overlay</button>
+      <button class="lchip rad" :class="{ off: !radiation }" data-testid="rad-toggle"
+              :style="{ '--c': '#ffb454' }"
+              @click="emit('toggleRadiation')">radiation</button>
     </div>
     <div v-if="hover" class="tooltip" data-testid="board-tooltip"
          :style="{ left: Math.min(hover.x + 14, 9999) + 'px', top: hover.y + 14 + 'px' }">

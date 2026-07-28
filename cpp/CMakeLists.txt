@@ -105,7 +105,8 @@ if(FARADAY_BUILD_TESTS)
         tests/test_bem.cpp
         tests/test_mna.cpp
         tests/test_bench.cpp
-        tests/test_emissions.cpp)
+        tests/test_emissions.cpp
+        tests/test_radmap.cpp)
     target_link_libraries(test_faraday PRIVATE faraday Catch2::Catch2WithMain)
     target_compile_definitions(test_faraday PRIVATE
         FARADAY_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")

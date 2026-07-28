@@ -220,6 +220,11 @@ class Screener {
 
     const std::vector<LayerModel>& layer_models() const { return layers_; }
 
+    // Nets the switch-node rule identified. Exposed because the radiation map
+    // has to give those nets the switched current rather than swing / Z0 —
+    // they are the loudest copper on a converter by a wide margin.
+    bool is_switch_node(int net) const { return sw_nets_.count(net) > 0; }
+
     std::vector<Finding> run() {
         std::vector<Finding> out;
         find_no_reference_plane(out);

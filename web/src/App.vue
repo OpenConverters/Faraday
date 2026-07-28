@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, onMounted } from 'vue'
+import { ref, computed, watch, onMounted } from 'vue'
 import BoardView from './components/BoardView.vue'
 import FindingsList from './components/FindingsList.vue'
 import BenchPanel from './components/BenchPanel.vue'
@@ -82,6 +82,22 @@ const layerName = cu => report.value?.board.copperNames?.[cu] ?? `layer ${cu}`
 // Radiated emissions: offered on findings that carry an enclosed loop area,
 // which today means commutation loops. The loop area is the input nobody else
 // can supply, and it comes straight off the copper.
+// The radiation layer: a whole-board attribution of differential-mode
+// emissions to the copper that causes it. Off by default — it re-colours the
+// board, so it has to be asked for.
+const radiation = ref(null)
+const radError = ref('')
+function toggleRadiation() {
+  if (radiation.value) { radiation.value = null; return }
+  try {
+    const out = JSON.parse(engine.value.radiationMap(JSON.stringify({})))
+    if (out.error) { radError.value = out.error; return }
+    radError.value = ''
+    radiation.value = out
+  } catch (e) { radError.value = String(e) }
+}
+watch(report, () => { radiation.value = null; radError.value = '' })
+
 const emitId = ref('')
 const emitFinding = computed(() =>
   findings.value.find(f => f.id === emitId.value && f.emit) ?? null)
@@ -117,6 +133,21 @@ function toggleRule(rule) {
     </header>
 
     <div v-if="error" class="banner error" data-testid="error-banner">{{ error }}</div>
+    <div v-if="radError" class="banner error" data-testid="rad-error">{{ radError }}</div>
+
+    <div v-if="radiation" class="radbar" data-testid="rad-bar">
+      <b>Radiation attribution</b>
+      <span>{{ radiation.totalDbuvM.toFixed(1) }} dBµV/m total at
+        {{ radiation.distanceM.toFixed(0) }} m, over {{ radiation.counted }} segments</span>
+      <span v-if="radiation.noReferenceCount" class="warn">
+        {{ radiation.noReferenceCount }} segments have no reference plane —
+        {{ radiation.noReferenceSharePct.toFixed(0) }}% of the total</span>
+      <span class="top" v-for="t in radiation.top.slice(0, 4)" :key="t.seg">
+        {{ t.net || '(unnamed)' }} <b>{{ t.sharePct.toFixed(1) }}%</b></span>
+      <span class="cav">Differential-mode attribution from loop area × current —
+        a ranking of your copper, not a chamber. Current is assumed, and scales
+        it all linearly.</span>
+    </div>
 
     <div v-if="needStackup" class="banner ask" data-testid="stackup-card">
       <p>This board file carries no stackup. Z₀ and coupling need one — choose what the
@@ -127,7 +158,9 @@ function toggleRule(rule) {
 
     <main class="work" v-if="report">
       <BoardView :report="report" :findings="visibleFindings" :selected-id="selectedId"
-                 @select="id => selectedId = id" />
+                 :radiation="radiation"
+                 @select="id => selectedId = id"
+                 @toggle-radiation="toggleRadiation" />
       <FindingsList :findings="visibleFindings" :report="report" :selected-id="selectedId"
                     :rules="ruleCounts" :hidden-rules="hiddenRules" :total="findings.length"
                     @select="id => selectedId = selectedId === id ? '' : id"
@@ -239,6 +272,17 @@ function toggleRule(rule) {
 .invite { font-family: var(--display); font-size: 26px; font-weight: 500; }
 .invite code { font-family: var(--mono); color: var(--copper); font-size: 22px; }
 .sub { max-width: 520px; color: var(--tin); font-size: 13.5px; }
+
+.radbar {
+  display: flex; gap: 14px; align-items: baseline; flex-wrap: wrap;
+  padding: 7px 16px; border-bottom: 1px solid var(--resin-edge);
+  background: var(--resin); font-family: var(--mono); font-size: 11.5px;
+  color: var(--tin);
+}
+.radbar > b { color: var(--copper); letter-spacing: 0.06em; }
+.radbar .warn { color: var(--heat-med); }
+.radbar .top b { color: var(--silk); }
+.radbar .cav { flex: 1 1 100%; opacity: 0.75; font-family: var(--sans); font-size: 11px; }
 
 .metastrip {
   display: flex; gap: 18px; flex-wrap: wrap;
