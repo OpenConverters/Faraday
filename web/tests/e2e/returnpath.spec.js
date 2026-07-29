@@ -132,7 +132,10 @@ test('stitching fix: a 4-layer board gets a new file, a 2-layer the honest reaso
 
     // the demo 2-layer board: unstitched but single-plane — the honest refusal
     await page.goto('/#load=/demo.kicad_pcb')
-    await expect(page.getByTestId('finding-F-0001')).toBeVisible({ timeout: LOAD_MS })
+    // wait for DEMO content, not just any F-0001 — the synthetic board also
+    // has one, and on a slow network the click would land on the stale board
+    await expect(page.getByTestId('finding-F-0001'))
+      .toContainText('CLK', { timeout: LOAD_MS })
     await page.getByTestId('rp-toggle').click()
     await expect(page.getByTestId('rp-bar')).toBeVisible({ timeout: LOAD_MS })
     await page.getByTestId('rp-fix').click()
