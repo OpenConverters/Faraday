@@ -202,6 +202,19 @@ The same diff gates CI: `faraday_cli board.kicad_pcb --baseline old-report.json
 gate a brownfield board can adopt today, without first fixing every legacy
 finding.
 
+## Fix generation — stitching vias (v1)
+
+When the return-path layer flags **unstitched layer changes** on a KiCad board,
+*generate stitching vias → new file* emits a patched `.kicad_pcb` — the original
+is never touched. Every proposed via must land where the reference pour covers
+**two** copper layers, clear all foreign copper (pad + 0.2 mm), and it copies
+the board's own most common reference-via style — no invented pad/drill sizes.
+The generator re-imports its own output and refuses to emit anything
+unverified; the unit test additionally demands the fix is never a regression
+under the report diff. Boards where no stitch is physically possible (single
+reference plane, no via style to copy) get the honest reason instead of a file.
+CLI: `--fix-stitching out.kicad_pcb`.
+
 ## Custom stackups
 
 The stackup select (or the "no stackup" card) opens an editor: copper count,

@@ -134,6 +134,7 @@ async function onFiles(list) {
   stackupChoice.value = ''
   customStackup.value = null
   clearBaseline()
+  fixResult.value = ''
   await analyze()
 }
 
@@ -279,6 +280,28 @@ const baselineName = ref('')
 const diff = ref(null)
 const onlyChanges = ref(false)
 const baselineInput = ref(null)
+// stitching-fix result line shown under the return-path bar
+const fixResult = ref('')
+function fixStitching() {
+  fixResult.value = ''
+  try {
+    const out = JSON.parse(engine.value.fixStitching(boardText.value, stackupSpec()))
+    if (out.error) { fixResult.value = out.error; return }
+    if (out.text) {
+      const base = fileName.value.replace(/\.kicad_pcb$/i, '')
+      const blob = new Blob([out.text], { type: 'text/plain' })
+      const a = document.createElement('a')
+      a.href = URL.createObjectURL(blob)
+      a.download = `${base}-stitched.kicad_pcb`
+      a.click()
+      URL.revokeObjectURL(a.href)
+      fixResult.value = `${out.vias.length} stitching via(s) added — review the`
+        + ` downloaded file in KiCad; your original is untouched`
+    } else {
+      fixResult.value = out.notes[0] || 'nothing to stitch'
+    }
+  } catch (e) { fixResult.value = String(e.message || e) }
+}
 function computeDiff() {
   diff.value = baselineReport.value && report.value
     ? JSON.parse(engine.value.diffReports(
@@ -527,6 +550,11 @@ function toggleRule(rule) {
           {{ w.net || '(unnamed)' }} <b>{{ w.areaMm2.toFixed(0) }} mm²</b><template
           v-if="w.unstitched"> · unstitched</template><template
           v-else-if="w.overVoid"> · over void</template></span>
+        <button v-if="report.format === 'kicad' && returnPath.unstitchedCount"
+                class="detail" data-testid="rp-fix"
+                @click="fixStitching">
+          generate stitching vias → new file</button>
+        <span v-if="fixResult" class="top" data-testid="rp-fix-result">{{ fixResult }}</span>
         <span class="cav"><b>How far away each trace's return current really is</b> —
           the dielectric height where the plane is solid beneath it, the detour where
           it is not, the hop at every layer change. Every number here is a geometric

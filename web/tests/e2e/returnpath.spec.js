@@ -92,3 +92,52 @@ test('the two overlays say what they are each for', async ({ page }) => {
   await expect(page.getByTestId('nf-bar')).toContainText('What couples on the board')
   await expect(page.getByTestId('nf-bar')).toContainText('return-path layer')
 })
+
+test('stitching fix: a 4-layer board gets a new file, a 2-layer the honest reason',
+  async ({ page }) => {
+    // synthetic 4-layer with one unstitched layer change (mirrors the C++ test)
+    const revB = `(kicad_pcb
+      (layers (0 "F.Cu" signal) (1 "In1.Cu" signal) (2 "In2.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SIG") (net 2 "GND")
+      (segment (start 5 10) (end 30 10) (width 0.25) (layer "F.Cu") (net 1))
+      (via (at 30 10) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
+      (segment (start 30 10) (end 55 10) (width 0.25) (layer "B.Cu") (net 1))
+      (via (at 90 40) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 2))
+      (zone (net 2) (net_name "GND") (layer "In1.Cu")
+        (polygon (pts (xy 0 0) (xy 100 0) (xy 100 45) (xy 0 45)))
+        (filled_polygon (layer "In1.Cu")
+          (pts (xy 0 0) (xy 100 0) (xy 100 45) (xy 0 45))))
+      (zone (net 2) (net_name "GND") (layer "In2.Cu")
+        (polygon (pts (xy 0 0) (xy 100 0) (xy 100 45) (xy 0 45)))
+        (filled_polygon (layer "In2.Cu")
+          (pts (xy 0 0) (xy 100 0) (xy 100 45) (xy 0 45))))
+    )`
+    await page.goto('/')
+    await page.getByTestId('file-input').setInputFiles(
+      { name: 'four.kicad_pcb', mimeType: 'text/plain', buffer: Buffer.from(revB) })
+    const card = page.getByTestId('stackup-card')
+    await expect(card.or(page.getByTestId('finding-F-0001')).first())
+      .toBeVisible({ timeout: LOAD_MS })
+    if (await card.count()) await card.getByText('Default 4-layer').click()
+    await expect(page.getByTestId('finding-F-0001')).toBeVisible({ timeout: LOAD_MS })
+    await page.getByTestId('rp-toggle').click()
+    await expect(page.getByTestId('rp-bar')).toBeVisible({ timeout: LOAD_MS })
+
+    const download = page.waitForEvent('download')
+    await page.getByTestId('rp-fix').click()
+    expect((await download).suggestedFilename()).toBe('four-stitched.kicad_pcb')
+    await expect(page.getByTestId('rp-fix-result'))
+      .toContainText('1 stitching via(s) added')
+    await expect(page.getByTestId('rp-fix-result')).toContainText('original is untouched')
+
+    // the demo 2-layer board: unstitched but single-plane — the honest refusal
+    await page.goto('/#load=/demo.kicad_pcb')
+    await expect(page.getByTestId('finding-F-0001')).toBeVisible({ timeout: LOAD_MS })
+    await page.getByTestId('rp-toggle').click()
+    await expect(page.getByTestId('rp-bar')).toBeVisible({ timeout: LOAD_MS })
+    await page.getByTestId('rp-fix').click()
+    // this board's actual blocker: not one reference via exists to copy a
+    // style from — the generator refuses to invent pad/drill sizes
+    await expect(page.getByTestId('rp-fix-result'))
+      .toContainText('refusing to invent')
+  })

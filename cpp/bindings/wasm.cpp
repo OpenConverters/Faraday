@@ -16,6 +16,7 @@
 
 #include <faraday/Bench.hpp>
 #include <faraday/Diff.hpp>
+#include <faraday/Fixes.hpp>
 #include <faraday/Import.hpp>
 #include <faraday/Screener.hpp>
 
@@ -73,6 +74,31 @@ static std::string diff_reports_js(std::string base_json, std::string cur_json) 
         return faraday::diff::diff_reports(nlohmann::json::parse(base_json),
                                            nlohmann::json::parse(cur_json))
             .dump();
+    } catch (const std::exception& e) {
+        return nlohmann::json{{"error", e.what()}}.dump();
+    }
+}
+
+// Stitching-via fix: propose + apply on the ORIGINAL board text, returning a
+// new .kicad_pcb (never mutating anything). KiCad boards only.
+static std::string fix_stitching(std::string board_text, std::string stackup) {
+    try {
+        std::optional<faraday::Stackup> user = faraday::resolve_stackup(stackup);
+        faraday::BoardIR board = faraday::import_board(board_text, std::move(user));
+        faraday::Screener sc(board);
+        faraday::fixes::StitchPlan plan = faraday::fixes::propose_stitching(board, sc);
+        nlohmann::json out{{"unstitched", plan.unstitched_seen},
+                           {"notes", plan.notes}};
+        nlohmann::json vj = nlohmann::json::array();
+        for (const auto& v : plan.vias)
+            vj.push_back({{"x", v.x}, {"y", v.y}, {"net", v.net_name},
+                          {"nearNet", v.near_net}, {"size", v.size},
+                          {"drill", v.drill}});
+        out["vias"] = vj;
+        if (!plan.vias.empty())
+            out["text"] = faraday::fixes::apply_stitching(board_text, board,
+                                                          plan.vias);
+        return out.dump();
     } catch (const std::exception& e) {
         return nlohmann::json{{"error", e.what()}}.dump();
     }
@@ -177,6 +203,7 @@ EMSCRIPTEN_BINDINGS(faraday) {
     emscripten::function("analyze", &analyze);
     emscripten::function("analyzeSet", &analyze_set);
     emscripten::function("diffReports", &diff_reports_js);
+    emscripten::function("fixStitching", &fix_stitching);
     emscripten::function("solvePair", &solve_pair);
     emscripten::function("predictEmissions", &predict_emissions);
     emscripten::function("cmBudget", &cm_budget);

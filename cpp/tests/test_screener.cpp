@@ -2,6 +2,7 @@
 #include <catch2/catch_approx.hpp>
 #include <faraday/KicadImporter.hpp>
 #include <faraday/Diff.hpp>
+#include <faraday/Fixes.hpp>
 #include <faraday/Screener.hpp>
 
 #include <fstream>
@@ -808,4 +809,77 @@ TEST_CASE("diff: identity matching, thresholds and the regression gate",
     nlohmann::json drift = base;
     drift["findings"][0]["nextDb"] = -19.4;
     CHECK(diff::diff_reports(base, drift)["verdict"] == "unchanged");
+}
+
+TEST_CASE("fixes: stitching vias are proposed, clear, verified and NOT a regression",
+          "[fixes]") {
+    // 4-layer board: signal runs on F.Cu then drops to B.Cu through a via at
+    // (30,10); GND pours cover In1+In2; the only existing GND via sits 60 mm
+    // away — far outside reach, so the layer change is unstitched.
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (1 "In1.Cu" signal) (2 "In2.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SIG") (net 2 "GND")
+      (segment (start 5 10) (end 30 10) (width 0.25) (layer "F.Cu") (net 1))
+      (via (at 30 10) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
+      (segment (start 30 10) (end 55 10) (width 0.25) (layer "B.Cu") (net 1))
+      (via (at 90 40) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 2))
+      (zone (net 2) (net_name "GND") (layer "In1.Cu")
+        (polygon (pts (xy 0 0) (xy 100 0) (xy 100 45) (xy 0 45)))
+        (filled_polygon (layer "In1.Cu")
+          (pts (xy 0 0) (xy 100 0) (xy 100 45) (xy 0 45))))
+      (zone (net 2) (net_name "GND") (layer "In2.Cu")
+        (polygon (pts (xy 0 0) (xy 100 0) (xy 100 45) (xy 0 45)))
+        (filled_polygon (layer "In2.Cu")
+          (pts (xy 0 0) (xy 100 0) (xy 100 45) (xy 0 45))))
+    )";
+    txt += ")";   // the raw-string terminator ate the board's closer (lesson #3)
+    BoardIR b = import_kicad(txt, builtin_stackup("default-4layer"));
+    Screener sc(b);
+    fixes::StitchPlan plan = fixes::propose_stitching(b, sc);
+    REQUIRE(plan.unstitched_seen == 1);
+    REQUIRE(plan.vias.size() == 1);
+    const auto& sv = plan.vias[0];
+    CHECK(sv.net_name == "GND");
+    CHECK(sv.near_net == "SIG");
+    // within the search ring of the signal via, in the board's via style
+    CHECK(std::hypot(sv.x - 30.0, sv.y - 10.0) < 4.5);
+    CHECK(sv.size == 0.6);
+    CHECK(sv.drill == 0.3);
+    // clear of the signal track (0.25 wide) by pad radius + 0.2
+    CHECK(std::abs(sv.y - 10.0) > 0.2 + 0.3 + 0.125);
+
+    // apply, and the patched board must be BETTER, never a regression
+    std::string patched = fixes::apply_stitching(txt, b, plan.vias);
+    BoardIR b2 = import_kicad(patched, builtin_stackup("default-4layer"));
+    Screener sc2(b2);
+    CHECK(fixes::propose_stitching(b2, sc2).unstitched_seen == 0);
+    nlohmann::json before = analyze_board(b), after = analyze_board(b2);
+    nlohmann::json d = diff::diff_reports(before, after);
+    CHECK(d["added"].empty());
+    CHECK(d["worsened"].empty());
+}
+
+TEST_CASE("fixes: a single-plane board gets zero vias and the honest reason",
+          "[fixes]") {
+    // 2-layer: only Bottom carries a pour — a stitch would land in air on top
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SIG") (net 2 "GND")
+      (segment (start 5 10) (end 30 10) (width 0.25) (layer "F.Cu") (net 1))
+      (via (at 30 10) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
+      (segment (start 30 10) (end 55 25) (width 0.25) (layer "B.Cu") (net 1))
+      (via (at 90 40) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 2))
+      (zone (net 2) (net_name "GND") (layer "B.Cu")
+        (polygon (pts (xy 0 0) (xy 100 0) (xy 100 45) (xy 0 45)))
+        (filled_polygon (layer "B.Cu")
+          (pts (xy 0 0) (xy 100 0) (xy 100 45) (xy 0 45))))
+    )";
+    txt += ")";   // same raw-string-terminator trap
+    BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
+    Screener sc(b);
+    fixes::StitchPlan plan = fixes::propose_stitching(b, sc);
+    CHECK(plan.unstitched_seen == 1);
+    CHECK(plan.vias.empty());
+    REQUIRE(!plan.notes.empty());
+    CHECK(plan.notes[0].find("stackup problem") != std::string::npos);
 }

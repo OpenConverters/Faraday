@@ -4,6 +4,7 @@
 // JSON (board geometry + findings + meta) for the web viewer.
 
 #include <faraday/Diff.hpp>
+#include <faraday/Fixes.hpp>
 #include <faraday/Import.hpp>
 #include <faraday/Screener.hpp>
 
@@ -28,6 +29,7 @@ int main(int argc, char** argv) {
     // regression gate: compare against a previous report and fail only on
     // NEW or WORSENED findings — the gate a brownfield board can adopt today
     std::string baseline_path, fail_on_regression;
+    std::string fix_out;   // --fix-stitching <out.kicad_pcb>
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--stackup" && i + 1 < argc) stackup_name = argv[++i];
@@ -38,6 +40,7 @@ int main(int argc, char** argv) {
         else if (a == "--baseline" && i + 1 < argc) baseline_path = argv[++i];
         else if (a == "--fail-on-regression" && i + 1 < argc)
             fail_on_regression = argv[++i];
+        else if (a == "--fix-stitching" && i + 1 < argc) fix_out = argv[++i];
         else board_paths.push_back(a);
     }
     std::string dir_root;   // non-empty → paths become relative to it
@@ -116,6 +119,24 @@ int main(int argc, char** argv) {
         if (arcs)
             std::cout << "\nnote: " << arcs
                       << " arc(s) approximated by chords in this analysis\n";
+        if (!fix_out.empty()) {
+            if (files.size() != 1)
+                throw std::runtime_error(
+                    "--fix-stitching needs the single original .kicad_pcb");
+            faraday::Screener fsc(board);
+            auto plan = faraday::fixes::propose_stitching(board, fsc);
+            std::cout << "\nstitching: " << plan.unstitched_seen
+                      << " unstitched layer change(s), " << plan.vias.size()
+                      << " via(s) proposed\n";
+            for (const auto& n : plan.notes) std::cout << "  note: " << n << "\n";
+            if (!plan.vias.empty()) {
+                std::ofstream fo(fix_out);
+                fo << faraday::fixes::apply_stitching(files[0].text, board,
+                                                      plan.vias);
+                std::cout << "  wrote " << fix_out << " (review it in KiCad; "
+                          << "the original is untouched)\n";
+            }
+        }
         if (!baseline_path.empty()) {
             nlohmann::json base = nlohmann::json::parse(slurp(baseline_path));
             nlohmann::json d = faraday::diff::diff_reports(base, report);
