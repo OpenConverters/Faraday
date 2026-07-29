@@ -209,7 +209,7 @@ const nfParams = ref({ ringCurrentA: 2, ringMhz: 130, probeHeightMm: 3, victimAr
 // coupling only when it separates aggressor from victim, and the SE comes from
 // its own material, wall and contact pitch at the ring frequency.
 const shields = ref([])
-const shieldSpec = ref({ material: 'tinsteel', wallMm: 0.2, seamPitchMm: 5 })
+const shieldSpec = ref({ material: 'tinsteel', wallMm: 0.2, seamPitchMm: 5, muR: 0 })
 const drawingShield = ref(false)
 function addShield(rect) {
   shields.value = [...shields.value, rect]
@@ -496,6 +496,12 @@ function toggleRule(rule) {
           <input type="range" min="1" max="40" step="0.5" data-testid="nf-shield-pitch"
                  v-model.number="shieldSpec.seamPitchMm" />
           <b>{{ shieldSpec.seamPitchMm.toFixed(1) }} mm</b></label>
+        <label v-if="shields.length" class="spec">µ′
+          <select v-model.number="shieldSpec.muR" data-testid="nf-can-mur"
+                  title="permeability grade — µ′ from the shield material's datasheet at the ring frequency; vendors sell several">
+            <option :value="0">default</option>
+            <option v-for="g in [40, 60, 120, 220, 300, 1000]" :key="g" :value="g">{{ g }}</option>
+          </select></label>
         <button class="detail" data-testid="nf-detail" @click="nfDetail = true">
           victims &amp; shielding →</button>
         <span class="cav"><b>What couples on the board.</b> Quasi-static induction

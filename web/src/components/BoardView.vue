@@ -146,9 +146,22 @@ function hLoop(hull, px, py, pz, cur) {
 }
 
 // The near-field heat wash, drawn before any copper.
+// The field image depends only on (result object, transform, size) — during
+// a rubber-band drag none of those change, so the grid must not recompute
+// per mousemove (user: "why is it so slow drawing the can?").
+const nfCache = { key: null, nfd: null, img: null }
+
 function drawNearField(ctx, w, h, toScreen, invScreen) {
   const nfd = props.nearField
   if (!nfd || !nfd.aggressors?.length) return
+  const cacheKey = `${view.scale}|${view.ox}|${view.oy}|${w}|${h}`
+  if (nfCache.nfd === nfd && nfCache.key === cacheKey && nfCache.img) {
+    ctx.imageSmoothingEnabled = true
+    ctx.imageSmoothingQuality = 'high'
+    ctx.drawImage(nfCache.img, 0, 0, w, h)
+    drawNearFieldVectors(ctx, toScreen)
+    return
+  }
   const step = 5
   const nx = Math.ceil(w / step), ny = Math.ceil(h / step)
   const z = nfd.probeHeightMm
@@ -205,11 +218,17 @@ function drawNearField(ctx, w, h, toScreen, invScreen) {
   const off = document.createElement('canvas')
   off.width = nx; off.height = ny
   off.getContext('2d').putImageData(img, 0, 0)
+  nfCache.nfd = nfd; nfCache.key = cacheKey; nfCache.img = off
   ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = 'high'
   ctx.drawImage(off, 0, 0, w, h)
+  drawNearFieldVectors(ctx, toScreen)
+}
 
-  // the loops the field is integrated over, and the victims sitting in it
+// the loops the field is integrated over, and the victims sitting in it —
+// cheap vector work, drawn fresh on every frame on top of the cached image
+function drawNearFieldVectors(ctx, toScreen) {
+  const nfd = props.nearField
   for (const a of nfd.aggressors) {
     if (!a.hull || a.hull.length < 3) continue
     ctx.strokeStyle = 'rgba(255,255,255,0.75)'
@@ -472,6 +491,9 @@ function onPointerMove(e) {
     draw()
     return
   }
+  // while arming/drawing a shield the crosshair must win — the inline
+  // pointer/grab assignment below was overriding the CSS class (user: "it
+  // looks like a hand and it is weird")
   const hit = hitTest(sx, sy)
   hover.value = hit ? { x: sx, y: sy, ...tooltipFor(hit) } : null
   canvas.value.style.cursor = hit?.findingId !== undefined || (hit && hit.kind === 'finding') ? 'pointer' : 'grab'
@@ -551,6 +573,12 @@ watch(() => props.selectedId, id => {
 watch([layerVis, overlaysOn, () => props.returnPath, () => props.nearField],
       () => draw())
 watch(() => props.findings, () => draw())
+// entering draw mode must drop the hover handler's inline cursor, or the
+// stale 'grab'/'pointer' overrides the crosshair class
+watch(() => props.drawingShield, on => {
+  if (canvas.value) canvas.value.style.cursor = on ? '' : canvas.value.style.cursor
+  if (on) hover.value = null
+})
 </script>
 
 <template>
@@ -606,7 +634,10 @@ canvas { width: 100%; height: 100%; display: block; touch-action: none; }
   border: 1px solid var(--c, var(--tin)); color: var(--c, var(--tin));
   background: rgba(16, 22, 19, 0.82);
 }
-.canvas.drawing { cursor: crosshair; }
+/* element selector: the canvas carries only the conditional 'drawing' class,
+   so '.canvas.drawing' never matched and a stale inline 'grab' cursor (the
+   pan hand) survived into drawing mode */
+canvas.drawing { cursor: crosshair; }
 .lchip.dis { opacity: 0.35; cursor: not-allowed; }
 .lchip.off { opacity: 0.35; border-style: dashed; }
 .lchip.risk { --c: var(--heat-high); }

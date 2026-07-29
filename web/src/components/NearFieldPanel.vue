@@ -16,6 +16,16 @@ const materials = ref([])
 const material = ref('tinsteel')
 const wall = ref(0.2)
 const seam = ref(5)
+// Permeability GRADE: vendors sell the same shield in several µ′ grades
+// (Würth's magnetic-shielding line quotes µ′(f) curves per grade). 0 = the
+// material's generic figure; anything else is µ′ read off the datasheet at
+// the evaluation frequency.
+const muR = ref(0)
+const MU_GRADES = [0, 40, 60, 120, 220, 300, 1000]
+// The can is evaluated at ITS OWN frequency, defaulting to the ring: the
+// grade only matters below a few MHz where the wall binds, and a converter's
+// FUNDAMENTAL lives there even when the ring harmonics do not.
+const evalMhz = ref(0)   // 0 = follow the ring
 const shield = ref(null)
 
 function runShield() {
@@ -24,12 +34,15 @@ function runShield() {
       materials.value = JSON.parse(props.engine.shieldMaterials())
     const out = JSON.parse(props.engine.shielding(JSON.stringify({
       material: material.value, wallMm: wall.value, seamPitchMm: seam.value,
-      fMhz: props.result.ringMhz, fiveSided: true,
+      muR: muR.value,
+      fMhz: evalMhz.value > 0 ? evalMhz.value : props.result.ringMhz,
+      fiveSided: true,
     })))
     shield.value = out.error ? null : out
   } catch { shield.value = null }
 }
-watch([material, wall, seam, () => props.result.ringMhz], runShield, { immediate: true })
+watch([material, wall, seam, muR, evalMhz, () => props.result.ringMhz],
+      runShield, { immediate: true })
 
 const num = (x, d = 1) => (x === undefined || x === null ? '—' : Number(x).toFixed(d))
 const mv = x => (Math.abs(x) >= 1 ? `${num(x, 2)} mV` : `${num(x * 1000, 0)} µV`)
@@ -120,7 +133,8 @@ function set(k, v) { emit('params', { [k]: Number(v) }) }
                 <b class="lim">{{ electric.limitedBy }}</b></div>
             </div>
             <p class="skin">Wall is {{ num(magnetic.wallsPerSkin, 1) }} skin depths
-              ({{ num(magnetic.skinDepthUm, 1) }} µm at {{ num(result.ringMhz, 0) }} MHz).</p>
+              ({{ num(magnetic.skinDepthUm, 1) }} µm at {{ num(shield.fMhz, 2) }} MHz{{
+              muR ? `, µ′ ${muR}` : '' }}).</p>
             <p v-if="magnetic.caveat" class="warn">{{ magnetic.caveat }}.</p>
             <p class="note">
               At <b>{{ num(result.ringMhz, 0) }} MHz</b> the metal is opaque and only the
@@ -138,6 +152,16 @@ function set(k, v) { emit('params', { [k]: Number(v) }) }
               <select v-model="material" data-testid="nf-shield-material">
                 <option v-for="m in materials" :key="m.id" :value="m.id">{{ m.label }}</option>
               </select></label>
+            <label><span>permeability µ′</span>
+              <select v-model.number="muR" data-testid="nf-shield-mur"
+                      title="the grade: µ′ from the material datasheet at the evaluation frequency — shield vendors sell several">
+                <option :value="0">material default</option>
+                <option v-for="g in MU_GRADES.slice(1)" :key="g" :value="g">{{ g }}</option>
+              </select></label>
+            <label><span>evaluate at <b>{{ evalMhz > 0 ? num(evalMhz, 2) + ' MHz' : `ring (${num(result.ringMhz, 0)} MHz)` }}</b></span>
+              <input data-testid="nf-shield-freq" type="range" min="0" max="200"
+                     step="0.05" v-model.number="evalMhz"
+                     title="0 = follow the ring frequency; drop below a few MHz to see the regime where the wall — and the grade — decides" /></label>
             <label><span>wall <b>{{ num(wall, 2) }} mm</b></span>
               <input type="range" min="0.05" max="1" step="0.05" v-model.number="wall" /></label>
             <label><span>contact pitch <b>{{ num(seam, 1) }} mm</b></span>

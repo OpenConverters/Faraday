@@ -276,3 +276,59 @@ test('a drawn can dims the FIELD MAP outside it — colours agree with numbers',
     // legitimately stays), while tint/antialias noise measures under 5%.
     await expect.poll(probe, { timeout: 15000 }).toBeLessThan(before * 0.85)
   })
+
+test('the permeability grade moves the SE exactly where the wall binds',
+  async ({ page }) => {
+    await openNearField(page)
+    await page.getByTestId('nf-detail').click()
+    await expect(page.getByTestId('nf-shield')).toBeVisible()
+
+    const se = () => page.getByTestId('nf-shield').evaluate(el => {
+      const b = el.querySelector('.row:nth-child(2) b')
+      return Number(b.textContent.replace(/[^\d.-]/g, ''))
+    })
+    // at the ring frequency the SEAM binds and the grade is honestly worthless
+    await expect(page.getByTestId('nf-limited')).toHaveText('seam')
+    const atRing = await se()
+    await page.getByTestId('nf-shield-mur').selectOption('220')
+    expect(await se()).toBe(atRing)
+
+    // drop the evaluation to 300 kHz: the WALL binds, and the grade decides
+    await page.getByTestId('nf-shield-freq').fill('0.3')
+    await expect(page.getByTestId('nf-limited')).toHaveText('wall')
+    await page.getByTestId('nf-shield-mur').selectOption('0')
+    const base = await se()
+    await page.getByTestId('nf-shield-mur').selectOption('220')
+    // sqrt(220/100) more skin depths in the same wall: SE must RISE
+    await expect.poll(se).toBeGreaterThan(base + 3)
+  })
+
+test('drawing a can shows a crosshair and does not grind', async ({ page }) => {
+  await openNearField(page)
+  const canvas = page.getByTestId('board-canvas')
+  await page.getByTestId('nf-shield-draw').click()
+  const box = await canvas.boundingBox()
+
+  // the cursor is a crosshair over the board while armed, never a hand
+  await page.mouse.move(box.x + box.width * 0.5, box.y + box.height * 0.5)
+  await expect.poll(() =>
+    canvas.evaluate(el => getComputedStyle(el).cursor)).toBe('crosshair')
+
+  // 40 rubber-band moves must complete quickly: the field image is cached
+  // and only the rectangle redraws per mousemove (it recomputed the whole
+  // Biot-Savart grid per move before — the "why is it so slow" report)
+  const t0 = Date.now()
+  await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.3)
+  await page.mouse.down()
+  for (let i = 0; i < 40; i++)
+    await page.mouse.move(box.x + box.width * (0.3 + i * 0.008),
+                          box.y + box.height * (0.3 + i * 0.008))
+  await page.mouse.up()
+  const ms = Date.now() - t0
+  await expect(page.getByTestId('nf-shield-clear')).toBeVisible()
+  expect(ms).toBeLessThan(2500)
+
+  // and the drawn can accepts a permeability grade
+  await page.getByTestId('nf-can-mur').selectOption('220')
+  await expect(page.getByTestId('nf-bar')).toBeVisible()
+})

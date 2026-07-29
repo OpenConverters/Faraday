@@ -7,8 +7,10 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 
 #include <faraday/NearField.hpp>
+#include <faraday/Shielding.hpp>
 
 using namespace faraday::nf;
+namespace shield = faraday::shield;
 using Catch::Matchers::WithinRel;
 using Catch::Matchers::WithinAbs;
 
@@ -299,4 +301,38 @@ TEST_CASE("the loop field is orientation-aware, as the physics requires",
     // the ratio approaches the dipole's factor of 2
     CHECK_THAT(h_loop(sq, {0, 0, r}, 1.0) / h_loop(sq, {r, 0, 0}, 1.0),
                WithinRel(2.0, 0.1));
+}
+
+TEST_CASE("shield: a permeability grade scales absorption as sqrt(mu) exactly",
+          "[shield][mur]") {
+    // 300 kHz, tin-plated steel: the WALL binds (seam SE ~100 dB there), so
+    // the grade decides. delta ~ 1/sqrt(mu) -> absorption ~ sqrt(mu).
+    shield::Can base;
+    base.material = "tinsteel";
+    base.wall_mm = 0.2;
+    base.seam_pitch_mm = 5.0;
+    const double f = 300e3;
+    const auto v0 = shield::evaluate(base, f, shield::FieldKind::MagneticNear);
+    REQUIRE(v0.limited_by == "wall");
+
+    shield::Can graded = base;
+    graded.mu_r = 400.0;             // 4x the material's 100
+    const auto v1 = shield::evaluate(graded, f, shield::FieldKind::MagneticNear);
+    CHECK_THAT(v1.absorption_db / v0.absorption_db,
+               Catch::Matchers::WithinRel(2.0, 1e-12));   // sqrt(4)
+    CHECK(v1.se_db > v0.se_db);
+    // user-supplied at this frequency: no extrapolation flag
+    CHECK(!v1.permeability_extrapolated);
+
+    // 0 means "the material's own" and changes nothing
+    shield::Can same = base;
+    same.mu_r = 0;
+    CHECK(shield::evaluate(same, f, shield::FieldKind::MagneticNear).se_db ==
+          v0.se_db);
+
+    // sub-unity relative permeability is refused, not clamped
+    shield::Can bad = base;
+    bad.mu_r = 0.5;
+    CHECK_THROWS_WITH(shield::evaluate(bad, f, shield::FieldKind::MagneticNear),
+                      Catch::Matchers::ContainsSubstring(">= 1"));
 }

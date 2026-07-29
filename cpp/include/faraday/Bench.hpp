@@ -607,6 +607,7 @@ inline nfmap::MapParams nfmap_params_from_json(const nlohmann::json& j) {
             can.material = sj.value("material", std::string("tinsteel"));
             can.wall_mm = sj.value("wallMm", 0.2);
             can.seam_pitch_mm = sj.value("seamPitchMm", 5.0);
+            can.mu_r = sj.value("muR", 0.0);
             r.se_db = shield::evaluate(can, p.ring_hz,
                                        shield::FieldKind::MagneticNear).se_db;
             p.shields.push_back(r);
@@ -624,6 +625,7 @@ inline nlohmann::json shielding_json(const nlohmann::json& j) {
     can.wall_mm = j.value("wallMm", 0.2);
     can.seam_pitch_mm = j.value("seamPitchMm", 5.0);
     can.five_sided = j.value("fiveSided", true);
+    can.mu_r = j.value("muR", 0.0);
     const double f = j.value("fMhz", 130.0) * 1e6;
 
     nlohmann::json out = nlohmann::json::array();
@@ -643,6 +645,7 @@ inline nlohmann::json shielding_json(const nlohmann::json& j) {
     const shield::Material& m = shield::material_by_id(can.material);
     return {{"fMhz", f * 1e-6}, {"material", m.id}, {"materialLabel", m.label},
             {"materialNote", m.note}, {"wallMm", can.wall_mm},
+            {"muR", can.mu_r},
             {"seamPitchMm", can.seam_pitch_mm}, {"fiveSided", can.five_sided},
             {"seamResonanceMhz", shield::seam_resonance_hz(can.seam_pitch_mm) * 1e-6},
             {"results", out}};

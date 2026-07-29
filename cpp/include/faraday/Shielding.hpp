@@ -146,6 +146,13 @@ struct Can {
     double wall_mm = 0.2;
     double seam_pitch_mm = 5.0;   // cover-to-frame contact spacing
     bool five_sided = true;       // the PCB is the sixth wall
+    // Permeability override: 0 = the material's own. Vendors sell the same
+    // shield in several permeability GRADES (Würth's magnetic-shielding line
+    // quotes µ′(f) curves per grade); entering µ′ read off the datasheet AT
+    // the analysis frequency replaces the material's generic figure — and
+    // because it is a value for THIS frequency, the roll-off extrapolation
+    // flag does not apply to it.
+    double mu_r = 0;
 };
 
 struct Verdict {
@@ -163,7 +170,15 @@ struct Verdict {
 };
 
 inline Verdict evaluate(const Can& can, double f_hz, FieldKind kind) {
-    const Material& m = material_by_id(can.material);
+    Material m = material_by_id(can.material);
+    if (can.mu_r != 0) {
+        if (can.mu_r < 1.0)
+            throw std::invalid_argument(
+                "shield: permeability override must be >= 1 (relative), got " +
+                std::to_string(can.mu_r));
+        m.mu_r = can.mu_r;
+        m.mu_valid_to_hz = 1e12;   // user-supplied at this frequency
+    }
     Verdict v;
     v.permeability_extrapolated = f_hz > m.mu_valid_to_hz;
     v.skin_depth_um = skin_depth_um(f_hz, m);
