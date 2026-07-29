@@ -188,6 +188,20 @@ with its ✕ (per review, restorable in one click).
 - **`#load=<url>`**: load any board by URL, CORS permitting — the fetch happens in your
   browser.
 
+## Revision diff — "did this change make EMC worse?"
+
+With a board loaded, **compare rev…** takes the previous revision (a board file,
+or a report exported earlier) and answers in one line: N new · M worsened ·
+K resolved — verdict. Findings are matched by identity (rule + net names +
+layers), never by report order, and thresholds separate signal from noise
+(a 0.2 dB re-route wiggle is not a regression; +1 dB is). Rows wear NEW/WORSE
+badges and *only changes* narrows the list to the delta.
+
+The same diff gates CI: `faraday_cli board.kicad_pcb --baseline old-report.json
+--fail-on-regression high|medium` exits 3 only on NEW or WORSENED findings — the
+gate a brownfield board can adopt today, without first fixing every legacy
+finding.
+
 ## Custom stackups
 
 The stackup select (or the "no stackup" card) opens an editor: copper count,

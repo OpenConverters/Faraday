@@ -273,3 +273,44 @@ test('a custom stackup is entered, changes the physics, and is restored',
     await expect(page.getByTestId('meta-strip'))
       .toContainText('user:custom', { timeout: LOAD_MS })
   })
+
+test('revision diff: removing the plane is called a regression, with badges',
+  async ({ page }) => {
+    const fs = await import('node:fs')
+    const revA = fs.readFileSync(FIXTURE, 'utf8')
+    // rev B: the GND zone deleted (balanced-paren cut) — its return plane gone
+    const at = revA.indexOf('(zone')
+    expect(at).toBeGreaterThan(0)
+    let depth = 0, end = at
+    for (let i = at; i < revA.length; i++) {
+      if (revA[i] === '(') depth++
+      if (revA[i] === ')') depth--
+      if (!depth) { end = i + 1; break }
+    }
+    const revB = revA.slice(0, at) + revA.slice(end)
+
+    await page.goto('/')
+    await page.getByTestId('file-input').setInputFiles(
+      { name: 'revB.kicad_pcb', mimeType: 'text/plain',
+        buffer: Buffer.from(revB) })
+    await expect(page.getByTestId('finding-F-0001')).toBeVisible({ timeout: LOAD_MS })
+    const total = Number(await page.getByTestId('finding-count').textContent())
+
+    await page.getByTestId('compare').click()
+    await page.getByTestId('baseline-input').setInputFiles(FIXTURE)
+    await expect(page.getByTestId('diff-bar')).toBeVisible({ timeout: LOAD_MS })
+    await expect(page.getByTestId('diff-bar')).toContainText('regression')
+    // at least one row wears a NEW badge, and it names why this got worse
+    await expect(page.locator('.dbadge.new').first()).toBeVisible()
+
+    // "only changes" narrows the list to the delta
+    await page.getByTestId('only-changes').click()
+    const shown = Number(await page.getByTestId('finding-count').textContent())
+    expect(shown).toBeLessThan(total)
+    await page.getByTestId('only-changes').click()
+
+    // clearing the baseline restores a plain review
+    await page.getByTestId('clear-baseline').click()
+    await expect(page.getByTestId('diff-bar')).toHaveCount(0)
+    await expect(page.getByTestId('finding-count')).toHaveText(String(total))
+  })

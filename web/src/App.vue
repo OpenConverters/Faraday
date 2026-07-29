@@ -133,6 +133,7 @@ async function onFiles(list) {
   }
   stackupChoice.value = ''
   customStackup.value = null
+  clearBaseline()
   await analyze()
 }
 
@@ -161,7 +162,8 @@ const ruleCounts = computed(() => {
 })
 const visibleFindings = computed(() =>
   findings.value.filter(f => !hiddenRules.value.has(f.rule) &&
-                             !hiddenIds.value.has(f.id)))
+                             !hiddenIds.value.has(f.id) &&
+                             (!onlyChanges.value || diffMap.value[f.id])))
 // The bench: the deep tier, opened on one finding. Only findings that carry a
 // cross-section can be solved — a run with no reference plane has no
 // cross-section, and the list says so rather than offering a dead button.
@@ -268,6 +270,58 @@ const stackupSpec = () => customStackup.value
   ? JSON.stringify({ layers: customStackup.value })
   : stackupChoice.value
 const hasSavedStackup = ref(false)
+
+// ---- revision diff ("did this change make EMC worse?") ----
+// baseline = an exported report JSON, or another revision's board file
+// (analysed on the spot with the SAME stackup spec)
+const baselineReport = ref(null)
+const baselineName = ref('')
+const diff = ref(null)
+const onlyChanges = ref(false)
+const baselineInput = ref(null)
+function computeDiff() {
+  diff.value = baselineReport.value && report.value
+    ? JSON.parse(engine.value.diffReports(
+        JSON.stringify(baselineReport.value), JSON.stringify(report.value)))
+    : null
+  if (diff.value?.error) { error.value = diff.value.error; diff.value = null }
+}
+async function onBaselineFile(file) {
+  if (!file || !report.value) return
+  try {
+    const text = await file.text()
+    if (/^\s*\{/.test(text)) {
+      const j = JSON.parse(text)
+      if (!j.findings || !j.meta)
+        throw new Error('not a Faraday report (missing findings/meta)')
+      baselineReport.value = j
+    } else {
+      // another revision's board: analyse it, then re-analyse the current
+      // board so the engine's held board (overlays, PDN) stays the CURRENT one
+      const out = JSON.parse(engine.value.analyze(text, stackupSpec()))
+      if (out.error) throw new Error(out.error)
+      baselineReport.value = out
+      await analyze()
+    }
+    baselineName.value = file.name
+    computeDiff()
+  } catch (e) {
+    error.value = 'baseline: ' + String(e.message || e)
+  }
+}
+function clearBaseline() {
+  baselineReport.value = null; baselineName.value = ''
+  diff.value = null; onlyChanges.value = false
+}
+watch(report, computeDiff)
+const diffMap = computed(() => {
+  const m = {}
+  if (diff.value) {
+    for (const e of diff.value.added) m[e.id] = 'new'
+    for (const e of diff.value.worsened) m[e.id] = 'worse'
+  }
+  return m
+})
 // Individually dismissed findings. Per board, not persisted: a dismissal is a
 // review decision for THIS review.
 const hiddenIds = ref(new Set())
@@ -353,6 +407,14 @@ function toggleRule(rule) {
       </label>
       <button v-if="report" class="filebtn" data-testid="export-report"
               @click="exportReport">export report</button>
+      <button v-if="report && !baselineReport" class="filebtn" data-testid="compare"
+              @click="baselineInput.click()"
+              title="compare against another revision — a board file or an exported report">
+        compare rev…</button>
+      <input ref="baselineInput" type="file" style="display:none"
+             data-testid="baseline-input"
+             accept=".json,.kicad_pcb,.hyp,.HYP,.xml"
+             @change="e => { onBaselineFile(e.target.files[0]); e.target.value = '' }" />
       <select v-if="report || needStackup" data-testid="stackup-select" class="stackup"
               :value="customStackup ? '__active__' : stackupChoice"
               @change="e => chooseStackup(e.target.value)"
@@ -472,6 +534,10 @@ function toggleRule(rule) {
                     :rules="ruleCounts" :hidden-rules="hiddenRules" :total="findings.length"
                     @select="id => selectedId = selectedId === id ? '' : id"
                     :hidden-count="hiddenIds.size"
+                    :diff="diff" :diff-map="diffMap" :baseline-name="baselineName"
+                    :only-changes="onlyChanges"
+                    @toggle-changes="onlyChanges = !onlyChanges"
+                    @clear-baseline="clearBaseline"
                     @toggle-rule="toggleRule"
                     @bench="id => benchId = id"
                     @emissions="id => emitId = id"

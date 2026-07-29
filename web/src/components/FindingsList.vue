@@ -9,8 +9,12 @@ const props = defineProps({
   hiddenRules: { type: Set, default: () => new Set() },
   total: { type: Number, default: 0 },
   hiddenCount: { type: Number, default: 0 },
+  diff: { type: Object, default: null },
+  diffMap: { type: Object, default: () => ({}) },
+  baselineName: { type: String, default: '' },
+  onlyChanges: { type: Boolean, default: false },
 })
-const emit = defineEmits(['select', 'toggleRule', 'bench', 'emissions', 'hide', 'unhideAll', 'glossary'])
+const emit = defineEmits(['select', 'toggleRule', 'bench', 'emissions', 'hide', 'unhideAll', 'glossary', 'toggleChanges', 'clearBaseline'])
 
 const netName = id =>
   props.report.board.nets.find(n => n.id === id)?.name || (id >= 0 ? `net ${id}` : '')
@@ -35,6 +39,19 @@ const toolTitle = f => [
     </h2>
     <button v-if="hiddenCount" class="restore" data-testid="restore-hidden"
             @click="emit('unhideAll')">restore {{ hiddenCount }} dismissed</button>
+    <div v-if="diff" class="diffbar" data-testid="diff-bar"
+         :class="diff.verdict">
+      <b>vs {{ baselineName }}</b>
+      <span>{{ diff.added.length }} new · {{ diff.worsened.length }} worsened ·
+        {{ diff.improved.length }} improved · {{ diff.resolved.length }} resolved
+        — <b>{{ diff.verdict }}</b></span>
+      <button class="dchip" :class="{ on: onlyChanges }" data-testid="only-changes"
+              @click="emit('toggleChanges')">only changes</button>
+      <button class="dchip" data-testid="clear-baseline"
+              @click="emit('clearBaseline')">✕</button>
+      <span v-if="diff.resolved.length && !diff.added.length && !diff.worsened.length"
+            class="dres">resolved: {{ diff.resolved.map(r => r.title).slice(0, 3).join(' · ') }}</span>
+    </div>
     <div v-if="rules.length > 1" class="filters" data-testid="rule-filters">
       <button v-for="[rule, n] in rules" :key="rule" class="rchip"
               :class="{ off: hiddenRules.has(rule) }"
@@ -93,6 +110,8 @@ const toolTitle = f => [
           <span class="fnum" v-if="f.nextDb !== undefined">{{ f.nextDb.toFixed(1) }} dB</span>
           <span class="fnum" v-else-if="f.rule === 'switch-node' || f.rule === 'commutation-loop'">{{ f.coupledLenMm.toFixed(0) }} mm²</span>
           <span class="fnum" v-else-if="f.coupledLenMm">{{ f.coupledLenMm.toFixed(1) }} mm</span>
+          <span v-if="diffMap[f.id]" class="dbadge" :class="diffMap[f.id]"
+                :data-testid="`diff-${f.id}`">{{ diffMap[f.id] === 'new' ? 'NEW' : 'WORSE' }}</span>
           <span class="dismiss" :data-testid="`dismiss-${f.id}`" role="button"
                 title="dismiss this finding for this review"
                 @click.stop="emit('hide', f.id)">✕</span>
@@ -140,6 +159,24 @@ const toolTitle = f => [
 .restore { margin: 0 14px 8px; border: 1px dashed var(--resin-edge); border-radius: 999px;
   padding: 2px 12px; font-size: 11px; color: var(--tin); }
 .restore:hover { border-color: var(--copper); color: var(--copper); }
+.diffbar { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  margin: 0 14px 8px; padding: 6px 10px; border-radius: 6px;
+  border: 1px solid var(--resin-edge); font-family: var(--mono); font-size: 11px;
+  color: var(--tin); }
+.diffbar.regression { border-color: var(--heat-high); }
+.diffbar.improved { border-color: var(--heat-low); }
+.diffbar > b { color: var(--silk); font-weight: 600; }
+.diffbar.regression span b { color: var(--heat-high); }
+.diffbar.improved span b { color: var(--heat-low); }
+.dchip { border: 1px solid var(--resin-edge); border-radius: 999px;
+  padding: 0 9px; font-size: 10.5px; color: var(--tin); margin-left: auto; }
+.dchip + .dchip { margin-left: 0; }
+.dchip.on, .dchip:hover { border-color: var(--copper); color: var(--copper); }
+.dres { width: 100%; font-size: 10px; opacity: 0.8; }
+.dbadge { font-family: var(--mono); font-size: 9px; font-weight: 700;
+  padding: 1px 5px; border-radius: 3px; flex: none; }
+.dbadge.new { background: var(--heat-high); color: var(--board); }
+.dbadge.worse { background: var(--heat-med, #ffb454); color: var(--board); }
 .dismiss { color: var(--tin); opacity: 0; font-size: 11px; padding: 0 2px; flex: none; }
 .row:hover .dismiss { opacity: 0.7; }
 .dismiss:hover { opacity: 1; color: var(--heat-high); }
@@ -185,9 +222,10 @@ const toolTitle = f => [
   /* five columns: heat, id, title, capability marks, value. The marks are
      conditional, and with only four columns declared their presence pushed the
      value onto a second grid row. */
-  /* six columns: heat, id, title, tools, value, dismiss — a conditional child
-     beyond the declared columns wraps onto a second grid row (learned twice) */
-  display: grid; grid-template-columns: 10px auto 1fr auto auto auto;
+  /* seven columns: heat, id, title, tools, value, diff-badge, dismiss — a
+     conditional child beyond the declared columns wraps onto a second grid
+     row (learned twice, now encoded) */
+  display: grid; grid-template-columns: 10px auto 1fr auto auto auto auto;
   gap: 8px; align-items: center;
   width: 100%; text-align: left;
   padding: 8px 14px;

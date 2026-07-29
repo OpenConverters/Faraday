@@ -15,6 +15,7 @@
 #include <emscripten/bind.h>
 
 #include <faraday/Bench.hpp>
+#include <faraday/Diff.hpp>
 #include <faraday/Import.hpp>
 #include <faraday/Screener.hpp>
 
@@ -60,6 +61,18 @@ static std::string analyze_set(std::string request_json) {
         out["format"] = faraday::format_name(fmt);
         g_board = std::move(board);
         return out.dump();
+    } catch (const std::exception& e) {
+        return nlohmann::json{{"error", e.what()}}.dump();
+    }
+}
+
+// Diff two full reports (baseline first). Same implementation the CLI gate
+// uses — the UI and CI can never disagree about what counts as a regression.
+static std::string diff_reports_js(std::string base_json, std::string cur_json) {
+    try {
+        return faraday::diff::diff_reports(nlohmann::json::parse(base_json),
+                                           nlohmann::json::parse(cur_json))
+            .dump();
     } catch (const std::exception& e) {
         return nlohmann::json{{"error", e.what()}}.dump();
     }
@@ -163,6 +176,7 @@ static std::string version() { return "0.2.0"; }
 EMSCRIPTEN_BINDINGS(faraday) {
     emscripten::function("analyze", &analyze);
     emscripten::function("analyzeSet", &analyze_set);
+    emscripten::function("diffReports", &diff_reports_js);
     emscripten::function("solvePair", &solve_pair);
     emscripten::function("predictEmissions", &predict_emissions);
     emscripten::function("cmBudget", &cm_budget);

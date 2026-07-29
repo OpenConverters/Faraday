@@ -3,6 +3,7 @@
 // Screens the board and prints the ranked findings; writes the full report
 // JSON (board geometry + findings + meta) for the web viewer.
 
+#include <faraday/Diff.hpp>
 #include <faraday/Import.hpp>
 #include <faraday/Screener.hpp>
 
@@ -24,6 +25,9 @@ int main(int argc, char** argv) {
     // a directory holding the set.
     std::vector<std::string> board_paths;
     std::string out_path, stackup_name, fail_on;
+    // regression gate: compare against a previous report and fail only on
+    // NEW or WORSENED findings — the gate a brownfield board can adopt today
+    std::string baseline_path, fail_on_regression;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--stackup" && i + 1 < argc) stackup_name = argv[++i];
@@ -31,6 +35,9 @@ int main(int argc, char** argv) {
         // CI gate: exit 3 when any finding reaches this severity. "high" or
         // "medium"; anything else is refused rather than silently ignored.
         else if (a == "--fail-on" && i + 1 < argc) fail_on = argv[++i];
+        else if (a == "--baseline" && i + 1 < argc) baseline_path = argv[++i];
+        else if (a == "--fail-on-regression" && i + 1 < argc)
+            fail_on_regression = argv[++i];
         else board_paths.push_back(a);
     }
     std::string dir_root;   // non-empty → paths become relative to it
@@ -51,7 +58,8 @@ int main(int argc, char** argv) {
     if (board_paths.empty()) {
         std::cerr << "usage: faraday_cli <board.kicad_pcb|board.hyp|board.xml> "
                      "[--stackup default-<N>layer|stackup.json] [-o report.json] "
-                     "[--fail-on high|medium]\n"
+                     "[--fail-on high|medium] [--baseline old.json "
+                     "[--fail-on-regression high|medium]]\n"
                      "       format is detected from the file's contents\n";
         return 2;
     }
@@ -108,6 +116,38 @@ int main(int argc, char** argv) {
         if (arcs)
             std::cout << "\nnote: " << arcs
                       << " arc(s) approximated by chords in this analysis\n";
+        if (!baseline_path.empty()) {
+            nlohmann::json base = nlohmann::json::parse(slurp(baseline_path));
+            nlohmann::json d = faraday::diff::diff_reports(base, report);
+            std::cout << "\nvs baseline: " << d["added"].size() << " new, "
+                      << d["worsened"].size() << " worsened, "
+                      << d["improved"].size() << " improved, "
+                      << d["resolved"].size() << " resolved  ["
+                      << d["verdict"].get<std::string>() << "]\n";
+            for (const auto& e : d["added"])
+                std::cout << "  NEW      [" << e["severityLabel"].get<std::string>()
+                          << "]  " << e["title"].get<std::string>() << "\n";
+            for (const auto& e : d["worsened"])
+                std::cout << "  WORSE    [" << e["severityLabel"].get<std::string>()
+                          << "]  " << e["title"].get<std::string>() << " ("
+                          << e["why"].get<std::string>() << ")\n";
+            for (const auto& e : d["resolved"])
+                std::cout << "  resolved [" << e["severityLabel"].get<std::string>()
+                          << "]  " << e["title"].get<std::string>() << "\n";
+            if (!fail_on_regression.empty()) {
+                if (fail_on_regression != "high" && fail_on_regression != "medium")
+                    throw std::runtime_error(
+                        "--fail-on-regression must be 'high' or 'medium', got '" +
+                        fail_on_regression + "'");
+                if (faraday::diff::has_regression_at(d, fail_on_regression)) {
+                    std::cerr << "FAIL: new or worsened finding(s) at or above '"
+                              << fail_on_regression << "' severity\n";
+                    return 3;
+                }
+            }
+        } else if (!fail_on_regression.empty()) {
+            throw std::runtime_error("--fail-on-regression needs --baseline");
+        }
         if (!fail_on.empty()) {
             if (fail_on != "high" && fail_on != "medium")
                 throw std::runtime_error("--fail-on must be 'high' or 'medium', got '" +

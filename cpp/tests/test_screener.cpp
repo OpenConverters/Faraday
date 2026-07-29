@@ -1,6 +1,7 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
 #include <faraday/KicadImporter.hpp>
+#include <faraday/Diff.hpp>
 #include <faraday/Screener.hpp>
 
 #include <fstream>
@@ -758,4 +759,53 @@ TEST_CASE("screener: broadside coupling across adjacent signal layers", "[screen
     // zero lateral offset -> saturated bound 0.25 -> -12.04 dB
     CHECK((*cr)["nextDb"].get<double>() == Approx(-12.04).margin(0.05));
     CHECK((*cr)["coupledLenMm"].get<double>() == Approx(30.0).margin(0.5));
+}
+
+TEST_CASE("diff: identity matching, thresholds and the regression gate",
+          "[diff]") {
+    auto mk = [](const char* rule, const char* na, const char* nb, int cu,
+                 const char* sev, double db, double len, const char* id) {
+        return nlohmann::json{{"rule", rule}, {"netA", na}, {"netB", nb},
+                              {"cuA", cu}, {"cuB", cu},
+                              {"severityLabel", sev}, {"nextDb", db},
+                              {"coupledLenMm", len}, {"id", id},
+                              {"title", std::string(rule) + " " + na}};
+    };
+    nlohmann::json base{{"findings", {
+        mk("coupled-run", "CLK", "DATA", 0, "medium", -20.0, 30.0, "F-0001"),
+        mk("via-stub", "CLK", "", 0, "low", -99, 5.0, "F-0002"),
+        mk("plane-crossing", "PWM", "GND", 0, "high", -99, 12.0, "F-0003"),
+    }}};
+    nlohmann::json cur{{"findings", {
+        // same key, order and ID shifted, coupling worse by 3 dB
+        mk("coupled-run", "DATA", "CLK", 0, "medium", -17.0, 30.0, "F-0002"),
+        // brand-new high
+        mk("commutation-loop", "SW", "", 0, "high", -99, 200.0, "F-0001"),
+        // via-stub unchanged within noise (0.5 mm ~ 10% but < 2 mm)
+        mk("via-stub", "CLK", "", 0, "low", -99, 5.4, "F-0003"),
+        // plane-crossing gone -> resolved
+    }}};
+    nlohmann::json d = diff::diff_reports(base, cur);
+    REQUIRE(d["added"].size() == 1);
+    CHECK(d["added"][0]["title"] == "commutation-loop SW");
+    REQUIRE(d["worsened"].size() == 1);   // the swapped-net coupled-run, by dB
+    CHECK(d["worsened"][0]["id"] == "F-0002");
+    CHECK(d["worsened"][0]["why"].get<std::string>().find("coupling") == 0);
+    REQUIRE(d["resolved"].size() == 1);
+    CHECK(d["improved"].size() == 0);     // the 0.4 mm via-stub wiggle is noise
+    CHECK(d["verdict"] == "regression");
+
+    CHECK(diff::has_regression_at(d, "high"));    // the new commutation loop
+    // at 'medium' the worsened coupled-run also gates — still true
+    CHECK(diff::has_regression_at(d, "medium"));
+
+    // an unchanged pair of reports says so
+    nlohmann::json same = diff::diff_reports(base, base);
+    CHECK(same["verdict"] == "unchanged");
+    CHECK(!diff::has_regression_at(same, "medium"));
+
+    // a sub-1-dB drift is NOT a regression
+    nlohmann::json drift = base;
+    drift["findings"][0]["nextDb"] = -19.4;
+    CHECK(diff::diff_reports(base, drift)["verdict"] == "unchanged");
 }

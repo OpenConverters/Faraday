@@ -19,6 +19,11 @@ jobs:
         with: { name: faraday-report, path: faraday-report.json }
 ```
 
+For brownfield boards, gate on REGRESSIONS instead of absolute findings:
+store the report artifact and pass it back as the baseline on the next run —
+`--baseline old-report.json --fail-on-regression high` exits 3 only on new or
+worsened findings.
+
 The action builds the CLI from source (cached), so the first run takes a few
 minutes and later runs seconds. Note the action path must be able to see
 `cpp/` — use it from this repository, or vendor the repo.
