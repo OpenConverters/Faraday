@@ -99,16 +99,25 @@ inline Symbol parse_symbol(const std::string& name, double unit_mm) {
 // One parsed features file
 // ---------------------------------------------------------------------------
 
+// One island of a surface: its outer ring and the hole rings cut from it.
+struct OIsland {
+    std::vector<Point> ring;
+    std::vector<std::vector<Point>> holes;
+};
+
 struct OFeature {
     char kind = 0;                    // L, P, A, S (T recorded, geometry-free)
     double x1 = 0, y1 = 0, x2 = 0, y2 = 0;   // mm, y already negated
     double w = 0, h = 0;              // symbol dims
-    std::vector<Point> poly;          // S: outer island
+    // S only. A surface stays ONE feature however many islands it has —
+    // eda/data FID indices count file records, and splitting islands into
+    // extra features would silently shift the net of everything after them.
+    std::vector<OIsland> islands;
 };
 
 struct OLayer {
     std::vector<OFeature> feats;      // in file order — FID indices point here
-    int arcs = 0, holes_skipped = 0;
+    int arcs = 0;
 };
 
 inline OLayer parse_features(const std::string& text) {
@@ -179,26 +188,22 @@ inline OLayer parse_features(const std::string& text) {
             in_hole = false;
         } else if (k == "OB" && surf) {
             in_hole = t.size() >= 4 && t[3] == "H";
-            if (in_hole) ++L.holes_skipped;
-            else if (surf->poly.empty())
-                surf->poly.push_back({std::atof(t[1].c_str()) * unit,
-                                      -std::atof(t[2].c_str()) * unit});
-            else {
-                // a second ISLAND in one S record becomes its own surface
-                OFeature f2;
-                f2.kind = '2';   // continuation island: same net as parent S
-                f2.poly.push_back({std::atof(t[1].c_str()) * unit,
-                                   -std::atof(t[2].c_str()) * unit});
-                L.feats.push_back(f2);
-                surf = &L.feats.back();
+            const Point p0{std::atof(t[1].c_str()) * unit,
+                           -std::atof(t[2].c_str()) * unit};
+            if (in_hole) {
+                if (surf->islands.empty()) surf->islands.push_back({});
+                surf->islands.back().holes.push_back({p0});
+            } else {
+                surf->islands.push_back({{p0}, {}});
             }
-        } else if (k == "OS" && surf && !in_hole && t.size() >= 3) {
-            surf->poly.push_back({std::atof(t[1].c_str()) * unit,
-                                  -std::atof(t[2].c_str()) * unit});
-        } else if (k == "OC" && surf && !in_hole && t.size() >= 3) {
-            surf->poly.push_back({std::atof(t[1].c_str()) * unit,
-                                  -std::atof(t[2].c_str()) * unit});
-            ++L.arcs;
+        } else if ((k == "OS" || k == "OC") && surf && t.size() >= 3) {
+            if (surf->islands.empty()) surf->islands.push_back({});
+            auto& isl = surf->islands.back();
+            auto& ring = in_hole && !isl.holes.empty() ? isl.holes.back()
+                                                       : isl.ring;
+            ring.push_back({std::atof(t[1].c_str()) * unit,
+                            -std::atof(t[2].c_str()) * unit});
+            if (k == "OC") ++L.arcs;
         } else if (k == "T") {
             OFeature f;
             f.kind = 'T';        // text: indexed, no geometry
@@ -380,7 +385,6 @@ inline BoardIR import_odb(const std::vector<NamedFile>& files,
     };
 
     // ---- copper layers ----
-    int holes_skipped = 0;
     for (const auto& m : coppers) {
         const std::string* ft =
             file_at("steps/" + step + "/layers/" + detail::lower(m.name) +
@@ -388,10 +392,8 @@ inline BoardIR import_odb(const std::vector<NamedFile>& files,
         if (!ft) continue;   // a copper layer with no features file is empty
         OLayer L = parse_features(*ft);
         b.approximated_arcs += L.arcs;
-        holes_skipped += L.holes_skipped;
         const int cu = cu_of[detail::lower(m.name)];
         const int fl = fid_lyr(m.name);
-        int parent_net = 0;
         for (size_t fi = 0; fi < L.feats.size(); ++fi) {
             const OFeature& f = L.feats[fi];
             FeatNet fn;
@@ -412,11 +414,28 @@ inline BoardIR import_odb(const std::vector<NamedFile>& files,
                         "\x01" + std::string(1, fn.side) +
                         std::to_string(fn.comp);   // resolved below
                 }
-            } else if (f.kind == 'S' || f.kind == '2') {
-                if (f.kind == 'S') parent_net = fn.net;
-                if (f.poly.size() >= 3)
-                    b.zones.push_back({f.kind == 'S' ? fn.net : parent_net, cu,
-                                       f.poly});
+            } else if (f.kind == 'S') {
+                if (fn.subnet == 'V') continue;   // via pad drawn as a surface
+                if (fn.subnet == 'T') {
+                    // a custom-shaped PAD exported as a surface (fomu's FPGA
+                    // balls) — a pour it is not
+                    double px1 = 1e30, py1 = 1e30, px2 = -1e30, py2 = -1e30;
+                    for (const auto& isl : f.islands)
+                        for (const auto& p : isl.ring) {
+                            px1 = std::min(px1, p.x); py1 = std::min(py1, p.y);
+                            px2 = std::max(px2, p.x); py2 = std::max(py2, p.y);
+                        }
+                    if (px2 > px1)
+                        b.pads.push_back({"\x01" + std::string(1, fn.side) +
+                                              std::to_string(fn.comp),
+                                          fn.net, (px1 + px2) / 2,
+                                          (py1 + py2) / 2, px2 - px1,
+                                          py2 - py1, false, cu});
+                    continue;
+                }
+                for (const auto& isl : f.islands)
+                    if (isl.ring.size() >= 3)
+                        b.zones.push_back({fn.net, cu, isl.ring, isl.holes});
             }
         }
     }
@@ -468,8 +487,37 @@ inline BoardIR import_odb(const std::vector<NamedFile>& files,
     for (auto& p : b.pads)
         if (!p.component.empty() && p.component[0] == '\x01') p.component = "";
 
+    // A through-hole pin appears as one toeprint PER COPPER LAYER in ODB++;
+    // the IR's convention (from the KiCad importer) is ONE pad with cu = -1.
+    // Merge same (component, net, position) across layers so pad counts and
+    // per-component views agree between formats.
+    {
+        std::map<std::tuple<std::string, int, long, long>, size_t> first;
+        std::vector<Pad> merged;
+        for (const auto& p : b.pads) {
+            const auto key = std::make_tuple(
+                p.component, p.net, std::lround(p.x * 1000.0),
+                std::lround(p.y * 1000.0));
+            auto it = first.find(key);
+            if (it == first.end()) {
+                first[key] = merged.size();
+                merged.push_back(p);
+            } else {
+                Pad& q = merged[it->second];
+                q.through_hole = true;
+                q.cu = -1;
+                q.w = std::max(q.w, p.w);
+                q.h = std::max(q.h, p.h);
+            }
+        }
+        b.pads = std::move(merged);
+    }
+
     // ---- vias: drill layers, span from the matrix, net from FID H ----
     for (const auto& m : drills) {
+        // non-plated drills are mounting holes — no barrel, no via
+        if (detail::lower(m.name).find("non-plated") != std::string::npos)
+            continue;
         const std::string* ft =
             file_at("steps/" + step + "/layers/" + detail::lower(m.name) +
                     "/features");
@@ -502,7 +550,8 @@ inline BoardIR import_odb(const std::vector<NamedFile>& files,
     if (const std::string* pf = file_at("steps/" + step + "/profile")) {
         OLayer P = parse_features(*pf);
         for (const auto& f : P.feats) {
-            for (const auto& p : f.poly) grow(p.x, p.y);
+            for (const auto& isl : f.islands)
+                for (const auto& p : isl.ring) grow(p.x, p.y);
             if (f.kind == 'L') { grow(f.x1, f.y1); grow(f.x2, f.y2); }
         }
         b.bbox_from_outline = x2 > x1;
@@ -517,7 +566,6 @@ inline BoardIR import_odb(const std::vector<NamedFile>& files,
     if (!(x2 > x1)) throw BoardError("odb: the job contains no geometry");
     b.bbox_x1 = x1; b.bbox_y1 = y1; b.bbox_x2 = x2; b.bbox_y2 = y2;
 
-    b.gerber_clear_skipped = holes_skipped;   // same semantics: voids skipped
     return b;
 }
 

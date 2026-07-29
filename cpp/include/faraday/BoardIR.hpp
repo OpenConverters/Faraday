@@ -112,6 +112,11 @@ struct ZonePoly {
     int net;
     int cu;
     std::vector<Point> pts;  // filled polygon outline, mm
+    // Holes in the fill (thermal reliefs, clearances). ODB++ surfaces carry
+    // them explicitly; treating a cleared area as copper misclassifies a
+    // holey signal layer as a plane (seen on fomu's In1), so contains()
+    // honours them.
+    std::vector<std::vector<Point>> holes;
 
     double signed_area() const {  // shoelace; sign = winding
         double a = 0.0;
@@ -123,16 +128,24 @@ struct ZonePoly {
         return 0.5 * a;
     }
 
-    bool contains(double x, double y) const {  // even-odd ray cast
+    static bool ring_contains(const std::vector<Point>& ring, double x,
+                              double y) {  // even-odd ray cast
         bool in = false;
-        for (size_t i = 0, n = pts.size(), j = n - 1; i < n; j = i++) {
-            const Point& a = pts[i];
-            const Point& b = pts[j];
+        for (size_t i = 0, n = ring.size(), j = n - 1; i < n; j = i++) {
+            const Point& a = ring[i];
+            const Point& b = ring[j];
             if ((a.y > y) != (b.y > y) &&
                 x < (b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x)
                 in = !in;
         }
         return in;
+    }
+
+    bool contains(double x, double y) const {
+        if (!ring_contains(pts, x, y)) return false;
+        for (const auto& h : holes)
+            if (ring_contains(h, x, y)) return false;
+        return true;
     }
 };
 
@@ -215,7 +228,17 @@ inline nlohmann::json to_json(const BoardIR& b) {
     for (const auto& z : b.zones) {
         nlohmann::json pts = nlohmann::json::array();
         for (const auto& p : z.pts) pts.push_back({p.x, p.y});
-        j["zones"].push_back({{"net", z.net}, {"cu", z.cu}, {"pts", pts}});
+        nlohmann::json zj{{"net", z.net}, {"cu", z.cu}, {"pts", pts}};
+        if (!z.holes.empty()) {
+            nlohmann::json hs = nlohmann::json::array();
+            for (const auto& h : z.holes) {
+                nlohmann::json hp = nlohmann::json::array();
+                for (const auto& p : h) hp.push_back({p.x, p.y});
+                hs.push_back(hp);
+            }
+            zj["holes"] = hs;
+        }
+        j["zones"].push_back(zj);
     }
     j["pads"] = nlohmann::json::array();
     for (const auto& p : b.pads)
