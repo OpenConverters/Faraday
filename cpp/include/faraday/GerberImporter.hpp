@@ -153,10 +153,16 @@ inline GerberLayer parse_gerber(const std::string& text) {
                 L.has_net_attrs = true;
             } else if (cmd.rfind("TO.C,", 0) == 0) {
                 comp = cmd.substr(5);
+            } else if (cmd.rfind("TO.P,", 0) == 0) {
+                // the PIN attribute (%TO.P,REF,PAD) — what KiCad actually
+                // emits on pad flashes; the refdes is the part before the
+                // second comma
+                const size_t c = cmd.find(',', 5);
+                comp = cmd.substr(5, c - 5);
             } else if (cmd == "TD" || cmd == "TD.N") {
                 net.clear();
                 if (cmd == "TD") comp.clear();
-            } else if (cmd == "TD.C") {
+            } else if (cmd == "TD.C" || cmd == "TD.P") {
                 comp.clear();
             } else if (cmd == "LPD") {
                 dark = true;
@@ -437,13 +443,23 @@ inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
     for (const auto& d : drills) {
         int net = 0;
         double size = d.d * 1.6;
+        bool component_hole = false, via_ring = false;
         for (size_t k = 0; k < flashes.size(); ++k) {
             if (std::hypot(flashes[k].x - d.x, flashes[k].y - d.y) < 0.05) {
                 net = flashes[k].net;
                 size = std::max(flashes[k].w, flashes[k].h);
-                if (flashes[k].comp.empty()) via_flashes.insert(k);
+                if (flashes[k].comp.empty()) { via_flashes.insert(k); via_ring = true; }
+                else component_hole = true;
             }
         }
+        // What is a via here — calibrated against the native import on the
+        // 9-board corpus. A compless flash on ANY layer is a via ring, so the
+        // drill is a via (this keeps via-in-pad, where the outer layer flash
+        // carries the pad's %TO.P). Flashes on every layer owned by a
+        // component = a through-hole pin. No flash at all = an NPTH mounting
+        // hole (KiCad merges NPTH into the same .drl by default).
+        if (!via_ring) continue;
+        (void)component_hole;
         b.vias.push_back({net, d.x, d.y, size, d.d, 0, last_cu});
     }
 

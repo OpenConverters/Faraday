@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """Cross-format consistency sweep: every corpus board through its native KiCad
-import AND through kicad-cli's ODB++ export, compared on what carries
-electrical meaning. The importer earns trust by agreeing with itself across
+import AND through kicad-cli's ODB++ and Gerber X2 exports, compared on what
+carries electrical meaning. The importer earns trust by agreeing with itself across
 formats — per-net routed copper, via counts, findings — not by passing its
 own fixtures.
 
@@ -85,38 +85,48 @@ def sweep(board, tmp):
     if stack is None:
         print(f"{name}: SKIP (no default stackup for its copper count)")
         return True
-    odbdir = os.path.join(tmp, name)
     # flatpak cannot see /tmp of the host user in all setups; stage in HOME
+    odbdir = os.path.join(tmp, name)
     subprocess.run(kicad_cli() + ["pcb", "export", "odb", "--compression",
                                   "none", "--units", "mm", "--precision", "6",
                                   "-o", odbdir, os.path.abspath(board)],
                    check=True, capture_output=True)
+    gerbdir = os.path.join(tmp, name + "-gerb")
+    os.makedirs(gerbdir, exist_ok=True)
+    for sub in (["gerbers"], ["drill"]):
+        subprocess.run(kicad_cli() + ["pcb", "export"] + sub +
+                       ["-o", gerbdir + "/", os.path.abspath(board)],
+                       check=True, capture_output=True)
     kj = os.path.join(tmp, f"kic-{name}.json")
-    oj = os.path.join(tmp, f"odb-{name}.json")
     run_cli(board, stack, kj)
-    run_cli(odbdir, stack, oj)
     k = json.load(open(kj))
-    o = json.load(open(oj))
-    kb, ob = k["board"], o["board"]
+    kb = k["board"]
+    tk = sum(netlen(k).values())
+    fk = len(k["findings"])
 
     ok = True
-    if len(kb["vias"]) != len(ob["vias"]):
-        print(f"{name}: VIA COUNT {len(kb['vias'])} != {len(ob['vias'])}")
-        ok = False
-    tk = sum(netlen(k).values())
-    to = sum(netlen(o).values())
-    # ODB++ runs slightly LONGER (finer arc tessellation); never shorter
-    if not (tk * 0.995 <= to <= tk * 1.10):
-        print(f"{name}: ROUTED {tk:.0f} vs {to:.0f} mm outside tolerance")
-        ok = False
-    fk, fo = len(k["findings"]), len(o["findings"])
-    if abs(fk - fo) > max(4, 0.1 * max(fk, fo)):
-        print(f"{name}: FINDINGS {fk} vs {fo} diverge")
-        ok = False
-    status = "OK " if ok else "FAIL"
-    print(f"{status} {name}: segs {len(kb['segments'])}/{len(ob['segments'])}"
-          f" vias {len(kb['vias'])}/{len(ob['vias'])}"
-          f" routed {tk:.0f}/{to:.0f} mm findings {fk}/{fo}")
+    for tag, target, via_exact in (("odb", odbdir, True),
+                                   ("gerber", gerbdir, False)):
+        xj = os.path.join(tmp, f"{tag}-{name}.json")
+        run_cli(target, stack, xj)
+        o = json.load(open(xj))
+        ob = o["board"]
+        if via_exact and len(kb["vias"]) != len(ob["vias"]):
+            print(f"{name}/{tag}: VIA COUNT {len(kb['vias'])} != {len(ob['vias'])}")
+            ok = False
+        to = sum(netlen(o).values())
+        # exports run slightly LONGER (finer arc tessellation); never shorter
+        if not (tk * 0.995 <= to <= tk * 1.10):
+            print(f"{name}/{tag}: ROUTED {tk:.0f} vs {to:.0f} mm outside tolerance")
+            ok = False
+        fo = len(o["findings"])
+        if abs(fk - fo) > max(4, 0.1 * max(fk, fo)):
+            print(f"{name}/{tag}: FINDINGS {fk} vs {fo} diverge")
+            ok = False
+        print(f"{'OK ' if ok else 'FAIL'} {name}/{tag}:"
+              f" segs {len(kb['segments'])}/{len(ob['segments'])}"
+              f" vias {len(kb['vias'])}/{len(ob['vias'])}"
+              f" routed {tk:.0f}/{to:.0f} mm findings {fk}/{fo}")
     return ok
 
 
