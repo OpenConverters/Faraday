@@ -22,6 +22,12 @@ Submitting to the official KiCad PCM repository is an external review process
 (https://gitlab.com/kicad/addons/metadata) — the zip and metadata here are in
 the required format, but the submission itself is a manual step.
 
-**Status: untested inside a live KiCad session** — written against the
-documented pcbnew ActionPlugin API; the `#load=` browser side is covered by
-Faraday's own e2e suite.
+**Status: exercised headless against real pcbnew 9.0.7** — `test_plugin.py`
+(run it with `flatpak run --command=python3 org.kicad.KiCad
+integrations/kicad/test_plugin.py <board>`) loads a real board through
+pcbnew, runs the plugin, and asserts the served file is byte-identical to
+the board on disk with the CORS header present, the opened URL has the
+`#load=` shape, and a second click replaces the server instead of leaking
+one. The `#load=` browser side is covered by Faraday's own e2e suite. The
+one thing still unexercised is the toolbar button inside the live GUI —
+that part is declarative (`defaults()`) and has no headless equivalent.
