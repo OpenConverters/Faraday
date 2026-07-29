@@ -707,6 +707,10 @@ function toggleRule(rule) {
 .radbar .top b.bad { color: var(--heat-high); }
 .radbar .spec { display: flex; align-items: center; gap: 6px; }
 .radbar .spec input { width: 90px; accent-color: var(--copper); }
+.radbar .spec select { background: var(--resin); color: var(--silk);
+  font-family: var(--mono); font-size: 11px; border: 1px solid var(--resin-edge);
+  border-radius: 3px; padding: 2px 5px; }
+.radbar .spec select:hover { border-color: var(--copper); }
 .radbar .cav { flex: 1 1 100%; opacity: 0.75; font-family: var(--sans); font-size: 11px; }
 
 .metastrip {

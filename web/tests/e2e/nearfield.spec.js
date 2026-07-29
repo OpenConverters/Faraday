@@ -314,19 +314,20 @@ test('drawing a can shows a crosshair and does not grind', async ({ page }) => {
   await expect.poll(() =>
     canvas.evaluate(el => getComputedStyle(el).cursor)).toBe('crosshair')
 
-  // 40 rubber-band moves must complete quickly: the field image is cached
-  // and only the rectangle redraws per mousemove (it recomputed the whole
-  // Biot-Savart grid per move before — the "why is it so slow" report)
-  const t0 = Date.now()
+  // a 40-move rubber-band drag must not recompute the Biot-Savart grid per
+  // mousemove (the "why is it so slow" report) — the compute COUNTER is the
+  // invariant; wall-clock would just measure suite parallelism
+  const computes = () => canvas.evaluate(el => Number(el.dataset.nfComputes || 0))
+  const before = await computes()
   await page.mouse.move(box.x + box.width * 0.3, box.y + box.height * 0.3)
   await page.mouse.down()
   for (let i = 0; i < 40; i++)
     await page.mouse.move(box.x + box.width * (0.3 + i * 0.008),
                           box.y + box.height * (0.3 + i * 0.008))
   await page.mouse.up()
-  const ms = Date.now() - t0
   await expect(page.getByTestId('nf-shield-clear')).toBeVisible()
-  expect(ms).toBeLessThan(2500)
+  // mouseup applies the can -> one legitimate recompute; the 40 moves none
+  expect(await computes()).toBeLessThanOrEqual(before + 2)
 
   // and the drawn can accepts a permeability grade
   await page.getByTestId('nf-can-mur').selectOption('220')

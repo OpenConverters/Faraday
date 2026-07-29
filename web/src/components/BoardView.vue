@@ -219,6 +219,10 @@ function drawNearField(ctx, w, h, toScreen, invScreen) {
   off.width = nx; off.height = ny
   off.getContext('2d').putImageData(img, 0, 0)
   nfCache.nfd = nfd; nfCache.key = cacheKey; nfCache.img = off
+  // test hook: how many times the full Biot-Savart grid was computed — the
+  // cache invariant is "a 40-move drag adds at most one", load-independent
+  canvas.value.dataset.nfComputes =
+    String(1 + Number(canvas.value.dataset.nfComputes || 0))
   ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = 'high'
   ctx.drawImage(off, 0, 0, w, h)
