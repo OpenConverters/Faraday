@@ -26,8 +26,9 @@ static std::optional<faraday::BoardIR> g_board;
 
 static std::string analyze(std::string board_text, std::string stackup_name) {
     try {
-        std::optional<faraday::Stackup> user;
-        if (!stackup_name.empty()) user = faraday::builtin_stackup(stackup_name);
+        // stackup_name: builtin name, or a full custom stackup as JSON
+        std::optional<faraday::Stackup> user =
+            faraday::resolve_stackup(stackup_name);
         faraday::BoardFormat fmt;
         faraday::BoardIR board =
             faraday::import_board(board_text, std::move(user), &fmt);
@@ -50,9 +51,8 @@ static std::string analyze_set(std::string request_json) {
         for (const auto& f : j.at("files"))
             files.push_back({f.at("name").get<std::string>(),
                              f.at("text").get<std::string>()});
-        std::optional<faraday::Stackup> user;
-        const std::string sn = j.value("stackup", "");
-        if (!sn.empty()) user = faraday::builtin_stackup(sn);
+        std::optional<faraday::Stackup> user =
+            faraday::resolve_stackup(j.value("stackup", ""));
         faraday::BoardFormat fmt;
         faraday::BoardIR board =
             faraday::import_board_set(files, std::move(user), &fmt);

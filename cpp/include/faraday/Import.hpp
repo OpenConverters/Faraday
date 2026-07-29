@@ -93,4 +93,70 @@ inline BoardIR import_board_set(const std::vector<gerber::NamedFile>& files,
     return gerber::import_gerber_set(files, std::move(user_stackup));
 }
 
+// ---------------------------------------------------------------------------
+// Custom stackups
+// ---------------------------------------------------------------------------
+
+// A user-entered stackup, as JSON:
+//   {"layers":[{"kind":"copper","name":"F.Cu","thicknessMm":0.035},
+//              {"kind":"dielectric","name":"core","thicknessMm":1.51,
+//               "epsilonR":4.5}, ...]}
+// Validated strictly — the whole point of entering a custom stackup is
+// accuracy, so nothing is defaulted or repaired: it must start and end with
+// copper, strictly alternate, carry positive thicknesses everywhere and an
+// epsilon_r >= 1 on every dielectric, or it is refused with the reason.
+inline Stackup stackup_from_json(const nlohmann::json& j) {
+    if (!j.contains("layers") || !j.at("layers").is_array() ||
+        j.at("layers").empty())
+        throw BoardError("custom stackup: 'layers' array required");
+    Stackup s;
+    s.source = "user:custom";
+    bool expect_copper = true;
+    for (const auto& lj : j.at("layers")) {
+        StackLayer l;
+        const std::string kind = lj.value("kind", "");
+        if (kind != "copper" && kind != "dielectric")
+            throw BoardError("custom stackup: layer kind must be 'copper' or "
+                             "'dielectric', got '" + kind + "'");
+        l.kind = kind == "copper" ? LayerKind::Copper : LayerKind::Dielectric;
+        if ((l.kind == LayerKind::Copper) != expect_copper)
+            throw BoardError(
+                "custom stackup: layers must alternate copper/dielectric, "
+                "starting and ending with copper");
+        expect_copper = !expect_copper;
+        l.name = lj.value("name", kind);
+        l.thickness_mm = lj.value("thicknessMm", 0.0);
+        if (!(l.thickness_mm > 0.0))
+            throw BoardError("custom stackup: layer '" + l.name +
+                             "' needs a positive thicknessMm");
+        if (l.kind == LayerKind::Dielectric) {
+            if (!lj.contains("epsilonR"))
+                throw BoardError("custom stackup: dielectric '" + l.name +
+                                 "' needs epsilonR");
+            const double er = lj.at("epsilonR").get<double>();
+            if (!(er >= 1.0))
+                throw BoardError("custom stackup: dielectric '" + l.name +
+                                 "' has epsilonR " + std::to_string(er) +
+                                 " — must be >= 1");
+            l.epsilon_r = er;
+        } else {
+            l.copper_type = "signal";
+        }
+        s.layers.push_back(std::move(l));
+    }
+    if (s.layers.back().kind != LayerKind::Copper)
+        throw BoardError("custom stackup: must end with a copper layer");
+    if (s.copper_indices().size() < 2)
+        throw BoardError("custom stackup: needs at least 2 copper layers");
+    return s;
+}
+
+// One resolver for every stackup spec a caller can hand us: "" -> none,
+// "{...}" -> custom JSON, anything else -> a builtin name.
+inline std::optional<Stackup> resolve_stackup(const std::string& spec) {
+    if (spec.empty()) return std::nullopt;
+    if (spec[0] == '{') return stackup_from_json(nlohmann::json::parse(spec));
+    return builtin_stackup(spec);
+}
+
 }  // namespace faraday

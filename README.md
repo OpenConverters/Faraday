@@ -188,6 +188,18 @@ with its ✕ (per review, restorable in one click).
 - **`#load=<url>`**: load any board by URL, CORS permitting — the fetch happens in your
   browser.
 
+## Custom stackups
+
+The stackup select (or the "no stackup" card) opens an editor: copper count,
+copper weight, and per-dielectric height + ε<sub>r</sub> straight off the fab's
+stackup drawing, with a live cross-section. Every Z₀, coupling and return-path
+figure stands on these numbers — a Gerber set or ODB++ job analysed on a
+default preset becomes accurate the moment the real stackup goes in. Entered
+stackups are remembered per board file (locally, like everything else) and the
+CLI takes the same thing as `--stackup mystackup.json`. Validation is strict:
+alternating copper/dielectric, positive thicknesses, ε<sub>r</sub> ≥ 1 on every
+dielectric — anything else is refused with the reason, never repaired.
+
 ## Stackup policy
 
 Z₀ and coupling depend on the stackup. If the board file carries none, Faraday **refuses** rather

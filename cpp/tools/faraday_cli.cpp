@@ -50,7 +50,7 @@ int main(int argc, char** argv) {
     }
     if (board_paths.empty()) {
         std::cerr << "usage: faraday_cli <board.kicad_pcb|board.hyp|board.xml> "
-                     "[--stackup default-<N>layer] [-o report.json] "
+                     "[--stackup default-<N>layer|stackup.json] [-o report.json] "
                      "[--fail-on high|medium]\n"
                      "       format is detected from the file's contents\n";
         return 2;
@@ -65,8 +65,13 @@ int main(int argc, char** argv) {
                      : std::filesystem::relative(p, dir_root).generic_string(),
                  slurp(p)});
 
-        std::optional<faraday::Stackup> user;
-        if (!stackup_name.empty()) user = faraday::builtin_stackup(stackup_name);
+        // --stackup takes a builtin name, or a path to a custom stackup
+        // JSON file (ends in .json) — the same format the web editor saves
+        if (stackup_name.size() > 5 &&
+            stackup_name.compare(stackup_name.size() - 5, 5, ".json") == 0)
+            stackup_name = slurp(stackup_name);
+        std::optional<faraday::Stackup> user =
+            faraday::resolve_stackup(stackup_name);
         faraday::BoardFormat fmt;
         faraday::BoardIR board =
             faraday::import_board_set(files, std::move(user), &fmt);

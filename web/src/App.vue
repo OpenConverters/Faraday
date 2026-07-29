@@ -8,6 +8,7 @@ import NearFieldPanel from './components/NearFieldPanel.vue'
 import PdnPanel from './components/PdnPanel.vue'
 import ImpedancePanel from './components/ImpedancePanel.vue'
 import GlossaryPanel from './components/GlossaryPanel.vue'
+import StackupPanel from './components/StackupPanel.vue'
 import { unzip } from './zip.js'
 
 const engine = ref(null)
@@ -49,6 +50,7 @@ async function loadFromHash() {
     boardText.value = txt
     boardFiles.value = []
     stackupChoice.value = ''
+    customStackup.value = null
     await analyze()
   } catch (e) {
     error.value = `could not load ${url}: ${e.message || e}`
@@ -83,14 +85,15 @@ async function analyze() {
   needStackup.value = false
   const out = boardFiles.value.length
     ? JSON.parse(engine.value.analyzeSet(JSON.stringify(
-        { files: boardFiles.value, stackup: stackupChoice.value })))
-    : JSON.parse(engine.value.analyze(boardText.value, stackupChoice.value))
+        { files: boardFiles.value, stackup: stackupSpec() })))
+    : JSON.parse(engine.value.analyze(boardText.value, stackupSpec()))
   if (out.error) {
     report.value = null
     if (out.error.includes('no stackup')) {
       // explicit choice required — Faraday never assumes a stackup silently
       needStackup.value = true
       stackupSuggest.value = (out.error.match(/default-\d+layer/) || [''])[0]
+      hasSavedStackup.value = !!savedStackup()
     } else {
       error.value = out.error
     }
@@ -129,6 +132,7 @@ async function onFiles(list) {
     return
   }
   stackupChoice.value = ''
+  customStackup.value = null
   await analyze()
 }
 
@@ -138,6 +142,8 @@ function onDrop(e) {
 }
 
 function chooseStackup(name) {
+  if (name === '__custom__') { stackupOpen.value = true; return }
+  customStackup.value = null
   stackupChoice.value = name
   analyze()
 }
@@ -239,6 +245,29 @@ const ruleCountMap = computed(() => Object.fromEntries(ruleCounts.value))
 
 const pdnOpen = ref(false)
 const glossaryOpen = ref(false)
+const stackupOpen = ref(false)
+// A user-entered stackup (layers array). When set it wins over stackupChoice
+// and is persisted per board file name, because a stackup belongs to a board.
+const customStackup = ref(null)
+function stackupKey() { return 'faraday-stackup:' + fileName.value }
+function savedStackup() {
+  try { return JSON.parse(localStorage.getItem(stackupKey()) || 'null') }
+  catch { return null }
+}
+function applyStackup(layers) {
+  customStackup.value = layers
+  stackupOpen.value = false
+  try { localStorage.setItem(stackupKey(), JSON.stringify(layers)) } catch {}
+  analyze()
+}
+function useSavedStackup() {
+  const l = savedStackup()
+  if (l) { customStackup.value = l; analyze() }
+}
+const stackupSpec = () => customStackup.value
+  ? JSON.stringify({ layers: customStackup.value })
+  : stackupChoice.value
+const hasSavedStackup = ref(false)
 // Individually dismissed findings. Per board, not persisted: a dismissal is a
 // review decision for THIS review.
 const hiddenIds = ref(new Set())
@@ -325,11 +354,15 @@ function toggleRule(rule) {
       <button v-if="report" class="filebtn" data-testid="export-report"
               @click="exportReport">export report</button>
       <select v-if="report || needStackup" data-testid="stackup-select" class="stackup"
-              :value="stackupChoice" @change="e => chooseStackup(e.target.value)"
+              :value="customStackup ? '__active__' : stackupChoice"
+              @change="e => chooseStackup(e.target.value)"
               aria-label="Stackup">
+        <option v-if="customStackup" value="__active__">
+          Stackup: custom ({{ customStackup.filter(l => l.kind === 'copper').length }} layers)</option>
         <option value="">Stackup: from board file</option>
         <option value="default-2layer">Stackup: default 2-layer FR4</option>
         <option value="default-4layer">Stackup: default 4-layer FR4</option>
+        <option value="__custom__">Stackup: enter the real one…</option>
       </select>
     </header>
 
@@ -350,6 +383,12 @@ function toggleRule(rule) {
               class="chip" data-testid="stackup-suggest"
               @click="chooseStackup(stackupSuggest)">
         Default {{ stackupSuggest.match(/\d+/)[0] }}-layer FR4 (this set's copper count)</button>
+      <button class="chip real" data-testid="stackup-custom"
+              @click="stackupOpen = true">
+        Enter the real stackup — every Z₀ and coupling figure stands on it</button>
+      <button v-if="hasSavedStackup" class="chip" data-testid="stackup-saved"
+              @click="useSavedStackup">
+        Use the stackup you saved for this board</button>
     </div>
 
     <main class="work" v-if="report">
@@ -481,6 +520,10 @@ function toggleRule(rule) {
     <GlossaryPanel v-if="glossaryOpen" :rule-counts="ruleCountMap"
                    :hidden-rules="hiddenRules"
                    @toggle-rule="toggleRule" @close="glossaryOpen = false" />
+
+    <StackupPanel v-if="stackupOpen" :initial="customStackup"
+                  :copper-hint="Number((stackupSuggest.match(/\d+/) || [0])[0])"
+                  @apply="applyStackup" @close="stackupOpen = false" />
 
     <footer v-if="meta" class="metastrip" data-testid="meta-strip">
       <span class="m">format: <b>{{ report.format }}</b></span>

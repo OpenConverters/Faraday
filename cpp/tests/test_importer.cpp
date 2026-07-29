@@ -1,6 +1,8 @@
 #include <catch2/catch_test_macros.hpp>
 #include <catch2/catch_approx.hpp>
+#include <catch2/matchers/catch_matchers_floating_point.hpp>
 #include <catch2/matchers/catch_matchers_string.hpp>
+#include <faraday/Import.hpp>
 #include <faraday/KicadImporter.hpp>
 #include <faraday/Screener.hpp>
 
@@ -272,4 +274,69 @@ TEST_CASE("screener: a poured layer still has its OWN routing analysed",
 TEST_CASE("importer: unknown built-in stackup name throws", "[importer]") {
     CHECK_THROWS_WITH(builtin_stackup("nonsense"),
                       Catch::Matchers::ContainsSubstring("unknown built-in stackup"));
+}
+
+TEST_CASE("custom stackup: entered numbers reach the physics unchanged",
+          "[stackup]") {
+    nlohmann::json j = nlohmann::json::parse(R"({"layers":[
+      {"kind":"copper","name":"F.Cu","thicknessMm":0.035},
+      {"kind":"dielectric","name":"pp","thicknessMm":0.21,"epsilonR":3.8},
+      {"kind":"copper","name":"In1","thicknessMm":0.018},
+      {"kind":"dielectric","name":"core","thicknessMm":0.71,"epsilonR":4.6},
+      {"kind":"copper","name":"In2","thicknessMm":0.018},
+      {"kind":"dielectric","name":"pp2","thicknessMm":0.21,"epsilonR":3.8},
+      {"kind":"copper","name":"B.Cu","thicknessMm":0.035}]})");
+    Stackup s = stackup_from_json(j);
+    CHECK(s.source == "user:custom");
+    REQUIRE(s.copper_indices().size() == 4);
+    double h, er;
+    s.dielectric_between(0, 1, h, er);
+    CHECK_THAT(h, Catch::Matchers::WithinAbs(0.21, 1e-12));
+    CHECK_THAT(er, Catch::Matchers::WithinAbs(3.8, 1e-12));
+    // spanning 0..2 crosses pp + In1 copper + core: series dielectrics only
+    s.dielectric_between(0, 2, h, er);
+    CHECK_THAT(h, Catch::Matchers::WithinAbs(0.92, 1e-12));
+    CHECK_THAT(er, Catch::Matchers::WithinAbs(0.92 / (0.21 / 3.8 + 0.71 / 4.6),
+                                              1e-12));
+}
+
+TEST_CASE("custom stackup: every malformation is refused with its reason",
+          "[stackup]") {
+    auto parse = [](const char* txt) {
+        return stackup_from_json(nlohmann::json::parse(txt));
+    };
+    CHECK_THROWS_WITH(parse(R"({"layers":[]})"),
+                      Catch::Matchers::ContainsSubstring("'layers'"));
+    CHECK_THROWS_WITH(  // two coppers in a row
+        parse(R"({"layers":[
+          {"kind":"copper","thicknessMm":0.035},
+          {"kind":"copper","thicknessMm":0.035}]})"),
+        Catch::Matchers::ContainsSubstring("alternate"));
+    CHECK_THROWS_WITH(  // ends on a dielectric
+        parse(R"({"layers":[
+          {"kind":"copper","thicknessMm":0.035},
+          {"kind":"dielectric","thicknessMm":1.5,"epsilonR":4.5}]})"),
+        Catch::Matchers::ContainsSubstring("end with a copper"));
+    CHECK_THROWS_WITH(  // dielectric without epsilonR
+        parse(R"({"layers":[
+          {"kind":"copper","thicknessMm":0.035},
+          {"kind":"dielectric","thicknessMm":1.5},
+          {"kind":"copper","thicknessMm":0.035}]})"),
+        Catch::Matchers::ContainsSubstring("epsilonR"));
+    CHECK_THROWS_WITH(  // zero thickness
+        parse(R"({"layers":[
+          {"kind":"copper","thicknessMm":0},
+          {"kind":"dielectric","thicknessMm":1.5,"epsilonR":4.5},
+          {"kind":"copper","thicknessMm":0.035}]})"),
+        Catch::Matchers::ContainsSubstring("positive thicknessMm"));
+}
+
+TEST_CASE("resolve_stackup routes names, JSON and empty correctly",
+          "[stackup]") {
+    CHECK(!resolve_stackup("").has_value());
+    CHECK(resolve_stackup("default-2layer")->source == "user:default-2layer");
+    CHECK(resolve_stackup(R"({"layers":[
+      {"kind":"copper","thicknessMm":0.035},
+      {"kind":"dielectric","thicknessMm":1.51,"epsilonR":4.5},
+      {"kind":"copper","thicknessMm":0.035}]})")->source == "user:custom");
 }

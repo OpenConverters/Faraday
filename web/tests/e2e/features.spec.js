@@ -235,3 +235,41 @@ test('an ODB++ job zip imports with exact nets and analyses', async ({ page }) =
     .toContainText('format: odb++', { timeout: LOAD_MS })
   await expect(page.getByTestId('finding-F-0001')).toBeVisible()
 })
+
+test('a custom stackup is entered, changes the physics, and is restored',
+  async ({ page }) => {
+    const zip = path.join(here, '../../../cpp/tests/fixtures/gerber_set.zip')
+    await page.goto('/')
+    await page.getByTestId('file-input').setInputFiles(zip)
+    await expect(page.getByTestId('stackup-card')).toBeVisible({ timeout: LOAD_MS })
+
+    // first: the generic default, and remember the quantified coupling
+    await page.getByTestId('stackup-card')
+      .getByText('Default 2-layer FR4').click()
+    await expect(page.getByTestId('finding-F-0001')).toBeVisible({ timeout: LOAD_MS })
+    const coupling = () => page.getByTestId('finding-F-0001').textContent()
+    const before = await coupling()
+
+    // enter the real stackup: a much thinner dielectric under the same
+    // copper pulls the return plane closer — coupling MUST change
+    await page.getByTestId('stackup-select').selectOption('__custom__')
+    await expect(page.getByTestId('stackup-editor')).toBeVisible()
+    await page.getByTestId('se-d0-h').fill('0.1')
+    await page.getByTestId('se-d0-er').fill('4.8')
+    await page.getByTestId('se-apply').click()
+    await expect(page.getByTestId('stackup-editor')).toHaveCount(0)
+    await expect(page.getByTestId('finding-F-0001')).toBeVisible({ timeout: LOAD_MS })
+    await expect(page.getByTestId('meta-strip')).toContainText('user:custom')
+    expect(await coupling()).not.toBe(before)
+
+    // the select reflects it
+    await expect(page.getByTestId('stackup-select')).toContainText('custom (2 layers)')
+
+    // a reload forgets nothing: the card offers the saved stackup by name
+    await page.reload()
+    await page.getByTestId('file-input').setInputFiles(zip)
+    await expect(page.getByTestId('stackup-card')).toBeVisible({ timeout: LOAD_MS })
+    await page.getByTestId('stackup-saved').click()
+    await expect(page.getByTestId('meta-strip'))
+      .toContainText('user:custom', { timeout: LOAD_MS })
+  })
