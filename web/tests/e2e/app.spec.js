@@ -173,3 +173,14 @@ test('a board dropped before the engine has loaded is not silently lost',
     await expect(page.getByTestId('finding-F-0001')).toBeVisible({ timeout: 30000 })
     await expect(page.getByTestId('engine-loading')).toHaveCount(0)
   })
+
+test('the glossary is reachable from the empty state, before any board', async ({ page }) => {
+  await page.goto('/')
+  await expect(page.getByText('Drop a board here')).toBeVisible()
+  await page.getByTestId('open-glossary').click()
+  const panel = page.getByTestId('glossary')
+  await expect(panel).toBeVisible()
+  // rule entries render with their physics even with zero findings loaded
+  await expect(panel).toContainText('Commutation loop')
+  await expect(panel).toContainText('Franz')
+})

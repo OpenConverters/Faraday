@@ -628,6 +628,8 @@ function toggleRule(rule) {
         impedance calculator — no board needed</button>
       <button class="chip" data-testid="load-demo" @click="loadDemo">
         try the demo board</button>
+      <button class="chip" data-testid="open-glossary" @click="glossaryOpen = true">
+        rule glossary — what Faraday checks, and the physics</button>
       <p class="sub">Faraday screens the whole board for coupled runs, return-path breaks,
          via and open stubs, decoupling reach, and — on converters — switch nodes and
          commutation-loop area. It ranks the risk and renders it on the copper.
