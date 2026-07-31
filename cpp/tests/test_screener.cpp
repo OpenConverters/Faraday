@@ -1318,3 +1318,47 @@ TEST_CASE("franz mesh: loop inductance matches the validated reference value",
     CHECK(l > 23.75);
     CHECK(l < 24.05);
 }
+
+// Package-signature cases b and c of role inference: pad AREA separates the
+// gate from a single-pad conduction terminal. Validated live on LM5177EVM
+// (PowerPAK single drain pad) and VESC (D2PAK); a SOT-23's equal pads must
+// keep failing the ratio — that refusal is what keeps signal transistors out.
+TEST_CASE("franz mesh: pad area resolves single-pad drains and D2PAKs",
+          "[screener][franz][mesh]") {
+    std::string t = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SW") (net 2 "GND") (net 3 "VIN") (net 4 "G1")
+      (net 5 "G2") (net 6 "B") (net 7 "E") (net 8 "C")
+      (zone (net 2) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu")
+          (pts (xy 0 0) (xy 60 0) (xy 60 40) (xy 0 40))))
+      (footprint "pak" (layer "F.Cu") (at 10 10)
+        (property "Reference" "Q1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SW"))
+        (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net 1 "SW"))
+        (pad "3" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net 1 "SW"))
+        (pad "4" smd rect (at 3 0) (size 0.5 0.5) (layers "F.Cu") (net 4 "G1"))
+        (pad "5" smd rect (at 1.5 2) (size 4 3) (layers "F.Cu") (net 3 "VIN")))
+      (footprint "d2pak" (layer "F.Cu") (at 30 10)
+        (property "Reference" "Q2")
+        (pad "1" smd rect (at 0 0) (size 0.8 0.6) (layers "F.Cu") (net 5 "G2"))
+        (pad "2" smd rect (at 2 0) (size 1.6 1.2) (layers "F.Cu") (net 2 "GND"))
+        (pad "3" smd rect (at 1 2.5) (size 6 5) (layers "F.Cu") (net 1 "SW")))
+      (footprint "sot23" (layer "F.Cu") (at 50 10)
+        (property "Reference" "Q9")
+        (pad "1" smd rect (at 0 0) (size 0.9 0.8) (layers "F.Cu") (net 6 "B"))
+        (pad "2" smd rect (at 1 0) (size 0.9 0.8) (layers "F.Cu") (net 7 "E"))
+        (pad "3" smd rect (at 0.5 1.5) (size 0.9 0.8) (layers "F.Cu") (net 8 "C")))
+    ))";
+    BoardIR b = import_kicad(t, builtin_stackup("default-2layer"));
+    mesh::detail::Graph g(b);
+    auto q1 = g.conduction("Q1");   // case b: big single drain pad
+    REQUIRE(q1.has_value());
+    std::set<std::string> p1{b.net_name(q1->first), b.net_name(q1->second)};
+    CHECK(p1 == std::set<std::string>{"SW", "VIN"});
+    auto q2 = g.conduction("Q2");   // case c: D2PAK, three single pads
+    REQUIRE(q2.has_value());
+    std::set<std::string> p2{b.net_name(q2->first), b.net_name(q2->second)};
+    CHECK(p2 == std::set<std::string>{"SW", "GND"});
+    CHECK(!g.conduction("Q9").has_value());   // SOT-23 equal pads: refuse
+}

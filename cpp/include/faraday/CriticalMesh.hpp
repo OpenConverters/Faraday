@@ -64,6 +64,11 @@ inline std::string prefix(const std::string& ref) {
 struct Graph {
     // component -> (net -> pads on that net)
     std::map<std::string, std::map<int, int>> comp;
+    // component -> (net -> total pad AREA on that net, mm^2). Pad area is
+    // the package-agnostic role signal: a power FET's conduction terminals
+    // are large thermal pads, its gate is tiny — and a SOT-23 signal
+    // transistor's equal pads correctly fail the ratio test.
+    std::map<std::string, std::map<int, double>> area;
     // net -> components touching it
     std::map<int, std::set<std::string>> net;
     // centroid per component, for compactness tie-breaks
@@ -76,6 +81,7 @@ struct Graph {
             if (p.component.empty()) continue;
             if (p.net > 0) {
                 comp[p.component][p.net]++;
+                area[p.component][p.net] += std::max(p.w * p.h, 0.01);
                 net[p.net].insert(p.component);
             }
             sum[p.component].x += p.x;
@@ -99,18 +105,41 @@ struct Graph {
         return std::make_pair(a->first, b->first);
     }
 
-    // Conduction path of a switching device: exactly one 1-pad net (the
-    // control terminal) and at least two multi-pad nets (the path). Fails —
-    // deliberately — on SOT-23 small-signals (three 1-pad nets) and on
-    // transformers (many multi-pad nets are windings, not a path).
+    // Conduction path of a switching device. Three package signatures, all
+    // decided by pad COUNT and pad AREA — never by name:
+    //   a) gate = the one 1-pad net, path = the two multi-pad nets
+    //      (multi-pad packages with both terminals split);
+    //   b) one terminal is a single LARGE pad (PowerPAK drain tab as one
+    //      pad): two 1-pad nets, one multi-pad — the big 1-pad net joins
+    //      the path, the small one is the gate;
+    //   c) all three nets single pads (D2PAK/SOT-223: gate, source, tab):
+    //      the two largest are the path, the smallest the gate.
+    // b) and c) demand a clear 3x area separation from the gate — a SOT-23
+    // signal transistor's equal pads fail it, which is exactly right.
     std::optional<std::pair<int, int>> conduction(const std::string& ref) const {
         auto it = comp.find(ref);
         if (it == comp.end()) return std::nullopt;
+        const auto& ar = area.at(ref);
         std::vector<int> one, multi;
         for (const auto& [n, k] : it->second)
             (k == 1 ? one : multi).push_back(n);
-        if (one.size() != 1 || multi.size() != 2) return std::nullopt;
-        return std::make_pair(multi[0], multi[1]);
+        if (one.size() == 1 && multi.size() == 2)
+            return std::make_pair(multi[0], multi[1]);
+        if (one.size() == 2 && multi.size() == 1) {
+            const double a0 = ar.at(one[0]), a1 = ar.at(one[1]);
+            const int big = a0 > a1 ? one[0] : one[1];
+            if (std::max(a0, a1) < 3.0 * std::min(a0, a1))
+                return std::nullopt;
+            return std::make_pair(multi[0], big);
+        }
+        if (one.size() == 3 && multi.empty()) {
+            std::vector<std::pair<double, int>> byarea;
+            for (int n : one) byarea.push_back({ar.at(n), n});
+            std::sort(byarea.begin(), byarea.end());
+            if (byarea[1].first < 3.0 * byarea[0].first) return std::nullopt;
+            return std::make_pair(byarea[1].second, byarea[2].second);
+        }
+        return std::nullopt;
     }
 };
 
@@ -182,6 +211,14 @@ inline std::optional<DerivedMesh> derive(const BoardIR& b, int sw_net,
             devs.push_back({r, e->first == sw_net ? e->second : e->first, false});
         }
     }
+    // SWITCHES before diodes, and sorted BEFORE any pointer is taken into
+    // the vector: a sort after &devs[i] silently re-aims the pointer — on
+    // the PoE board it turned the chosen switch into the clamp diode and
+    // killed every derivation on the board.
+    std::stable_sort(devs.begin(), devs.end(),
+                     [](const Dev& a, const Dev& b) {
+                         return a.is_switch > b.is_switch;
+                     });
     const Dev* sw = nullptr;
     for (const auto& d : devs)
         if (d.is_switch && (!sw || g.comp.at(d.ref).size() <

@@ -291,8 +291,14 @@ inline GerberLayer parse_gerber(const std::string& text) {
 struct Drill { double x, y, d; };
 
 inline bool looks_excellon(const std::string& t) {
-    return t.find("M48") != std::string::npos &&
-           t.find("%FS") == std::string::npos;
+    // header-only, like every other signature: an Excellon file opens with
+    // M48 near the top. Scanning the whole text matched "M48" inside the
+    // base64-embedded data of a 3 MB KiCad 9 board and sent it to the
+    // drill parser — the same failure shape as the OLE 'M48' false hit.
+    const std::string head = t.substr(0, std::min<size_t>(t.size(), 2000));
+    return head.find("M48") != std::string::npos &&
+           head.find("%FS") == std::string::npos &&
+           head.find("(kicad_pcb") == std::string::npos;
 }
 
 inline std::vector<Drill> parse_excellon(const std::string& text) {
