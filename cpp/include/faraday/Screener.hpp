@@ -34,6 +34,7 @@
 //                      (no silent caps: everything not analysed is reported)
 
 #include "BoardIR.hpp"
+#include "CriticalMesh.hpp"
 #include "Tline.hpp"
 
 #include <algorithm>
@@ -268,6 +269,11 @@ class Screener {
         // which means the critical mesh closes across two ground domains
         std::vector<int> cap_nets;
         std::vector<Point> hull;
+        // set when the mesh was DERIVED by the current-switching analysis
+        // (CriticalMesh.hpp) rather than pattern-matched: the members are
+        // the XOR branches, named in the finding
+        std::vector<std::string> members;
+        std::string shape;   // "two-device" | "magnetic-clamp" | "" (geometric)
     };
     std::optional<LoopResult> commutation_loop(int sw_net) const {
         return commutation_loop_impl(sw_net);
@@ -634,6 +640,53 @@ class Screener {
     // to a pour net. Reported as a heuristic with the geometry drawn, so the
     // user can see exactly which loop was measured.
     std::optional<LoopResult> commutation_loop_impl(int sw_net) const {
+        // FIRST: the current-switching analysis (Franz §4.4) on the derived
+        // netlist. When device roles are inferable and a circulation closes,
+        // the mesh is the XOR of the before/after loops — exact branches,
+        // not a pattern. When it does not close, the geometric fallback
+        // below stands; a guessed mesh would be worse than none.
+        if (auto dm = mesh::derive(b_, sw_net, sw_prefix_)) {
+            LoopResult r;
+            r.members = dm->members;
+            r.shape = dm->shape;
+            // geometry: hull of the member components' pads
+            std::set<std::string> want(dm->members.begin(), dm->members.end());
+            std::vector<Point> pts;
+            double best_cap = 1e30;
+            std::vector<Point> sw_pts;
+            for (const auto& p : b_.pads) {
+                if (want.count(p.component)) pts.push_back({p.x, p.y});
+                if (p.component == dm->sw_ref) sw_pts.push_back({p.x, p.y});
+            }
+            if (pts.size() < 3) return std::nullopt;
+            double cx = 0, cy = 0;
+            for (const auto& p : sw_pts) { cx += p.x; cy += p.y; }
+            if (!sw_pts.empty()) { cx /= sw_pts.size(); cy /= sw_pts.size(); }
+            // the Umlauf-1 chain: its caps' nets feed the domain check, its
+            // nearest cap the distance figure
+            std::set<int> cn;
+            for (const auto& cref : dm->chain)
+                for (const auto& p : b_.pads)
+                    if (p.component == cref) {
+                        if (p.net > 0) cn.insert(p.net);
+                        best_cap = std::min(
+                            best_cap, std::hypot(p.x - cx, p.y - cy));
+                        pts.push_back({p.x, p.y});
+                    }
+            if (!dm->chain.empty()) r.cap_ref = dm->chain.front();
+            r.cap_nets.assign(cn.begin(), cn.end());
+            r.cap_dist_mm = best_cap < 1e29 ? best_cap : 0.0;
+            r.hull = convex_hull(pts);
+            double a = 0;
+            for (size_t i = 0, n = r.hull.size(); i < n; ++i) {
+                const Point& p = r.hull[i];
+                const Point& q = r.hull[(i + 1) % n];
+                a += p.x * q.y - q.x * p.y;
+            }
+            r.area_mm2 = std::abs(a) / 2.0;
+            if (r.area_mm2 > 0.5) return r;
+            // degenerate hull (members stacked): fall through to geometric
+        }
         // Switching devices on the node. A synchronous converter has two FETs;
         // an ASYNCHRONOUS one has a FET and a freewheel diode, and the diode
         // carries half the commutation current — omitting it left the
@@ -757,12 +810,33 @@ class Screener {
                           loop->cap_ref.c_str(), loop->cap_dist_mm);
             f.title = "Commutation loop: " + b_.net_name(net) + " (" +
                       std::to_string((int)loop->area_mm2) + " mm^2)";
-            f.detail = std::string(buf) +
-                       " This loop carries the discontinuous switching current; "
-                       "its enclosed area is the dominant radiated-emission and "
-                       "ringing mechanism in a converter. The loop shown is the "
-                       "hull of the switching devices and that capacitor — "
-                       "verify it matches your intended commutation path.";
+            if (!loop->members.empty()) {
+                // DERIVED by the current-switching analysis: the members ARE
+                // the XOR branches, so the finding can name them exactly
+                std::string ms;
+                for (const auto& m : loop->members)
+                    ms += (ms.empty() ? "" : " + ") + m;
+                f.detail =
+                    "Critical mesh of " + b_.net_name(net) + ", derived by "
+                    "current-switching analysis (Franz §4.4): " + ms +
+                    " — the branches carried in only one of the two switch "
+                    "states, enclosing about " +
+                    std::to_string((int)loop->area_mm2) + " mm^2" +
+                    (loop->shape == "magnetic-clamp"
+                         ? " (winding + clamp shape)"
+                         : " (two-device shape)") +
+                    ". This loop carries the discontinuous switching current; "
+                    "its enclosed area is the dominant radiated-emission and "
+                    "ringing mechanism in a converter.";
+            } else {
+                f.detail =
+                    std::string(buf) +
+                    " This loop carries the discontinuous switching current; "
+                    "its enclosed area is the dominant radiated-emission and "
+                    "ringing mechanism in a converter. The loop shown is the "
+                    "hull of the switching devices and that capacitor — "
+                    "verify it matches your intended commutation path.";
+            }
             f.remediation = "Move the input capacitor as close to the switch "
                             "pair as the footprints allow, and place the return "
                             "plane directly beneath the loop so the return "

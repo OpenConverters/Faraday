@@ -70,9 +70,12 @@ export const RULES = [
   },
   {
     id: 'commutation-loop',
+    // (kept in sync with the C++ finding: derived meshes name their XOR
+    // branches — "T7 + D22 + R29" — via Franz §4.4 current-switching analysis;
+    // boards where device roles can't be inferred keep the geometric hull)
     name: 'Commutation loop',
-    what: 'The hot loop of a converter — input cap, switch pair, return — with its enclosed area measured off the copper.',
-    physics: 'This loop carries the discontinuous switching current; area × dI/dt sets ringing and radiated emission. The emissions panel turns this area into a margin against CISPR/FCC.',
+    what: 'The hot loop of a converter, with its enclosed area measured off the copper. Where device roles are inferable from the netlist, the mesh is DERIVED by current-switching analysis (Franz §4.4) — the finding names its exact branches (e.g. "T7 + D22 + R29") and the shape (two-device, or winding + clamp). For a boost that mesh closes through the OUTPUT capacitor.',
+    physics: 'Draw the current\'s circulation before and after the switch toggles; the branches carried in only ONE of the two form the critical mesh — the only copper carrying the current step. Area × dI/dt sets ringing and radiated emission; the emissions panel turns the area into a margin against CISPR/FCC.',
     fix: 'Move the input capacitor tight to the FET pair; put the return plane directly beneath the loop.',
     confidence: 'heuristic (hull of the identified members)',
   },

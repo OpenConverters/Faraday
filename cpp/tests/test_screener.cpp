@@ -1192,3 +1192,116 @@ TEST_CASE("franz: mixed-value decoupling shows its anti-resonance",
     // no switching aggressor on this board -> review-grade, not a defect
     CHECK((*f)["severityLabel"] == "low");
 }
+
+// ---------------------------------------------------------------------------
+// The current-switching analysis (Franz §4.4) on the derived netlist:
+// before/after circulations, XOR = critical mesh. Each topology pins the
+// mesh MEMBERS, because naming the wrong branches is the failure mode.
+// ---------------------------------------------------------------------------
+
+#include <faraday/CriticalMesh.hpp>
+
+namespace {
+int net_id_of(const BoardIR& b, const std::string& name) {
+    for (const auto& n : b.nets)
+        if (n.name == name) return n.id;
+    return -1;
+}
+std::string part(const char* ref, const char* fp, double x, double y,
+                 std::vector<std::pair<const char*, int>> pads_net,
+                 const std::vector<std::string>& netname) {
+    std::string s = "(footprint \"" + std::string(fp) +
+                    "\" (layer \"F.Cu\") (at " + std::to_string(x) + " " +
+                    std::to_string(y) + ") (property \"Reference\" \"" + ref +
+                    "\")";
+    int i = 0;
+    for (auto [pin, n] : pads_net)
+        s += " (pad \"" + std::string(pin) + "\" smd rect (at " +
+             std::to_string(0.8 * i++) +
+             " 0) (size 0.6 0.6) (layers \"F.Cu\") (net " + std::to_string(n) +
+             " \"" + netname[n] + "\"))";
+    return s + ")";
+}
+}  // namespace
+
+TEST_CASE("franz mesh: a synchronous/async buck derives switch + diode + Cin",
+          "[screener][franz][mesh]") {
+    std::vector<std::string> N{"", "SW", "GND", "VIN", "G1"};
+    std::string t = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SW") (net 2 "GND") (net 3 "VIN") (net 4 "G1")
+      (segment (start 5 5) (end 25 5) (width 1.0) (layer "F.Cu") (net 1))
+      (zone (net 2) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu")
+          (pts (xy 0 0) (xy 60 0) (xy 60 40) (xy 0 40))))
+    )";
+    // high-side FET VIN->SW (gate = 1-pad net), freewheel diode SW->GND,
+    // input cap VIN->GND, an inductor so the net is a switch node
+    t += part("Q1", "pak", 10, 5, {{"1",4},{"2",1},{"3",1},{"4",3},{"5",3}}, N);
+    t += part("D1", "sma", 14, 8, {{"1",1},{"2",2}}, N);
+    t += part("C1", "c0805", 6, 9, {{"1",3},{"2",2}}, N);
+    t += part("L1", "ind", 25, 5, {{"1",1},{"2",0}}, N);
+    t += ")";
+    BoardIR b = import_kicad(t, builtin_stackup("default-2layer"));
+    auto m = mesh::derive(b, net_id_of(b, "SW"), "Q");
+    REQUIRE(m.has_value());
+    CHECK(m->shape == "two-device");
+    std::set<std::string> got(m->members.begin(), m->members.end());
+    CHECK(got == std::set<std::string>{"Q1", "D1", "C1"});
+}
+
+TEST_CASE("franz mesh: a boost's mesh closes through the OUTPUT capacitor",
+          "[screener][franz][mesh]") {
+    // Franz's own §4.4 example — the case a pattern that assumes 'input cap'
+    // words wrongly: the critical mesh is switch + diode + Cout.
+    std::vector<std::string> N{"", "SW", "GND", "VIN", "VOUT", "G1"};
+    std::string t = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SW") (net 2 "GND") (net 3 "VIN") (net 4 "VOUT") (net 5 "G1")
+      (segment (start 5 5) (end 25 5) (width 1.0) (layer "F.Cu") (net 1))
+      (zone (net 2) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu")
+          (pts (xy 0 0) (xy 60 0) (xy 60 40) (xy 0 40))))
+    )";
+    t += part("L1", "ind", 5, 5, {{"1",3},{"2",1}}, N);          // VIN -> SW
+    t += part("Q1", "pak", 12, 5, {{"1",5},{"2",1},{"3",1},{"4",2},{"5",2}}, N);
+    t += part("D1", "sma", 18, 5, {{"1",1},{"2",4}}, N);         // SW -> VOUT
+    t += part("C9", "c0805", 22, 9, {{"1",4},{"2",2}}, N);       // Cout
+    t += part("C8", "c0805", 3, 9, {{"1",3},{"2",2}}, N);        // Cin (decoy)
+    t += ")";
+    BoardIR b = import_kicad(t, builtin_stackup("default-2layer"));
+    auto m = mesh::derive(b, net_id_of(b, "SW"), "Q");
+    REQUIRE(m.has_value());
+    std::set<std::string> got(m->members.begin(), m->members.end());
+    CHECK(got == std::set<std::string>{"Q1", "D1", "C9"});   // NOT C8
+}
+
+TEST_CASE("franz mesh: a flyback with an RCD clamp derives the clamp mesh",
+          "[screener][franz][mesh]") {
+    std::vector<std::string> N{"", "SW", "GND", "PRI", "CLAMP", "G1", "S1", "S2"};
+    std::string t = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SW") (net 2 "GND") (net 3 "PRI") (net 4 "CLAMP")
+      (net 5 "G1") (net 6 "S1") (net 7 "S2")
+      (segment (start 5 5) (end 25 5) (width 1.0) (layer "F.Cu") (net 1))
+      (zone (net 2) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu")
+          (pts (xy 0 0) (xy 60 0) (xy 60 40) (xy 0 40))))
+    )";
+    // transformer primary PRI->SW + a secondary (4 connected pads), switch
+    // SW->GND, bulk PRI->GND, RCD clamp: R1 SW->CLAMP, D2 CLAMP->GND (the
+    // PoE board's shape)
+    t += part("TR1", "xfmr", 8, 5,
+              {{"1",3},{"2",1},{"3",6},{"4",7}}, N);
+    t += part("Q1", "pak", 16, 5, {{"1",5},{"2",1},{"3",1},{"4",2},{"5",2}}, N);
+    t += part("C1", "c1210", 5, 10, {{"1",3},{"2",2}}, N);
+    t += part("R1", "r0805", 20, 7, {{"1",1},{"2",4}}, N);
+    t += part("D2", "sod", 24, 9, {{"1",4},{"2",2}}, N);
+    t += ")";
+    BoardIR b = import_kicad(t, builtin_stackup("default-2layer"));
+    auto m = mesh::derive(b, net_id_of(b, "SW"), "Q");
+    REQUIRE(m.has_value());
+    CHECK(m->shape == "magnetic-clamp");
+    std::set<std::string> got(m->members.begin(), m->members.end());
+    CHECK(got == std::set<std::string>{"Q1", "R1", "D2"});   // chains cancel
+}
