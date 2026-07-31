@@ -80,6 +80,17 @@ inline BoardFormat detect_format(const std::string& text) {
 
 // Import any supported format. user_stackup, when given, overrides whatever
 // the file carries (HYP always carries its own and ignores the override).
+// EVERY import passes the plausibility gate. An importer bug that scales,
+// flips or truncates the board still parses and still screens — the gate is
+// the only thing between that and a confidently wrong report. Its notes are
+// APPENDED: importers record notes of their own (the unnetted-copper share,
+// the 25.4x unit hypotheses) and the gate must never erase them.
+inline void gate_plausibility(BoardIR& b) {
+    auto gate = plausible::enforce(b);
+    b.plausibility_notes.insert(b.plausibility_notes.end(), gate.begin(),
+                                gate.end());
+}
+
 inline BoardIR import_board(const std::string& text,
                             std::optional<Stackup> user_stackup = std::nullopt,
                             BoardFormat* detected = nullptr) {
@@ -92,10 +103,7 @@ inline BoardIR import_board(const std::string& text,
         case BoardFormat::Hyp: b = import_hyp(text); break;
         default: throw BoardError("import_board: unreachable");
     }
-    // EVERY import passes the plausibility gate. An importer bug that scales,
-    // flips or truncates the board still parses and still screens — the gate
-    // is the only thing between that and a confidently wrong report.
-    b.plausibility_notes = plausible::enforce(b);
+    gate_plausibility(b);
     return b;
 }
 
@@ -109,7 +117,7 @@ inline BoardIR import_board_set(const std::vector<gerber::NamedFile>& files,
     if (odb::is_odb_set(files)) {
         if (detected) *detected = BoardFormat::Odb;
         BoardIR b = odb::import_odb(files, std::move(user_stackup));
-        b.plausibility_notes = plausible::enforce(b);
+        gate_plausibility(b);
         return b;
     }
     // Binary members are never board data — a dropped project zip carries the
@@ -133,7 +141,7 @@ inline BoardIR import_board_set(const std::vector<gerber::NamedFile>& files,
             "set, or an ODB++ job (zip or directory).");
     if (detected) *detected = BoardFormat::GerberSet;
     BoardIR b = gerber::import_gerber_set(text_files, std::move(user_stackup));
-    b.plausibility_notes = plausible::enforce(b);
+    gate_plausibility(b);
     return b;
 }
 

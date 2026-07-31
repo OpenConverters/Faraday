@@ -295,4 +295,111 @@ TEST_CASE("gerber: an Altium-style set with IPC-D-356 gets exact nets and pins",
     REQUIRE(!b.zones.empty());
     CHECK(b.net_name(b.zones[0].net) == "GND");
     CHECK(b.ipc_net_conflicts == 0);
+    // netting reached every segment — no coverage-loss note
+    CHECK(b.plausibility_notes.empty());
+}
+
+TEST_CASE("gerber: copper the netlist cannot reach is COUNTED, not silently lost",
+          "[gerber][ipc356]") {
+    // The Altium-style set above, plus a 30 mm orphan track nowhere near any
+    // netlist record. It stays net-0 — and because every net-aware rule
+    // (coupled-run, 3W, return-path, mesh derivation) skips net-0 copper,
+    // that loss of screened surface must surface as a note, never silently.
+    const char* gtl =
+        "%FSAX44Y44*%\n%MOMM*%\n"
+        "%ADD10C,1.0*%\n%ADD11C,0.6*%\n"
+        "D10*\nX00100000Y00100000D02*\nD03*\n"
+        "X00200000Y00100000D02*\nD03*\n"
+        "X00100000Y00100000D02*\nX00200000Y00100000D01*\n"
+        "X00100000Y00300000D02*\nX00400000Y00300000D01*\n"
+        "D11*\nX00300000Y00100000D02*\nD03*\n"
+        "M02*\n";
+    const char* gbl =
+        "%FSAX44Y44*%\n%MOMM*%\n%ADD11C,0.6*%\n"
+        "G36*\nX00000000Y00000000D02*\nX00400000Y00000000D01*\n"
+        "X00400000Y00200000D01*\nX00000000Y00200000D01*\n"
+        "X00000000Y00000000D01*\nG37*\n"
+        "D11*\nX00300000Y00100000D02*\nD03*\nM02*\n";
+    const char* drl =
+        "M48\n;FILE_FORMAT=4:4\nMETRIC\nT01C0.30\n%\nT01\n"
+        "X00300000Y00100000\nM30\n";
+    const char* ipc =
+        "P  JOB\nP  UNITS CUST 1\nP  VER IPC-D-356A\n"
+        "327SWX              R7    -1         A01X 010000Y 010000X0100Y0100R000 S0\n"
+        "327SWX              R7    -2         A01X 020000Y 010000X0100Y0100R000 S0\n"
+        "317GND              VIA   -          D0300PA00X 030000Y 010000X0060Y0060 S0\n"
+        "999\n";
+    std::vector<gerber::NamedFile> files{{"b.GTL", gtl},
+                                         {"b.GBL", gbl},
+                                         {"b.TXT", drl},
+                                         {"b.ipc", ipc}};
+    BoardIR b = import_board_set(files, builtin_stackup("default-2layer"));
+    // the orphan is net-0: 10 of 40 routed mm reached = 25%
+    REQUIRE(b.plausibility_notes.size() == 1);
+    CHECK(b.plausibility_notes[0].find("netting reached 25%") != std::string::npos);
+    CHECK(b.plausibility_notes[0].find("invisible") != std::string::npos);
+}
+
+TEST_CASE("gerber: the outline is the loop that holds the copper, not the "
+          "drawing frame",
+          "[gerber][ipc356]") {
+    // Altium stamps the whole drawing sheet — frame, title block — into the
+    // mechanical layer AND every copper gerber. The board is the SMALLEST
+    // profile loop containing the pads and vias; copper outside it is the
+    // drawing, cropped and counted. (LM5143's shipped gerbers: a 168x105 mm
+    // "board" that is really 96x73, with 8.3 m of title-block strokes.)
+    const char* gko =
+        "%FSAX44Y44*%\n%MOMM*%\n%ADD10C,0.2*%\nD10*\n"
+        // the board outline: (5,5)-(50,30)
+        "X00050000Y00050000D02*\nX00500000Y00050000D01*\n"
+        "X00500000Y00300000D01*\nX00050000Y00300000D01*\n"
+        "X00050000Y00050000D01*\n"
+        // the sheet frame: (1,1)-(99,79), also contains everything
+        "X00010000Y00010000D02*\nX00990000Y00010000D01*\n"
+        "X00990000Y00790000D01*\nX00010000Y00790000D01*\n"
+        "X00010000Y00010000D01*\nM02*\n";
+    const char* gtl =
+        "%FSAX44Y44*%\n%MOMM*%\n"
+        "%ADD10C,1.0*%\n%ADD11C,0.6*%\n"
+        "D10*\nX00100000Y00100000D02*\nD03*\n"
+        "X00200000Y00100000D02*\nD03*\n"
+        "X00100000Y00100000D02*\nX00200000Y00100000D01*\n"
+        // title-block text stroke at y=60: inside the frame, off the board
+        "X00100000Y00600000D02*\nX00300000Y00600000D01*\n"
+        "D11*\nX00300000Y00100000D02*\nD03*\n"
+        "M02*\n";
+    const char* gbl =
+        "%FSAX44Y44*%\n%MOMM*%\n%ADD11C,0.6*%\n"
+        "G36*\nX00060000Y00060000D02*\nX00400000Y00060000D01*\n"
+        "X00400000Y00200000D01*\nX00060000Y00200000D01*\n"
+        "X00060000Y00060000D01*\nG37*\n"
+        "D11*\nX00300000Y00100000D02*\nD03*\nM02*\n";
+    const char* drl =
+        "M48\n;FILE_FORMAT=4:4\nMETRIC\nT01C0.30\n%\nT01\n"
+        "X00300000Y00100000\nM30\n";
+    const char* ipc =
+        "P  JOB\nP  UNITS CUST 1\nP  VER IPC-D-356A\n"
+        "327SWX              R7    -1         A01X 010000Y 010000X0100Y0100R000 S0\n"
+        "327SWX              R7    -2         A01X 020000Y 010000X0100Y0100R000 S0\n"
+        "317GND              VIA   -          D0300PA00X 030000Y 010000X0060Y0060 S0\n"
+        "999\n";
+    std::vector<gerber::NamedFile> files{{"b.GKO", gko},
+                                         {"b.GTL", gtl},
+                                         {"b.GBL", gbl},
+                                         {"b.TXT", drl},
+                                         {"b.ipc", ipc}};
+    BoardIR b = import_board_set(files, builtin_stackup("default-2layer"));
+    // bbox is the BOARD loop, not the sheet frame
+    CHECK(b.bbox_from_outline);
+    CHECK_THAT(b.bbox_x1, Catch::Matchers::WithinAbs(5.0, 0.2));
+    CHECK_THAT(b.bbox_y1, Catch::Matchers::WithinAbs(5.0, 0.2));
+    CHECK_THAT(b.bbox_x2, Catch::Matchers::WithinAbs(50.0, 0.2));
+    CHECK_THAT(b.bbox_y2, Catch::Matchers::WithinAbs(30.0, 0.2));
+    // the title stroke was cropped — and counted, never silently
+    REQUIRE(b.plausibility_notes.size() == 1);
+    CHECK(b.plausibility_notes[0].find("outside the board outline excluded") !=
+          std::string::npos);
+    // what remains is board copper, fully netted: no netting-loss note
+    for (const auto& s : b.segments) CHECK(s.net > 0);
+    CHECK(b.segments.size() == 1);
 }

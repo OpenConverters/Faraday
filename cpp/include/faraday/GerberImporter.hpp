@@ -732,6 +732,88 @@ inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
         }
         for (auto& [k, v] : bucket)
             for (size_t i = 1; i < v.size(); ++i) join(v[0], v[i]);
+        // T-junctions, pour landings and mid-run vias. Endpoint buckets only
+        // join tracks that MEET at a shared coordinate — but a track
+        // routinely ENDS on the interior of another (a T-junction), lands
+        // inside a pour, or takes a via mid-stroke. Copper overlapping
+        // copper is connected: join an endpoint to any same-layer stroke
+        // whose centreline passes within the sum of half-widths. DRC
+        // clearance keeps different nets from overlapping, so this cannot
+        // mis-join. LM5143's shipped gerbers netted 12% of routed copper on
+        // endpoint meets alone — T-junctions are the dominant topology in
+        // hand-routed power boards.
+        {
+            const double cell = 1.0;
+            auto ckey = [](int cu, long long cx, long long cy) {
+                return std::to_string(cu) + ":" + std::to_string(cx) + ":" +
+                       std::to_string(cy);
+            };
+            std::map<std::string, std::vector<size_t>> body;
+            for (size_t i = 0; i < NS; ++i) {
+                const auto& s = b.segments[i];
+                const double r = s.width / 2;
+                const double bx1 = std::min(s.x1, s.x2) - r;
+                const double bx2 = std::max(s.x1, s.x2) + r;
+                const double by1 = std::min(s.y1, s.y2) - r;
+                const double by2 = std::max(s.y1, s.y2) + r;
+                for (long long cx = (long long)std::floor(bx1 / cell);
+                     cx <= (long long)std::floor(bx2 / cell); ++cx)
+                    for (long long cy = (long long)std::floor(by1 / cell);
+                         cy <= (long long)std::floor(by2 / cell); ++cy)
+                        body[ckey(s.cu, cx, cy)].push_back(i);
+            }
+            auto seg_dist = [&](const Segment& s, double px, double py) {
+                const double sdx = s.x2 - s.x1, sdy = s.y2 - s.y1;
+                const double L2 = sdx * sdx + sdy * sdy;
+                double t = L2 > 0 ? ((px - s.x1) * sdx + (py - s.y1) * sdy) / L2
+                                  : 0.0;
+                t = std::clamp(t, 0.0, 1.0);
+                return std::hypot(px - (s.x1 + t * sdx), py - (s.y1 + t * sdy));
+            };
+            auto join_body = [&](size_t node, int cu, double px, double py,
+                                 double pr) {
+                for (long long cx = (long long)std::floor((px - pr) / cell);
+                     cx <= (long long)std::floor((px + pr) / cell); ++cx)
+                    for (long long cy = (long long)std::floor((py - pr) / cell);
+                         cy <= (long long)std::floor((py + pr) / cell); ++cy) {
+                        auto it = body.find(ckey(cu, cx, cy));
+                        if (it == body.end()) continue;
+                        for (size_t j : it->second)
+                            if (seg_dist(b.segments[j], px, py) <
+                                pr + b.segments[j].width / 2 + 0.005)
+                                join(node, j);
+                    }
+            };
+            for (size_t i = 0; i < NS; ++i) {
+                const auto& s = b.segments[i];
+                join_body(i, s.cu, s.x1, s.y1, s.width / 2);
+                join_body(i, s.cu, s.x2, s.y2, s.width / 2);
+            }
+            for (size_t v = 0; v < NV; ++v)
+                for (int cu = 0; cu < (int)coppers.size(); ++cu)
+                    join_body(NS + NF + NZ + v, cu, b.vias[v].x, b.vias[v].y,
+                              0.05);
+            // a track whose endpoint sits INSIDE a pour is on that pour's net
+            for (size_t z = 0; z < NZ; ++z) {
+                const auto& zn = b.zones[z];
+                double zx1 = 1e30, zy1 = 1e30, zx2 = -1e30, zy2 = -1e30;
+                for (const auto& p : zn.pts) {
+                    zx1 = std::min(zx1, p.x); zy1 = std::min(zy1, p.y);
+                    zx2 = std::max(zx2, p.x); zy2 = std::max(zy2, p.y);
+                }
+                ZonePoly zp{0, zn.cu, zn.pts, {}};
+                auto inz = [&](double px, double py) {
+                    return px >= zx1 && px <= zx2 && py >= zy1 && py <= zy2 &&
+                           zp.contains(px, py);
+                };
+                for (size_t i = 0; i < NS; ++i) {
+                    const auto& s = b.segments[i];
+                    if (s.cu != zn.cu) continue;
+                    if (inz(s.x1, s.y1) || inz(s.x2, s.y2))
+                        join(NS + NF + z, i);
+                }
+            }
+        }
         // flashes join everything whose endpoint falls inside their extent
         auto join_at = [&](size_t node, int cu, double x, double y, double hw,
                           double hh) {
@@ -853,9 +935,81 @@ inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
         x2 = std::max(x2, x); y2 = std::max(y2, y);
     };
     if (profile) {
-        for (const auto& t : profile->tracks) { grow(t.x1, t.y1); grow(t.x2, t.y2); }
-        for (const auto& r : profile->regions)
-            for (const auto& p : r.pts) grow(p.x, p.y);
+        // Altium mechanical layers routinely carry the whole DRAWING — sheet
+        // frame, title block, notes — around the board outline (LM5143's GM1
+        // does; the sheet made the "board" 168x105 mm instead of 96x73). The
+        // fabricated board is cut along the loop that contains the plated
+        // copper: cluster the profile strokes by endpoint proximity and take
+        // the SMALLEST cluster whose bbox holds >=95% of pads and vias — the
+        // sheet frame holds them too, but is never smaller. No qualifying
+        // cluster (or no pads/vias to anchor on): the whole profile's
+        // extents stand, exactly as before.
+        const auto& trk = profile->tracks;
+        const auto& reg = profile->regions;
+        const size_t NT = trk.size();
+        std::vector<size_t> pu(NT + reg.size());
+        for (size_t i = 0; i < pu.size(); ++i) pu[i] = i;
+        std::function<size_t(size_t)> pfind = [&](size_t i) {
+            while (pu[i] != i) { pu[i] = pu[pu[i]]; i = pu[i]; }
+            return i;
+        };
+        auto pjoin = [&](size_t a, size_t c) { pu[pfind(a)] = pfind(c); };
+        std::map<std::pair<long long, long long>, std::vector<size_t>> ends;
+        auto ecell = [](double x, double y) {  // 0.2 mm grid
+            return std::pair{(long long)std::llround(x * 5.0),
+                             (long long)std::llround(y * 5.0)};
+        };
+        for (size_t i = 0; i < NT; ++i) {
+            ends[ecell(trk[i].x1, trk[i].y1)].push_back(i);
+            ends[ecell(trk[i].x2, trk[i].y2)].push_back(i);
+        }
+        for (const auto& [c, v] : ends) {
+            for (size_t i = 1; i < v.size(); ++i) pjoin(v[0], v[i]);
+            for (long long ddx = -1; ddx <= 1; ++ddx)   // corners land in
+                for (long long ddy = -1; ddy <= 1; ++ddy) {  // neighbours
+                    auto it = ends.find({c.first + ddx, c.second + ddy});
+                    if (it != ends.end()) pjoin(v[0], it->second[0]);
+                }
+        }
+        struct Ext { double x1 = 1e30, y1 = 1e30, x2 = -1e30, y2 = -1e30; };
+        std::map<size_t, Ext> cl;
+        auto grow_cl = [](Ext& e, double x, double y) {
+            e.x1 = std::min(e.x1, x); e.y1 = std::min(e.y1, y);
+            e.x2 = std::max(e.x2, x); e.y2 = std::max(e.y2, y);
+        };
+        for (size_t i = 0; i < NT; ++i) {
+            Ext& e = cl[pfind(i)];
+            grow_cl(e, trk[i].x1, trk[i].y1);
+            grow_cl(e, trk[i].x2, trk[i].y2);
+        }
+        for (size_t r = 0; r < reg.size(); ++r) {
+            Ext& e = cl[pfind(NT + r)];
+            for (const auto& p : reg[r].pts) grow_cl(e, p.x, p.y);
+        }
+        std::vector<std::pair<double, double>> anchors;
+        for (const auto& p : b.pads) anchors.emplace_back(p.x, p.y);
+        for (const auto& v : b.vias) anchors.emplace_back(v.x, v.y);
+        const Ext* board = nullptr;
+        double board_area = 1e30;
+        if (!anchors.empty())
+            for (const auto& [root, e] : cl) {
+                size_t in = 0;
+                for (const auto& [ax, ay] : anchors)
+                    if (ax >= e.x1 - 0.5 && ax <= e.x2 + 0.5 &&
+                        ay >= e.y1 - 0.5 && ay <= e.y2 + 0.5)
+                        ++in;
+                if (in < 0.95 * anchors.size()) continue;
+                const double area = (e.x2 - e.x1) * (e.y2 - e.y1);
+                if (area < board_area) { board_area = area; board = &e; }
+            }
+        if (board) {
+            grow(board->x1, board->y1);
+            grow(board->x2, board->y2);
+        } else {
+            for (const auto& t : trk) { grow(t.x1, t.y1); grow(t.x2, t.y2); }
+            for (const auto& r : reg)
+                for (const auto& p : r.pts) grow(p.x, p.y);
+        }
         b.bbox_from_outline = x2 > x1;
     }
     if (!(x2 > x1)) {
@@ -868,6 +1022,70 @@ inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
     if (!(x2 > x1))
         throw BoardError("gerber: the set contains no geometry at all");
     b.bbox_x1 = x1; b.bbox_y1 = y1; b.bbox_x2 = x2; b.bbox_y2 = y2;
+
+    // Copper outside the board outline is the drawing, not the board — the
+    // router cuts it away. Altium stamps the sheet's title block and layer
+    // banner into EVERY copper gerber; screened as copper it distorts
+    // density, coverage and edge rules and drowns the netting statistics.
+    // Crop it — and COUNT it, never silently.
+    if (b.bbox_from_outline) {
+        const double mx1 = x1 - 0.5, my1 = y1 - 0.5;
+        const double mx2 = x2 + 0.5, my2 = y2 + 0.5;
+        auto outside = [&](double px, double py) {
+            return px < mx1 || px > mx2 || py < my1 || py > my2;
+        };
+        double cut_mm = 0.0;
+        size_t cut_zones = 0, cut_vias = 0;
+        std::erase_if(b.segments, [&](const auto& s) {
+            if (!outside(s.x1, s.y1) || !outside(s.x2, s.y2)) return false;
+            cut_mm += std::hypot(s.x2 - s.x1, s.y2 - s.y1);
+            return true;
+        });
+        std::erase_if(b.zones, [&](const auto& z) {
+            for (const auto& p : z.pts)
+                if (!outside(p.x, p.y)) return false;
+            ++cut_zones;
+            return true;
+        });
+        std::erase_if(b.vias, [&](const auto& v) {
+            if (!outside(v.x, v.y)) return false;
+            ++cut_vias;
+            return true;
+        });
+        if (cut_mm > 0 || cut_zones || cut_vias) {
+            char note[220];
+            std::snprintf(note, sizeof note,
+                          "%.0f mm of stroke copper, %zu fill(s) and %zu "
+                          "hole(s) outside the board outline excluded — "
+                          "drawing frame/title block in the gerber export",
+                          cut_mm, cut_zones, cut_vias);
+            b.plausibility_notes.push_back(note);
+        }
+    }
+
+    // Count what the netlist did NOT reach — measured on BOARD copper, after
+    // the drawing-frame crop. Net-aware rules (coupled-run, 3W, return-path,
+    // the mesh derivation) skip net-0 copper entirely, so every unnetted
+    // millimetre is screening coverage silently lost — and silent loss is
+    // exactly what the house rules forbid.
+    if (ipc) {
+        double mm_all = 0.0, mm_netted = 0.0;
+        for (const auto& s : b.segments) {
+            const double l = std::hypot(s.x2 - s.x1, s.y2 - s.y1);
+            mm_all += l;
+            if (s.net > 0) mm_netted += l;
+        }
+        if (mm_all > 0 && mm_netted < 0.95 * mm_all) {
+            char note[220];
+            std::snprintf(note, sizeof note,
+                          "IPC-356 netting reached %.0f%% of routed copper "
+                          "(%.0f of %.0f mm) — the rest carries no net and is "
+                          "invisible to net-aware rules (coupled runs, 3W, "
+                          "return paths, mesh derivation)",
+                          100.0 * mm_netted / mm_all, mm_netted, mm_all);
+            b.plausibility_notes.push_back(note);
+        }
+    }
 
     if ((size_t)b.stackup.copper_indices().size() != coppers.size())
         throw BoardError(

@@ -460,18 +460,80 @@ class Screener {
         double board_area = (b_.bbox_x2 - b_.bbox_x1) * (b_.bbox_y2 - b_.bbox_y1);
         if (board_area <= 0) throw BoardError("screener: degenerate board bbox");
 
-        std::vector<std::map<int, double>> area_by_net(n);
-        for (const auto& z : b_.zones)
-            area_by_net[z.cu][z.net] += std::abs(z.signed_area());
+        // Coverage is the UNION of a layer's fills, not the sum of their
+        // areas: fills overlap (KiCad re-pours by priority, ODB++ stacks
+        // surfaces over one region), and summing shoelace areas reported a
+        // 175% "coverage" on BeagleBone's LYR2 — a number shown to the user
+        // in the meta strip. The union is measured by scanline: per sample
+        // row each zone yields even-odd x-crossings of its outer ring plus
+        // holes — exactly the copper contains() sees — and intervals union
+        // exactly in x; 192 rows keep the y-quantization error well under
+        // anything the 50% plane threshold could notice.
+        struct ZSpan { const ZonePoly* z; double y1, y2; };
+        std::vector<std::vector<ZSpan>> zs(n);
+        for (const auto& z : b_.zones) {
+            ZSpan s{&z, 1e30, -1e30};
+            for (const auto& p : z.pts) {
+                s.y1 = std::min(s.y1, p.y);
+                s.y2 = std::max(s.y2, p.y);
+            }
+            zs[z.cu].push_back(s);
+        }
+        auto crossings = [](const std::vector<Point>& ring, double y,
+                            std::vector<double>& xs) {
+            for (size_t i = 0, m = ring.size(), j = m - 1; i < m; j = i++) {
+                const Point& a = ring[i];
+                const Point& b = ring[j];
+                if ((a.y > y) != (b.y > y))
+                    xs.push_back((b.x - a.x) * (y - a.y) / (b.y - a.y) + a.x);
+            }
+        };
+        auto union_len = [](std::vector<std::pair<double, double>>& v) {
+            std::sort(v.begin(), v.end());
+            double total = 0.0, lo = 0.0, hi = 0.0;
+            bool open = false;
+            for (const auto& [a, b] : v) {
+                if (!open || a > hi) {
+                    if (open) total += hi - lo;
+                    lo = a; hi = b; open = true;
+                } else {
+                    hi = std::max(hi, b);
+                }
+            }
+            if (open) total += hi - lo;
+            return total;
+        };
+        const int rows = 192;
+        const double row_h = (b_.bbox_y2 - b_.bbox_y1) / rows;
+        std::vector<std::map<int, double>> area_by_net(n);  // per-layer UNION
         for (size_t i = 0; i < n; ++i) {
-            double total = 0.0;
+            double covered = 0.0;
+            std::vector<double> xs;
+            for (int r = 0; r < rows; ++r) {
+                double y = b_.bbox_y1 + row_h * (r + 0.5);
+                std::map<int, std::vector<std::pair<double, double>>> by_net;
+                for (const ZSpan& s : zs[i]) {
+                    if (y < s.y1 || y > s.y2) continue;
+                    xs.clear();
+                    crossings(s.z->pts, y, xs);
+                    for (const auto& h : s.z->holes) crossings(h, y, xs);
+                    std::sort(xs.begin(), xs.end());
+                    auto& iv = by_net[s.z->net];
+                    for (size_t k = 0; k + 1 < xs.size(); k += 2)
+                        iv.emplace_back(xs[k], xs[k + 1]);
+                }
+                std::vector<std::pair<double, double>> all;
+                for (auto& [net, iv] : by_net) {
+                    area_by_net[i][net] += union_len(iv) * row_h;
+                    all.insert(all.end(), iv.begin(), iv.end());
+                }
+                covered += union_len(all) * row_h;
+            }
             int dominant = -1;
             double dom_area = 0.0;
-            for (auto& [net, area] : area_by_net[i]) {
-                total += area;
+            for (const auto& [net, area] : area_by_net[i])
                 if (area > dom_area) { dom_area = area; dominant = net; }
-            }
-            layers_[i].zone_coverage = total / board_area;
+            layers_[i].zone_coverage = covered / board_area;
             // "power"-typed layers count as planes on the KiCad hint alone
             const auto& sl = b_.stackup.layers[b_.stackup.copper_indices()[i]];
             layers_[i].is_plane =
@@ -499,10 +561,13 @@ class Screener {
                     break;
                 }
         }
-        // nets carrying a substantial pour anywhere (see is_pour_net)
+        // nets carrying a substantial pour anywhere (see is_pour_net) — the
+        // same union areas, so stacked fills can't inflate a net over the
+        // threshold
         std::map<int, double> pour_area;
-        for (const auto& z : b_.zones)
-            if (z.net > 0) pour_area[z.net] += std::abs(z.signed_area());
+        for (size_t i = 0; i < n; ++i)
+            for (const auto& [net, a] : area_by_net[i])
+                if (net > 0) pour_area[net] += a;
         for (auto& [net, a] : pour_area)
             if (a >= p_.return_pour_fraction * board_area) big_pour_nets_.insert(net);
     }
