@@ -626,8 +626,9 @@ function toggleRule(rule) {
          · <code>Gerber X2 set</code> · <code>ODB++ job</code> (files, or one zip)</p>
       <button class="chip" data-testid="open-calc" @click="calcOpen = true">
         impedance calculator — no board needed</button>
-      <button class="chip" data-testid="load-demo" @click="loadDemo">
-        try the demo board</button>
+      <button class="chip" data-testid="load-demo" @click="loadDemo"
+              title="LibreSolar MPPT 2420 HC, a 20 A solar charge controller (CERN-OHL-W-2.0) — a real synchronous buck with switch nodes, a derived commutation loop and a near-field map">
+        try the demo board — a real solar MPPT converter</button>
       <button class="chip" data-testid="open-glossary" @click="glossaryOpen = true">
         rule glossary — what Faraday checks, and the physics</button>
       <p class="sub">Faraday screens the whole board for coupled runs, return-path breaks,

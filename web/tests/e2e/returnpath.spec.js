@@ -1,6 +1,55 @@
 // The return-path layer, end to end: geometry only, and it must never dress
 // itself in field units — that was the failure that killed its predecessor.
 import { test, expect } from '@playwright/test'
+
+
+// the pre-MPPT demo board, kept for the stitching-refusal path
+const TINY_2LAYER = `(kicad_pcb (version 20221018) (generator pcbnew)
+  (general (thickness 1.58))
+  (paper "A4")
+  (layers
+    (0 "F.Cu" signal)
+    (31 "B.Cu" signal)
+    (32 "B.Adhes" user "B.Adhesive")
+    (36 "B.SilkS" user "B.Silkscreen")
+    (44 "Edge.Cuts" user)
+  )
+  (setup
+    (stackup
+      (layer "F.SilkS" (type "Top Silk Screen"))
+      (layer "F.Cu" (type "copper") (thickness 0.035))
+      (layer "dielectric 1" (type "core") (thickness 1.51) (material "FR4") (epsilon_r 4.5) (loss_tangent 0.02))
+      (layer "B.Cu" (type "copper") (thickness 0.035))
+      (layer "B.SilkS" (type "Bottom Silk Screen"))
+    )
+    (pad_to_mask_clearance 0)
+  )
+  (net 0 "")
+  (net 1 "GND")
+  (net 2 "CLK")
+  (net 3 "DATA")
+  (gr_rect (start 0 0) (end 50 30) (stroke (width 0.1) (type default)) (layer "Edge.Cuts"))
+  (segment (start 5 10) (end 45 10) (width 0.3) (layer "F.Cu") (net 2))
+  (segment (start 5 10.5) (end 45 10.5) (width 0.3) (layer "F.Cu") (net 3))
+  (segment (start 5 25) (end 20 25) (width 0.5) (layer "F.Cu") (net 1))
+  (via (at 45 10) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 2))
+  (footprint "Resistor_SMD:R_0603_1608Metric" (layer "F.Cu")
+    (at 10 20 90)
+    (property "Reference" "R1" (at 0 -1.43 90) (layer "F.SilkS") (effects (font (size 1 1))))
+    (property "Value" "100n" (at 0 1.43 90) (layer "F.Fab") (effects (font (size 1 1))))
+    (pad "1" smd roundrect (at -0.7875 0 90) (size 0.9 0.95) (layers "F.Cu" "F.Paste" "F.Mask") (net 2 "CLK"))
+    (pad "2" smd roundrect (at 0.7875 0 90) (size 0.9 0.95) (layers "F.Cu" "F.Paste" "F.Mask") (net 1 "GND"))
+  )
+  (zone (net 1) (net_name "GND") (layer "B.Cu") (hatch edge 0.5)
+    (connect_pads (clearance 0.2))
+    (min_thickness 0.25)
+    (fill yes (thermal_gap 0.5) (thermal_bridge_width 0.5))
+    (polygon (pts (xy 0 0) (xy 50 0) (xy 50 30) (xy 0 30)))
+    (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 24 0) (xy 24 30) (xy 0 30)))
+    (filled_polygon (layer "B.Cu") (pts (xy 26 0) (xy 50 0) (xy 50 30) (xy 26 30)))
+  )
+)
+`
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -130,10 +179,12 @@ test('stitching fix: a 4-layer board gets a new file, a 2-layer the honest reaso
       .toContainText('1 stitching via(s) added')
     await expect(page.getByTestId('rp-fix-result')).toContainText('original is untouched')
 
-    // the demo 2-layer board: unstitched but single-plane — the honest refusal
-    await page.goto('/#load=/demo.kicad_pcb')
-    // wait for DEMO content, not just any F-0001 — the synthetic board also
-    // has one, and on a slow network the click would land on the stale board
+    // a 2-layer board, unstitched but single-plane — the honest refusal.
+    // (This WAS the served demo; the demo is now the LibreSolar MPPT, so the
+    // tiny board lives inline to keep exercising the refusal path.)
+    const tiny = TINY_2LAYER
+    await page.getByTestId('file-input').setInputFiles(
+      { name: 'tiny.kicad_pcb', mimeType: 'text/plain', buffer: Buffer.from(tiny) })
     await expect(page.getByTestId('finding-F-0001'))
       .toContainText('CLK', { timeout: LOAD_MS })
     await page.getByTestId('rp-toggle').click()
