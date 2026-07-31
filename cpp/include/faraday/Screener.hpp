@@ -761,6 +761,45 @@ class Screener {
         return best;
     }
 
+    // Loop inductance of the commutation hull — the equivalent-rectangle
+    // Grover closed form. The hull is reduced to the rectangle with its
+    // perimeter and area (a+b = P/2, ab = A); conductor cross-section enters
+    // through the GMD of a w x t strip, r_eq = 0.2235(w+t). A screening
+    // estimate: validated against FastHenry on rectangles and real hulls
+    // (see tools/validate_loop_l.py) — the band is stated where the number
+    // is shown, per house discipline. Enables the ring-frequency check
+    // f = 1/(2*pi*sqrt(L*Coss)) when the lab tier runs.
+  public:   // reusable, and pinned against the FastHenry reference in tests
+    static double hull_loop_inductance_nh(const std::vector<Point>& hull,
+                                          double trace_w_mm) {
+        if (hull.size() < 3 || !(trace_w_mm > 0)) return 0.0;
+        double per = 0, area2 = 0;
+        for (size_t i = 0, n = hull.size(); i < n; ++i) {
+            const Point& p = hull[i];
+            const Point& q = hull[(i + 1) % n];
+            per += std::hypot(q.x - p.x, q.y - p.y);
+            area2 += p.x * q.y - q.x * p.y;
+        }
+        const double A = std::abs(area2) / 2.0;
+        if (!(per > 0) || !(A > 0)) return 0.0;
+        // equivalent rectangle a x b (mm); disc = 0 means a square-ish hull
+        const double s = per / 4.0;
+        const double disc = std::max(0.0, s * s - A);
+        const double a = s + std::sqrt(disc), b = std::max(A / a, 0.01);
+        const double t = 0.035;                        // 1 oz copper
+        const double r = 0.2235 * (trace_w_mm + t);    // GMD of the strip
+        const double d = std::hypot(a, b);
+        // Grover, rectangle of round wire radius r (result in nH, dims mm):
+        // L = (mu0/pi) * [ a*ln(2ab/(r(a+d))) + b*ln(2ab/(r(b+d)))
+        //                  + 2d - 2(a+b) ]  ... mu0/pi = 0.4 nH/mm
+        const double L =
+            0.4 * (a * std::log(2.0 * a * b / (r * (a + d))) +
+                   b * std::log(2.0 * a * b / (r * (b + d))) + 2.0 * d -
+                   2.0 * (a + b));
+        return std::max(L, 0.0);
+    }
+
+  private:
     static std::vector<Point> convex_hull(std::vector<Point> p) {
         if (p.size() < 3) return p;
         std::sort(p.begin(), p.end(), [](const Point& a, const Point& b) {
@@ -799,7 +838,23 @@ class Screener {
             f.confidence = "heuristic";
             f.net_a = net;
             f.coupled_len_mm = loop->area_mm2;
+            // loop inductance: conductor width = median routed width of the
+            // switch net (the loop's own copper), fallback 1 mm power trace
+            double wsum = 0;
+            std::vector<double> ws;
+            for (const auto& s : b_.segments)
+                if (s.net == net) ws.push_back(s.width);
+            double w_med = 1.0;
+            if (!ws.empty()) {
+                std::nth_element(ws.begin(), ws.begin() + ws.size() / 2,
+                                 ws.end());
+                w_med = ws[ws.size() / 2];
+            }
+            (void)wsum;
+            const double l_nh =
+                hull_loop_inductance_nh(loop->hull, w_med);
             f.emit = nlohmann::json{{"areaMm2", loop->area_mm2},
+                                    {"loopNh", l_nh},
                                     {"net", b_.net_name(net)}};
             char buf[280];
             std::snprintf(buf, sizeof buf,
@@ -825,8 +880,14 @@ class Screener {
                     (loop->shape == "magnetic-clamp"
                          ? " (winding + clamp shape)"
                          : " (two-device shape)") +
-                    ". This loop carries the discontinuous switching current; "
-                    "its enclosed area is the dominant radiated-emission and "
+                    ". Loop inductance ~" +
+                    std::to_string((int)std::lround(l_nh)) +
+                    " nH (equivalent-rectangle estimate, within ~15% of a "
+                    "FastHenry solve of the same hull) — with the switch "
+                    "output capacitance this sets the ringing frequency. "
+                    "This loop "
+                    "carries the discontinuous switching current; its "
+                    "enclosed area is the dominant radiated-emission and "
                     "ringing mechanism in a converter.";
             } else {
                 f.detail =

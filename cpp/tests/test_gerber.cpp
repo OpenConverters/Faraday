@@ -237,3 +237,62 @@ TEST_CASE("fixed-format excellon is refused, not misplaced", "[gerber]") {
     CHECK_THROWS_WITH(gerber::parse_excellon("M48\nMETRIC\nT1C0.3\n%\nT1\nX10000Y10000\nM30\n"),
                       Catch::Matchers::ContainsSubstring("decimal"));
 }
+
+// The Altium fab-output path (Tier-1 validation pipeline, ABT #420): classic
+// RS-274X named by Protel extensions, standalone D03 flashes, fixed-format
+// Excellon, and the IPC-D-356 netlist supplying nets + refdes + PINS. This
+// is what every TI EVM/TIDA design zip contains.
+TEST_CASE("gerber: an Altium-style set with IPC-D-356 gets exact nets and pins",
+          "[gerber][ipc356]") {
+    // top copper: two pads (standalone D03 after a D02 move) joined by a
+    // track; a via ring at (30,10); FSAX44 fixed format, mm
+    const char* gtl =
+        "%FSAX44Y44*%\n%MOMM*%\n"
+        "%ADD10C,1.0*%\n%ADD11C,0.6*%\n"
+        "D10*\nX00100000Y00100000D02*\nD03*\n"
+        "X00200000Y00100000D02*\nD03*\n"
+        "X00100000Y00100000D02*\nX00200000Y00100000D01*\n"
+        "D11*\nX00300000Y00100000D02*\nD03*\n"
+        "M02*\n";
+    // bottom: a plane pour region + the via ring
+    const char* gbl =
+        "%FSAX44Y44*%\n%MOMM*%\n%ADD11C,0.6*%\n"
+        "G36*\nX00000000Y00000000D02*\nX00400000Y00000000D01*\n"
+        "X00400000Y00200000D01*\nX00000000Y00200000D01*\n"
+        "X00000000Y00000000D01*\nG37*\n"
+        "D11*\nX00300000Y00100000D02*\nD03*\nM02*\n";
+    // drill: fixed format 4:4 metric, the via hole
+    const char* drl =
+        "M48\n;FILE_FORMAT=4:4\nMETRIC\nT01C0.30\n%\nT01\n"
+        "X00300000Y00100000\nM30\n";
+    // IPC-D-356A: pads R7-1 (net SWX) and R7-2, via record on GND
+    const char* ipc =
+        "P  JOB\nP  UNITS CUST 1\nP  VER IPC-D-356A\n"
+        "327SWX              R7    -1         A01X 010000Y 010000X0100Y0100R000 S0\n"
+        "327SWX              R7    -2         A01X 020000Y 010000X0100Y0100R000 S0\n"
+        "317GND              VIA   -          D0300PA00X 030000Y 010000X0060Y0060 S0\n"
+        "999\n";
+    std::vector<gerber::NamedFile> files{{"b.GTL", gtl},
+                                         {"b.GBL", gbl},
+                                         {"b.TXT", drl},
+                                         {"b.ipc", ipc}};
+    BoardIR b = import_board_set(files, builtin_stackup("default-2layer"));
+    // pads carry component AND pin from the netlist
+    REQUIRE(b.pads.size() == 2);
+    CHECK(b.pads[0].component == "R7");
+    CHECK(b.pads[0].pin == "1");
+    CHECK(b.pads[1].pin == "2");
+    CHECK(b.net_name(b.pads[0].net) == "SWX");
+    // the track between the pads picked SWX up by connectivity
+    int swx = b.pads[0].net;
+    int netted = 0;
+    for (const auto& s : b.segments)
+        if (s.net == swx) ++netted;
+    CHECK(netted >= 1);
+    // the via and the plane pour both got GND through the 317 record
+    REQUIRE(b.vias.size() == 1);
+    CHECK(b.net_name(b.vias[0].net) == "GND");
+    REQUIRE(!b.zones.empty());
+    CHECK(b.net_name(b.zones[0].net) == "GND");
+    CHECK(b.ipc_net_conflicts == 0);
+}

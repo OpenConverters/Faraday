@@ -199,6 +199,9 @@ struct BoardIR {
     // cleared area as copper would make pours look solid where they are not,
     // so the skip is counted and surfaced instead of silent.
     int gerber_clear_skipped = 0;
+    // IPC-D-356 net propagation: islands whose seeds named DIFFERENT nets
+    // (majority won; the count is surfaced, never silent)
+    int ipc_net_conflicts = 0;
     // Non-fatal findings from the import-time plausibility gate (see
     // Plausible.hpp). Impossible boards throw; these are the merely odd ones,
     // carried into the report so the reader sees them.
@@ -272,6 +275,7 @@ inline nlohmann::json to_json(const BoardIR& b) {
     j["approximatedArcs"] = b.approximated_arcs;
     j["viasWithoutDrill"] = b.vias_without_drill;
     j["gerberClearSkipped"] = b.gerber_clear_skipped;
+    j["ipcNetConflicts"] = b.ipc_net_conflicts;
     j["plausibilityNotes"] = b.plausibility_notes;
     return j;
 }

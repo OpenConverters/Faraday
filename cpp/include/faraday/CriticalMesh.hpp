@@ -242,6 +242,12 @@ inline std::optional<DerivedMesh> derive(const BoardIR& b, int sw_net,
                         if (e2 == e1 || e2 == sw->ref) continue;
                         auto ed2 = g.two_terminal(e2, "|D|R|");
                         if (!ed2) continue;
+                        // a two-edge clamp must contain a DIODE: R+R is a
+                        // divider, not a commutation path (a lone R stays
+                        // legal above — that is an RC snubber)
+                        if (detail::prefix(e1) == "R" &&
+                            detail::prefix(e2) == "R")
+                            continue;
                         const int x2 =
                             ed2->first == x1 ? ed2->second : ed2->first;
                         if (x2 == sw_net) continue;

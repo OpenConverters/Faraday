@@ -1305,3 +1305,16 @@ TEST_CASE("franz mesh: a flyback with an RCD clamp derives the clamp mesh",
     std::set<std::string> got(m->members.begin(), m->members.end());
     CHECK(got == std::set<std::string>{"Q1", "R1", "D2"});   // chains cancel
 }
+
+// Tier-2 validation anchor (ABT #421): the loop-inductance closed form is
+// implemented twice — here and in tools/validate_loop_l.py, which runs it
+// against FastHenry (measured agreement: rectangles <1.5%, real hulls
+// <=11.5%, band stated as ~15% in the finding). This pin catches drift
+// between the two implementations: 10 x 10 mm loop, 1 mm trace -> 23.9 nH.
+TEST_CASE("franz mesh: loop inductance matches the validated reference value",
+          "[screener][franz][mesh]") {
+    std::vector<Point> rect{{0, 0}, {10, 0}, {10, 10}, {0, 10}};
+    const double l = Screener::hull_loop_inductance_nh(rect, 1.0);
+    CHECK(l > 23.75);
+    CHECK(l < 24.05);
+}

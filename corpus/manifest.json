@@ -61,5 +61,32 @@
   "branch": "master",
   "license": "NOASSERTION",
   "bytes": 4490683
+ },
+ {
+  "slug": "mppt-1210-hus",
+  "repo": "LibreSolar/mppt-1210-hus",
+  "kind": "solar charge controller (buck)",
+  "path": "kicad/mppt-1210-hus.kicad_pcb",
+  "branch": "main",
+  "license": "NOASSERTION",
+  "bytes": 759587
+ },
+ {
+  "slug": "pwm-2420-lus",
+  "repo": "LibreSolar/pwm-2420-lus",
+  "kind": "PWM charge controller (FET switch)",
+  "path": "kicad/pwm-2420-lus.kicad_pcb",
+  "branch": "master",
+  "license": "CC-BY-SA-4.0",
+  "bytes": 759750
+ },
+ {
+  "slug": "moteus",
+  "repo": "mjbots/moteus",
+  "kind": "brushless servo drive (3 half-bridges)",
+  "path": "hw/c1/moteus_c1.kicad_pcb",
+  "branch": "main",
+  "license": "Apache-2.0",
+  "bytes": 1380950
  }
 ]

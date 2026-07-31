@@ -19,6 +19,11 @@ REPOS = [
     ("fomu",         "im-tomu/fomu-hardware",           "tiny FPGA"),
     ("ulx3s",        "emard/ulx3s",                     "FPGA board"),
     ("openpnp",      "openpnp/openpnp-capacitive-probe","sensor board"),
+    # Tier-4 validation additions (ABT #422): controller + DISCRETE-FET
+    # converters, so the derived critical mesh has roles to infer
+    ("mppt-1210-hus","LibreSolar/mppt-1210-hus",        "solar charge controller (buck)"),
+    ("pwm-2420-lus", "LibreSolar/pwm-2420-lus",         "PWM charge controller (FET switch)"),
+    ("moteus",       "mjbots/moteus",                   "brushless servo drive (3 half-bridges)"),
 ]
 
 def api(url):

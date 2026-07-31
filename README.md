@@ -15,6 +15,7 @@ each with the mechanism, the number, a stated confidence tier, and a remediation
 | **IPC-2581** `.xml` | rev B/C exporters | no other open-source reader exists |
 | **ODB++** job | Altium, Cadence, Mentor, KiCad 9 | exact nets, refdes and values; a directory or one zip |
 | **Gerber X2** set | anything that fabs | net attributes where present; all files or one zip |
+| **Gerber + IPC-D-356** | Altium fab outputs, TI EVM/TIDA zips | classic RS-274X named by Protel extensions; the .ipc netlist supplies exact nets, refdes and pins, propagated through the copper |
 
 Format is detected from the file's **contents**, not its name. Native CAD
 databases are not read — an Altium `.PcbDoc` is a binary OLE file; export
