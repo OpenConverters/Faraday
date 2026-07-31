@@ -442,6 +442,9 @@ inline BoardIR import_odb(const std::vector<NamedFile>& files,
                     b.pads.back().component =
                         "\x01" + std::string(1, fn.side) +
                         std::to_string(fn.comp);   // resolved below
+                    // toeprint INDEX for now; the components pass swaps it
+                    // for the real pin NAME off its TOP records
+                    b.pads.back().pin = "\x01" + std::to_string(fn.pin);
                 }
             } else if (f.kind == 'S') {
                 if (fn.subnet == 'V') continue;   // via pad drawn as a surface
@@ -505,6 +508,20 @@ inline BoardIR import_odb(const std::vector<NamedFile>& files,
                     std::to_string(cmp_idx);
                 for (auto& p : b.pads)
                     if (p.component == key) p.component = cur_ref;
+            } else if (t[0] == "TOP" && t.size() >= 9 && !cur_ref.empty()) {
+                // TOP <toep> x y rot mir <net> <snt> <name>: resolve the
+                // temporary toeprint index into the real pin name. Altium
+                // writes "<ref>-<pin>", KiCad writes the bare pin.
+                const std::string& nm = t[8];
+                const size_t dash = nm.rfind('-');
+                const std::string pin_name =
+                    dash != std::string::npos ? nm.substr(dash + 1) : nm;
+                if (!pin_name.empty()) {
+                    const std::string want = "\x01" + t[1];
+                    for (auto& p : b.pads)
+                        if (p.component == cur_ref && p.pin == want)
+                            p.pin = pin_name;
+                }
             } else if (t[0] == "PRP" && t.size() >= 3 && t[1] == "Value" &&
                        !b.components.empty()) {
                 // PRP Value '100n' — quoted, possibly with spaces
@@ -516,9 +533,12 @@ inline BoardIR import_odb(const std::vector<NamedFile>& files,
         }
     }
     // any unresolved placeholder keys (eda names a component the components
-    // file does not have) become anonymous rather than leaking \x01 keys
-    for (auto& p : b.pads)
+    // file does not have) become anonymous rather than leaking \x01 keys;
+    // same for pin indices no TOP record named — absence, not a wrong number
+    for (auto& p : b.pads) {
         if (!p.component.empty() && p.component[0] == '\x01') p.component = "";
+        if (!p.pin.empty() && p.pin[0] == '\x01') p.pin = "";
+    }
 
     // A through-hole pin appears as one toeprint PER COPPER LAYER in ODB++;
     // the IR's convention (from the KiCad importer) is ONE pad with cu = -1.

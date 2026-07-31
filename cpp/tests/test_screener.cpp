@@ -3,6 +3,7 @@
 #include <faraday/KicadImporter.hpp>
 #include <faraday/Diff.hpp>
 #include <faraday/Fixes.hpp>
+#include <faraday/Report.hpp>
 #include <faraday/Screener.hpp>
 
 #include <fstream>
@@ -1079,4 +1080,115 @@ TEST_CASE("franz: a long via stub on a decoupling cap is flagged",
     nlohmann::json near_ = analyze_board(
         import_kicad(board(10.5), builtin_stackup("default-4layer")));
     CHECK(find_rule(near_["findings"], "cap-via-stub") == nullptr);
+}
+
+// §8.17.1 rule 1: the critical mesh must touch the general ground at ONE
+// point. A loop capacitor bridging two RETURN pours (PGND<->AGND) means the
+// switching current crosses a ground-domain boundary; a cap from a RAIL pour
+// to ground is the correct loop capacitor and must NOT fire.
+TEST_CASE("franz: a commutation loop crossing two ground domains is named",
+          "[screener][franz]") {
+    std::string t = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SW") (net 2 "AGND") (net 3 "PGND") (net 4 "VIN")
+      (segment (start 5 5) (end 15 5) (width 1.0) (layer "F.Cu") (net 1))
+      (zone (net 2) (net_name "AGND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu")
+          (pts (xy 0 0) (xy 60 0) (xy 60 40) (xy 0 40))))
+      (zone (net 3) (net_name "PGND") (layer "F.Cu")
+        (filled_polygon (layer "F.Cu")
+          (pts (xy 0 20) (xy 30 20) (xy 30 40) (xy 0 40))))
+      (footprint "L" (layer "F.Cu") (at 5 5)
+        (property "Reference" "L1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SW"))
+        (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net 4 "VIN")))
+      (footprint "Q" (layer "F.Cu") (at 15 5)
+        (property "Reference" "Q1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SW"))
+        (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net 3 "PGND")))
+      (footprint "C" (layer "F.Cu") (at 18 8)
+        (property "Reference" "C9")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 3 "PGND"))
+        (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net 2 "AGND")))
+    ))";
+    nlohmann::json rep = analyze_board(
+        import_kicad(t, builtin_stackup("default-2layer")));
+    const auto* f = find_rule(rep["findings"], "critical-mesh-ground");
+    REQUIRE(f != nullptr);
+    CHECK((*f)["title"].get<std::string>().find("C9") != std::string::npos);
+    CHECK((*f)["detail"].get<std::string>().find("domain") != std::string::npos);
+}
+
+// WE checklist §10 [HZ]: switch-node copper at the board edge radiates into
+// free space; the same copper inboard does not fire.
+TEST_CASE("franz: switch-node copper at the board edge is flagged",
+          "[screener][franz]") {
+    auto board = [](double y) {
+        char buf[1200];
+        std::snprintf(buf, sizeof buf, R"((kicad_pcb
+          (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+          (net 0 "") (net 1 "SW") (net 2 "GND")
+          (segment (start 10 %.1f) (end 40 %.1f) (width 1.0) (layer "F.Cu") (net 1))
+          (zone (net 2) (net_name "GND") (layer "B.Cu")
+            (filled_polygon (layer "B.Cu")
+              (pts (xy 0 0) (xy 60 0) (xy 60 40) (xy 0 40))))
+          (gr_line (start 0 0) (end 60 0) (layer "Edge.Cuts"))
+          (gr_line (start 60 0) (end 60 40) (layer "Edge.Cuts"))
+          (gr_line (start 60 40) (end 0 40) (layer "Edge.Cuts"))
+          (gr_line (start 0 40) (end 0 0) (layer "Edge.Cuts"))
+          (footprint "L" (layer "F.Cu") (at 10 %.1f)
+            (property "Reference" "L1")
+            (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SW")))
+          (footprint "Q" (layer "F.Cu") (at 40 %.1f)
+            (property "Reference" "Q1")
+            (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SW")))
+        ))", y, y, y, y);
+        return std::string(buf);
+    };
+    nlohmann::json edge = analyze_board(
+        import_kicad(board(0.8), builtin_stackup("default-2layer")));
+    const auto* f = find_rule(edge["findings"], "edge-radiation");
+    REQUIRE(f != nullptr);
+    CHECK((*f)["detail"].get<std::string>().find("board edge") != std::string::npos);
+
+    nlohmann::json mid = analyze_board(
+        import_kicad(board(20.0), builtin_stackup("default-2layer")));
+    CHECK(find_rule(mid["findings"], "edge-radiation") == nullptr);
+}
+
+// Franz §5.5: capacitors of DIFFERENT values in parallel create a parallel
+// resonance between their series resonances. The screen computes the actual
+// peak from the same branch model the PDN panel uses.
+TEST_CASE("franz: mixed-value decoupling shows its anti-resonance",
+          "[screener][franz]") {
+    std::string t = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "GND") (net 2 "VCC") (net 3 "SW")
+      (segment (start 5 30) (end 25 30) (width 0.3) (layer "F.Cu") (net 3))
+      (zone (net 1) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu")
+          (pts (xy 0 0) (xy 60 0) (xy 60 40) (xy 0 40))))
+      (via (at 11 10) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
+      (via (at 21 10) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
+      (footprint "C_0603" (layer "F.Cu") (at 10 10)
+        (property "Reference" "C1") (property "Value" "100n")
+        (pad "1" smd rect (at 0 0) (size 1 0.6) (layers "F.Cu") (net 1 "GND"))
+        (pad "2" smd rect (at 1.6 0) (size 1 0.6) (layers "F.Cu") (net 2 "VCC")))
+      (footprint "C_0603" (layer "F.Cu") (at 20 10)
+        (property "Reference" "C2") (property "Value" "1n")
+        (pad "1" smd rect (at 0 0) (size 1 0.6) (layers "F.Cu") (net 1 "GND"))
+        (pad "2" smd rect (at 1.6 0) (size 1 0.6) (layers "F.Cu") (net 2 "VCC")))
+      (footprint "U" (layer "F.Cu") (at 30 10)
+        (property "Reference" "U1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 2 "VCC"))
+        (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net 1 "GND")))
+    ))";
+    nlohmann::json rep = analyze_board(
+        import_kicad(t, builtin_stackup("default-2layer")));
+    const auto* f = find_rule(rep["findings"], "pdn-antiresonance");
+    REQUIRE(f != nullptr);
+    CHECK((*f)["detail"].get<std::string>().find("mixes capacitor VALUES") !=
+          std::string::npos);
+    // no switching aggressor on this board -> review-grade, not a defect
+    CHECK((*f)["severityLabel"] == "low");
 }

@@ -168,6 +168,11 @@ struct Pad {
     double w, h;            // mm (axis-aligned bbox of the pad after rotation)
     bool through_hole;
     int cu;                 // copper ordinal for SMD; -1 for through-hole
+    // Pin name/number ("1", "K", "D") — last, so aggregate initializers that
+    // predate it stay valid. Both KiCad and ODB++ carry it; keeping it makes
+    // diode polarity and IC pin roles derivable EXACTLY instead of being
+    // inferred from pad counts (Franz's Stromanalyse needs conduction paths).
+    std::string pin;
 };
 
 struct Component {
@@ -258,7 +263,8 @@ inline nlohmann::json to_json(const BoardIR& b) {
     }
     j["pads"] = nlohmann::json::array();
     for (const auto& p : b.pads)
-        j["pads"].push_back({{"component", p.component}, {"net", p.net},
+        j["pads"].push_back({{"component", p.component}, {"pin", p.pin},
+                             {"net", p.net},
                              {"x", p.x}, {"y", p.y}, {"w", p.w}, {"h", p.h},
                              {"th", p.through_hole}, {"cu", p.cu}});
     j["bbox"] = {b.bbox_x1, b.bbox_y1, b.bbox_x2, b.bbox_y2};

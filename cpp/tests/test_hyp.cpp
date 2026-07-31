@@ -6,6 +6,7 @@
 #include <catch2/matchers/catch_matchers_string.hpp>
 #include <faraday/HypImporter.hpp>
 #include <faraday/Screener.hpp>
+#include <faraday/Report.hpp>
 
 #include <fstream>
 #include <sstream>

@@ -263,14 +263,21 @@ class Screener {
         double area_mm2 = 0;
         double cap_dist_mm = 0;
         std::string cap_ref;
+        // the loop cap's nets — the Stromumschaltanalyse on the derived
+        // netlist showed the cap can be a DOMAIN STITCH (both sides pours),
+        // which means the critical mesh closes across two ground domains
+        std::vector<int> cap_nets;
         std::vector<Point> hull;
     };
     std::optional<LoopResult> commutation_loop(int sw_net) const {
         return commutation_loop_impl(sw_net);
     }
 
-    std::vector<Finding> run() {
-        std::vector<Finding> out;
+    // extra: findings produced OUTSIDE the screener (the PDN anti-resonance
+    // pass lives with the PDN model in Report.hpp) that must enter the same
+    // ranking, cap and ID pipeline — appended before the sort, never after.
+    std::vector<Finding> run(std::vector<Finding> extra = {}) {
+        std::vector<Finding> out = std::move(extra);
         find_no_reference_plane(out);
         find_switch_nodes(out);
         find_commutation_loops(out);
@@ -282,6 +289,7 @@ class Screener {
         find_connector_ground_spread(out);
         find_plane_cavity_modes(out);
         find_cap_via_stubs(out);
+        find_edge_radiation(out);
         find_diff_skew(out);
         // rank: severity desc, then coupled length desc
         std::sort(out.begin(), out.end(), [](const Finding& x, const Finding& y) {
@@ -676,7 +684,11 @@ class Screener {
             if (!on_rail || !on_pour) continue;
             for (const auto& cp : cap_pts[ref]) {
                 double d = std::hypot(cp.x - cx, cp.y - cy);
-                if (d < best_d) { best_d = d; best.cap_ref = ref; }
+                if (d < best_d) {
+                    best_d = d;
+                    best.cap_ref = ref;
+                    best.cap_nets.assign(nets.begin(), nets.end());
+                }
             }
         }
         if (best.cap_ref.empty()) return std::nullopt;
@@ -719,6 +731,10 @@ class Screener {
     }
 
     void find_commutation_loops(std::vector<Finding>& out) {
+        // several switch nets can share one loop capacitor (a flyback's
+        // primary, SR and bias meshes all close near the same stitch) — the
+        // domain-crossing is a property of the CAP, reported once
+        std::set<std::string> domain_reported;
         for (int net : sw_nets_) {
             auto loop = commutation_loop(net);
             if (!loop) continue;
@@ -757,7 +773,75 @@ class Screener {
                 const Point& b = loop->hull[(i + 1) % loop->hull.size()];
                 f.geom.lines.push_back({net, 0, a.x, a.y, b.x, b.y, 0.25});
             }
+            FindingGeom hull_geom = f.geom;   // reuse for the domain finding
             out.push_back(std::move(f));
+
+            // Franz §8.17.1, rule 1: the critical mesh must connect to the
+            // general ground at ONE point. When the loop's capacitor bridges
+            // TWO pour nets it is a domain STITCH, not a bulk cap — the
+            // discontinuous switching current is crossing a ground-domain
+            // boundary (e.g. GND<->AGND) through it, and every circuit
+            // referenced to either domain sees that di/dt on its reference.
+            // Found by running his Stromumschaltanalyse on the derived
+            // netlist of a real PoE flyback, where the geometric rule's cap
+            // choice (a GND<->AGND stitch) was correct but its MEANING —
+            // the mesh spans two domains — was invisible.
+            // BOTH sides must be RETURN domains. A power board's input rail
+            // is very often a pour too (mppt's /DCDC_HV+), and a cap from
+            // the rail pour to ground is the correct loop capacitor, not a
+            // domain crossing. Net names are the established discriminator
+            // for return nets in this codebase (pdn ground discovery).
+            auto is_return_name = [&](int n) {
+                std::string lo;
+                for (char ch : b_.net_name(n))
+                    lo += (char)std::tolower((unsigned char)ch);
+                return lo.find("gnd") != std::string::npos ||
+                       lo.find("vss") != std::string::npos;
+            };
+            int pour_a = -1, pour_b = -1;
+            for (int n : loop->cap_nets) {
+                if (!is_pour_net(n) || !is_return_name(n)) continue;
+                if (pour_a < 0) pour_a = n;
+                else if (n != pour_a) pour_b = n;
+            }
+            if (pour_a >= 0 && pour_b >= 0 &&
+                domain_reported
+                    .insert(loop->cap_ref + "|" + std::to_string(pour_a) +
+                            "|" + std::to_string(pour_b))
+                    .second) {
+                Finding g;
+                g.rule = "critical-mesh-ground";
+                g.severity = 0.6;
+                g.severity_label = "medium";
+                g.confidence = "heuristic";
+                g.net_a = pour_a;
+                g.net_b = pour_b;
+                char gb[380];
+                std::snprintf(
+                    gb, sizeof gb,
+                    "The commutation loop of %s closes through %s — a "
+                    "capacitor bridging the %s and %s pours. The switching "
+                    "current's return is crossing a ground-domain boundary "
+                    "through that stitch, so both domains carry the di/dt "
+                    "and everything referenced to either sees it. The "
+                    "critical mesh should connect to the general ground at "
+                    "one point only.",
+                    b_.net_name(net).c_str(), loop->cap_ref.c_str(),
+                    b_.net_name(pour_a).c_str(), b_.net_name(pour_b).c_str());
+                g.title = "Critical mesh crosses " + b_.net_name(pour_a) +
+                          "<->" + b_.net_name(pour_b) + " through " +
+                          loop->cap_ref;
+                g.detail = gb;
+                g.remediation =
+                    "Keep the whole commutation loop inside ONE ground "
+                    "domain: return the switch source and the input "
+                    "capacitor to the same pour, joined to the other domain "
+                    "at a single star point away from the loop. If the "
+                    "stitch must carry the loop, it is part of the hot loop "
+                    "and must be treated (placed, sized) as such.";
+                g.geom = hull_geom;
+                out.push_back(std::move(g));
+            }
         }
     }
 
@@ -1448,11 +1532,22 @@ class Screener {
             }
             if (ic.empty() || best > p_.decoupling_far_mm * 4) continue;
             if (best <= p_.decoupling_far_mm) continue;   // well placed
+            // Franz §5.9.5 (leiterplattenbezogene Abblockung): when the RAIL
+            // itself is a continuous plane, capacitor position has little
+            // effect on the decoupling impedance — his measured Bild 5.47
+            // shows a cap in the far corner still working. The distance is
+            // then context, not a defect. Trace-fed rails keep the full
+            // severity: there, Einzelabblockung is mandatory.
+            bool rail_is_plane = false;
+            for (const auto& lm : layers_)
+                rail_is_plane = rail_is_plane ||
+                                (lm.is_plane && lm.plane_net == rail);
             Finding f;
             f.rule = "decoupling-distance";
             f.severity = std::clamp(0.2 + (best - p_.decoupling_far_mm) / 25.0,
                                     0.2, 0.7);
             f.severity_label = f.severity > 0.33 ? "medium" : "low";
+            if (rail_is_plane) { f.severity = 0.12; f.severity_label = "info"; }
             f.confidence = "heuristic";
             f.net_a = rail;
             f.coupled_len_mm = best;
@@ -1467,6 +1562,13 @@ class Screener {
             f.title = "Decoupling reach: " + ref + " -> " + ic + " (" +
                       std::to_string((int)std::lround(best)) + " mm)";
             f.detail = buf;
+            if (rail_is_plane)
+                f.detail += std::string(
+                    " However: this rail is a continuous plane, and on a "
+                    "plane pair the capacitor's position has little effect "
+                    "on the decoupling impedance (Franz, EMV 5th ed., "
+                    "§5.9.5 — board-referred decoupling). Reported as "
+                    "context, not a defect.");
             f.remediation = "Move " + ref + " next to the " + ic +
                             " pin (ideally on the same side, with its own via "
                             "pair into the plane).";
@@ -1724,6 +1826,84 @@ class Screener {
         out.push_back(std::move(f));
     }
 
+    // ---- rule: switch-node copper at the board edge ----
+    // WE EMV-Checkliste V8 §10 [HZ] Edge-Coupling: copper near the board
+    // edge couples into free radiation — the field is no longer confined
+    // between trace and plane, and the plane's image current is truncated.
+    // The fix the same checklist names: keep the plane to the edge and fence
+    // it with return vias. Only the loudest copper is screened (switch
+    // nodes); flagging every edge-routed net would bury the signal.
+    void find_edge_radiation(std::vector<Finding>& out) {
+        if (sw_nets_.empty() || !b_.bbox_from_outline) return;
+        for (int net : sw_nets_) {
+            double worst = 1e30, wx = 0, wy = 0;
+            double len_near = 0, lim_used = 1.5;
+            FindingGeom geom;
+            // the clearance that matters is relative to the dielectric
+            // height: at < 2h the edge field dominates the plane's
+            double h = 0.3;
+            for (const auto& s : b_.segments) {
+                if (s.net != net) continue;
+                const LayerModel& lm = layers_[s.cu];
+                if (lm.ref_up >= 0 || lm.ref_dn >= 0)
+                    h = std::max(
+                        {0.1, lm.ref_up >= 0 ? lm.h_up : 0.0,
+                         lm.ref_dn >= 0 ? lm.h_dn : 0.0});
+                auto edge_d = [&](double x, double y) {
+                    return std::min(
+                        std::min(x - b_.bbox_x1, b_.bbox_x2 - x),
+                        std::min(y - b_.bbox_y1, b_.bbox_y2 - y));
+                };
+                const double d =
+                    std::min(edge_d(s.x1, s.y1), edge_d(s.x2, s.y2));
+                const double lim = std::max(1.5, 2.0 * h);
+                if (d < lim) {
+                    lim_used = std::max(lim_used, lim);
+                    len_near += std::hypot(s.x2 - s.x1, s.y2 - s.y1);
+                    if (geom.lines.size() < 60) geom.lines.push_back(s);
+                    if (d < worst) { worst = d; wx = s.x1; wy = s.y1; }
+                }
+            }
+            if (len_near < 2.0) continue;   // a corner clip, not a run
+            // softener: a return-via fence between the copper and the edge
+            int fence = 0;
+            for (const auto& v : b_.vias)
+                if (is_pour_net(v.net) &&
+                    std::hypot(v.x - wx, v.y - wy) < 5.0)
+                    ++fence;
+            Finding f;
+            f.rule = "edge-radiation";
+            f.severity = fence >= 3 ? 0.25 : 0.42;
+            f.severity_label = fence >= 3 ? "low" : "medium";
+            f.confidence = "geometric-only";
+            f.net_a = net;
+            f.coupled_len_mm = len_near;
+            char buf[360];
+            std::snprintf(
+                buf, sizeof buf,
+                "%.0f mm of switch node %s runs within %.1f mm of the board "
+                "edge (closest %.2f mm). At the edge the field is no longer "
+                "confined between trace and plane — the dv/dt couples into "
+                "free space from the loudest copper on the board. %s",
+                len_near, b_.net_name(net).c_str(), lim_used, worst,
+                fence >= 3 ? "A return-via fence is present near the closest "
+                             "approach, which contains most of it."
+                           : "No return-via fence stands between it and the "
+                             "edge.");
+            f.title = "Switch node at board edge: " + b_.net_name(net) +
+                      " (" + std::to_string((int)std::lround(len_near)) +
+                      " mm)";
+            f.detail = buf;
+            f.remediation =
+                "Pull the switch-node copper inboard, keep the return plane "
+                "out to the edge beneath it, and fence the edge with "
+                "stitching vias (checklist: pitch <= lambda/10 at the "
+                "highest aggressor harmonic).";
+            f.geom = std::move(geom);
+            out.push_back(std::move(f));
+        }
+    }
+
     // ---- rule: signal runs crossing plane voids/splits ----
     void find_plane_crossings(std::vector<Finding>& out) {
         // zone bboxes per layer for cheap point tests
@@ -1955,29 +2135,8 @@ inline nlohmann::json to_json(const Finding& f) {
 }
 
 // Full analysis: board JSON + ranked findings + meta + per-width Z0 table.
-inline nlohmann::json analyze_board(const BoardIR& board, ScreenerParams params = {}) {
-    Screener sc(board, params);
-    auto findings = sc.run();
-    nlohmann::json fj = nlohmann::json::array();
-    for (const auto& f : findings) fj.push_back(to_json(f));
-
-    // Z0 tooltip table: one entry per (cu, width) actually routed
-    std::set<std::pair<int, long long>> seen;
-    nlohmann::json z0s = nlohmann::json::array();
-    for (const auto& s : board.segments) {
-        auto key = std::make_pair(s.cu, (long long)std::llround(s.width * 1000.0));
-        if (!seen.insert(key).second) continue;
-        auto z0 = sc.z0_estimate(s.cu, s.width);
-        nlohmann::json e{{"cu", s.cu}, {"widthMm", s.width}};
-        if (z0) e["z0Ohm"] = *z0;
-        z0s.push_back(e);
-    }
-
-    return {{"faraday", "0.1.0"},
-            {"board", to_json(board)},
-            {"findings", fj},
-            {"z0Table", z0s},
-            {"meta", sc.meta()}};
-}
+// analyze_board lives in Report.hpp: the full report includes the PDN
+// anti-resonance pass, which stands on Pdn.hpp and therefore cannot be
+// defined here (Pdn includes Screener, never the reverse).
 
 }  // namespace faraday

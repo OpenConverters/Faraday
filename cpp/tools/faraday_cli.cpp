@@ -5,6 +5,7 @@
 
 #include <faraday/Diff.hpp>
 #include <faraday/Fixes.hpp>
+#include <faraday/Report.hpp>
 #include <faraday/Import.hpp>
 #include <faraday/Screener.hpp>
 

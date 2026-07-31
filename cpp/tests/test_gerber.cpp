@@ -6,6 +6,7 @@
 
 #include <faraday/Import.hpp>
 #include <faraday/Screener.hpp>
+#include <faraday/Report.hpp>
 
 using namespace faraday;
 using Catch::Matchers::WithinAbs;

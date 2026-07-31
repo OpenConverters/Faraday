@@ -28,10 +28,15 @@ coupling, never a defect) · `3w` · `plane-crossing` and `sparse-reference` (re
 rolled up when systemic) · `via-stub` and `dangling-stub` (λ/4 resonators) ·
 `decoupling-distance` · and for power converters, `switch-node` and **`commutation-loop`** —
 the input-cap → switch-pair → return loop whose enclosed area dominates converter emissions.
-Three rules implement Franz (*EMV: Störungssicherer Aufbau elektronischer Schaltungen*, 5th ed.):
+Six rules implement Franz (*EMV: Störungssicherer Aufbau elektronischer Schaltungen*, 5th ed.):
 `connector-ground-spread` (scattered cable-ground entries drive the cables as antennas, §7.2),
-`plane-cavity-mode` (VCC/GND cavity resonances from Gl. 5.3, corner vs. centre excitation, §5.9.3)
-and `cap-via-stub` (decoupling-branch stub inductance, §5.6).
+`plane-cavity-mode` (VCC/GND cavity resonances from Gl. 5.3, corner vs. centre excitation, §5.9.3),
+`cap-via-stub` (decoupling-branch stub inductance, §5.6), `critical-mesh-ground` (the
+commutation loop crossing a ground-domain boundary, §8.17.1 — via his Stromumschaltanalyse on
+the netlist derived from the layout), `pdn-antiresonance` (mixed-value decoupling's parallel
+resonance, computed from the PDN branch model, §5.5/§5.9.5) and `edge-radiation`
+(switch-node copper at the board edge). Pads carry their pin names through every importer,
+so conduction paths are derivable, not guessed.
 
 Faraday is an automated **design review**, not compliance prediction. Screening-tier numbers are
 first-order estimates for *ranking* risk; a field-solver tier (OMFEM 2D cross-section RLGC +

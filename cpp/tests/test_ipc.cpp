@@ -8,6 +8,7 @@
 #include <faraday/IpcImporter.hpp>
 #include <faraday/KicadImporter.hpp>
 #include <faraday/Screener.hpp>
+#include <faraday/Report.hpp>
 
 #include <cstring>
 #include <fstream>

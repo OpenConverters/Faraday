@@ -8,6 +8,7 @@
 
 #include <faraday/Import.hpp>
 #include <faraday/Screener.hpp>
+#include <faraday/Report.hpp>
 
 #include <cmath>
 #include <fstream>
@@ -101,6 +102,13 @@ TEST_CASE("odb: toeprints carry their component and its VALUE", "[odb]") {
     CHECK(named == 2);                     // both R1 pads owned via SNT TOP
     REQUIRE(o.components.size() == 1);
     CHECK(o.components[0].reference == "R1");
+    // pin names resolved from the components file's TOP records
+    {
+        std::set<std::string> pins;
+        for (const auto& p : o.pads)
+            if (p.component == "R1") pins.insert(p.pin);
+        CHECK(pins == std::set<std::string>{"1", "2"});
+    }
     // PRP Value survives — this is what makes the PDN tool work on ODB++
     CHECK(o.components[0].value == "100n");
 }

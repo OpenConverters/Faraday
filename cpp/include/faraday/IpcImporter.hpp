@@ -242,6 +242,7 @@ inline BoardIR import_ipc2581(const std::string& text,
             if (it == comp_pos.end()) continue;
             Pad pad;
             pad.component = ref;
+            pad.pin = pr->attr_or("pinRef", "");   // IPC-2581 names the pin
             pad.net = net;
             pad.x = it->second.first;
             pad.y = it->second.second;

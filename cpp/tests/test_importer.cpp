@@ -5,6 +5,7 @@
 #include <faraday/Import.hpp>
 #include <faraday/KicadImporter.hpp>
 #include <faraday/Screener.hpp>
+#include <faraday/Report.hpp>
 
 #include <fstream>
 #include <sstream>
@@ -63,6 +64,8 @@ TEST_CASE("importer: fixture 2-layer board round-trips into the IR", "[importer]
     CHECK(b.components[0].reference == "R1");
     CHECK(b.components[0].value == "100n");
     REQUIRE(b.pads.size() == 2);
+    CHECK(b.pads[0].pin == "1");     // pin names survive the import
+    CHECK(b.pads[1].pin == "2");
     CHECK(b.pads[0].net == 2);
     CHECK(b.pads[0].x == Approx(10.0).margin(1e-9));
     CHECK(b.pads[0].y == Approx(20.7875));

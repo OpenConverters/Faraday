@@ -270,6 +270,7 @@ inline BoardIR import_kicad(const std::string& text,
             double prot = pat->children().size() > 3 ? pat->number_at(3) : comp.rot_deg;
             Pad pad;
             pad.component = comp.reference;
+            pad.pin = p->atom_at(1);   // (pad "1" ...) — the pin name/number
             pad.net = net_of(*p);
             pad.x = comp.x + dx * c - dy * sn;
             pad.y = comp.y + dx * sn + dy * c;

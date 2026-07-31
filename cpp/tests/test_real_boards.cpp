@@ -8,6 +8,7 @@
 #include <catch2/catch_approx.hpp>
 #include <faraday/KicadImporter.hpp>
 #include <faraday/Screener.hpp>
+#include <faraday/Report.hpp>
 
 #include <fstream>
 #include <sstream>
