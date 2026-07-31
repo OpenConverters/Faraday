@@ -1,5 +1,30 @@
-<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 32 32">
-<rect width="32" height="32" rx="6" fill="#101613"/>
-<path d="M9 25V7h15v4H14v4h8v4h-8v6z" fill="#e8955c"/>
-<rect x="4.5" y="4.5" width="23" height="23" rx="4" fill="none" stroke="#3a4a42" stroke-width="1.6" stroke-dasharray="3 2.4"/>
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64">
+  <!-- Faraday: a cage doing its job — the switching loop's near field lives
+       inside the mesh, and outside it is quiet. Copper on bare board, same
+       family as Kirchhoff (node) and Kelvin (4-wire). -->
+  <rect width="64" height="64" rx="10" fill="#101613"/>
+  <g stroke="#22302a" stroke-width="1">
+    <path d="M0 16h64M0 32h64M0 48h64M16 0v64M32 0v64M48 0v64"/>
+  </g>
+  <!-- the cage: a dashed mesh enclosure -->
+  <rect x="11" y="11" width="42" height="42" rx="7" fill="none"
+        stroke="#e8955c" stroke-width="2.6" stroke-dasharray="4.6 3.4"/>
+  <!-- the aggressor: a commutation loop, the loudest copper on a converter -->
+  <rect x="26" y="26" width="12" height="12" rx="2" fill="none"
+        stroke="#e8955c" stroke-width="3"/>
+  <!-- its near field: arcs that exist only INSIDE the cage -->
+  <g fill="none" stroke="#e8955c" stroke-width="1.7" stroke-linecap="round">
+    <path d="M44 24a14.5 14.5 0 0 1 0 16" stroke-opacity=".75">
+      <animate attributeName="stroke-opacity" values=".75;.25;.75" dur="2.4s" repeatCount="indefinite"/>
+    </path>
+    <path d="M20 24a14.5 14.5 0 0 0 0 16" stroke-opacity=".75">
+      <animate attributeName="stroke-opacity" values=".25;.75;.25" dur="2.4s" repeatCount="indefinite"/>
+    </path>
+    <path d="M49 20a21.5 21.5 0 0 1 0 24" stroke-opacity=".35">
+      <animate attributeName="stroke-opacity" values=".35;.1;.35" dur="2.4s" repeatCount="indefinite"/>
+    </path>
+    <path d="M15 20a21.5 21.5 0 0 0 0 24" stroke-opacity=".35">
+      <animate attributeName="stroke-opacity" values=".1;.35;.1" dur="2.4s" repeatCount="indefinite"/>
+    </path>
+  </g>
 </svg>
