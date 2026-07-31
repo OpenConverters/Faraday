@@ -240,6 +240,12 @@ class Screener {
 
     const std::vector<LayerModel>& layer_models() const { return layers_; }
 
+    // Whether a net carries a substantial pour — i.e. is a return/reference
+    // net. Public because the near-field map needs to know what a shield can
+    // could be BONDED to, and "the return copper" is the screener's judgement,
+    // not something a caller should re-derive.
+    bool is_return_net(int net) const { return is_pour_net(net); }
+
     // Nets the switch-node rule identified. Exposed because the radiation map
     // has to give those nets the switched current rather than swing / Z0 —
     // they are the loudest copper on a converter by a wide margin.

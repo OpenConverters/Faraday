@@ -564,10 +564,20 @@ inline nlohmann::json near_field_json(const BoardIR& board,
     // Echo the cans with the SE each one earned at the ring frequency, so the
     // COLOUR MAP can apply the same attenuation as the victim table — the two
     // must never disagree about what a can does.
+    // The SE echoed here is the DELIVERED one — what the board's ground fence
+    // can actually support — not the can's datasheet figure, so the colour map,
+    // the victim table and the bond verdict all agree.
     nlohmann::json shj = nlohmann::json::array();
-    for (const auto& sh : p.shields)
-        shj.push_back({{"x1", sh.x1}, {"y1", sh.y1}, {"x2", sh.x2},
-                       {"y2", sh.y2}, {"seDb", sh.se_db}});
+    for (const auto& sb : r.shield_bonds)
+        shj.push_back({{"x1", sb.x1}, {"y1", sb.y1}, {"x2", sb.x2},
+                       {"y2", sb.y2}, {"seDb", sb.delivered_se_db},
+                       {"specSeDb", sb.spec_se_db},
+                       {"specSeamMm", sb.spec_seam_mm},
+                       {"contacts", sb.contacts},
+                       {"perimeterMm", sb.perimeter_mm},
+                       {"achievablePitchMm", sb.achievable_pitch_mm},
+                       {"fencePresent", sb.fence_present},
+                       {"limitsTheCan", sb.limits_the_can}});
     return {{"aggressors", ag}, {"victims", vi}, {"capacitive", caps},
             {"shields", shj},
             {"maxHAPerM", r.max_h},
@@ -610,6 +620,10 @@ inline nfmap::MapParams nfmap_params_from_json(const nlohmann::json& j) {
             can.mu_r = sj.value("muR", 0.0);
             r.se_db = shield::evaluate(can, p.ring_hz,
                                        shield::FieldKind::MagneticNear).se_db;
+            // kept so the map can re-evaluate at the contact pitch the BOARD
+            // can actually support, which is usually the binding one
+            r.spec_seam_mm = can.seam_pitch_mm;
+            r.can = can;
             p.shields.push_back(r);
         }
     }

@@ -304,6 +304,70 @@ TEST_CASE("a can attenuates only when it separates aggressor from victim",
                    WithinRel(bare.victims[i].h_a_per_m, 1e-12));
 }
 
+// A can's seam pitch is a promise about the PART. It is only delivered if the
+// board has a ground fence at that pitch to solder it to — the one shield
+// caveat a layout file can actually settle.
+TEST_CASE("a can gets the contact pitch the BOARD can support, not the datasheet's",
+          "[nfmap][shield]") {
+    BoardIR b = converter();
+    // a coarse ground fence around the switching cluster: 4 return-net vias on
+    // a 56 mm perimeter -> 14 mm achievable pitch, far coarser than a 2 mm spec
+    for (auto [x, y] : {std::pair<double, double>{6, 6}, {22, 6}, {22, 18}, {6, 18}})
+        b.vias.push_back({2, x, y, 0.6, 0.3, 0, 1});
+    Screener s(b);
+
+    shield::Can spec;
+    spec.seam_pitch_mm = 2.0;           // what the can claims
+    nfmap::MapParams p;
+    shield::Rect can;
+    can.x1 = 6; can.y1 = 6; can.x2 = 22; can.y2 = 18;
+    can.spec_seam_mm = spec.seam_pitch_mm;
+    can.can = spec;
+    can.se_db = shield::evaluate(spec, p.ring_hz,
+                                 shield::FieldKind::MagneticNear).se_db;
+    p.shields.push_back(can);
+
+    const nfmap::MapResult r = nfmap::compute(b, s, p);
+    REQUIRE(r.shield_bonds.size() == 1);
+    const auto& sb = r.shield_bonds[0];
+    CHECK(sb.fence_present);
+    CHECK(sb.contacts == 4);
+    CHECK_THAT(sb.perimeter_mm, WithinAbs(56.0, 1e-9));
+    CHECK_THAT(sb.achievable_pitch_mm, WithinAbs(14.0, 1e-9));
+    CHECK(sb.limits_the_can);
+    // the board is 7x coarser than the spec, so it costs ~20*log10(7) = 17 dB
+    CHECK(sb.delivered_se_db < sb.spec_se_db);
+    CHECK_THAT(sb.spec_se_db - sb.delivered_se_db,
+               WithinAbs(20.0 * std::log10(14.0 / 2.0), 1e-6));
+
+    // and it is the DELIVERED figure the victims actually get
+    for (const auto& v : r.victims)
+        if (v.shield_db > 0)
+            CHECK_THAT(v.shield_db, WithinAbs(sb.delivered_se_db, 1e-9));
+}
+
+// The usual can fence is a solder-mask opening onto the pour — bare copper,
+// which is neither a pad nor a via. Not being able to COUNT contacts is not
+// evidence there are none, so the check must decline to rule rather than zero
+// a figure on evidence the IR does not contain.
+TEST_CASE("no countable fence means unverified, never a silent zero",
+          "[nfmap][shield]") {
+    const BoardIR b = converter();      // no return-net vias at all
+    Screener s(b);
+    nfmap::MapParams p;
+    shield::Rect can;
+    can.x1 = 6; can.y1 = 6; can.x2 = 22; can.y2 = 18;
+    can.spec_seam_mm = 5.0;
+    can.se_db = 20.0;
+    p.shields.push_back(can);
+
+    const nfmap::MapResult r = nfmap::compute(b, s, p);
+    REQUIRE(r.shield_bonds.size() == 1);
+    CHECK_FALSE(r.shield_bonds[0].fence_present);
+    CHECK_FALSE(r.shield_bonds[0].limits_the_can);
+    CHECK_THAT(r.shield_bonds[0].delivered_se_db, WithinAbs(20.0, 1e-9));
+}
+
 TEST_CASE("cos(theta) comes from the victim's own routed direction",
           "[nfmap]") {
     // The victim loop's normal lies in the board plane, perpendicular to its

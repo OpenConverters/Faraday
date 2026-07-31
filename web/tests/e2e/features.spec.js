@@ -187,17 +187,17 @@ test('a second aggressor doubles the symmetric victim noise', async ({ page }) =
   await expect.poll(peak).toBeLessThan(one * 2.3)
 })
 
-test('a gerber X2 zip imports as a set, asks for a stackup, and analyses',
+test('a gerber X2 zip imports as a set and analyses, on a stated assumption',
   async ({ page }) => {
     await page.goto('/')
     await page.getByTestId('file-input').setInputFiles(
       path.join(here, '../../../cpp/tests/fixtures/gerber_set.zip'))
-    // gerber carries no stackup — the card must appear, never a silent default
-    await expect(page.getByTestId('stackup-card')).toBeVisible({ timeout: LOAD_MS })
-    await page.getByTestId('stackup-card')
-      .getByText('Default 2-layer FR4').click()
+    // gerber carries no dielectric, but its copper count is readable — so it
+    // opens, and the assumption is declared rather than blocked on
     await expect(page.getByTestId('meta-strip'))
       .toContainText('format: gerber-x2', { timeout: LOAD_MS })
+    await expect(page.getByTestId('meta-strip')).toContainText('assumed:default-2layer')
+    await expect(page.getByTestId('stackup-assumed')).toBeVisible()
     // and the analysis actually ran: the set's open-ended trace is found
     await expect(page.getByTestId('finding-F-0001')).toBeVisible()
   })
@@ -228,11 +228,11 @@ test('an ODB++ job zip imports with exact nets and analyses', async ({ page }) =
   await page.goto('/')
   await page.getByTestId('file-input').setInputFiles(
     path.join(here, '../../../cpp/tests/fixtures/odb_job.zip'))
-  // ODB++ carries no stackup — the card must appear, never a silent default
-  await expect(page.getByTestId('stackup-card')).toBeVisible({ timeout: LOAD_MS })
-  await page.getByTestId('stackup-card').getByText('Default 2-layer FR4').click()
+  // ODB++ carries no dielectric — it opens on the assumed one, declared as
+  // such. This is the Altium path: an exported job loads with no interstitial.
   await expect(page.getByTestId('meta-strip'))
     .toContainText('format: odb++', { timeout: LOAD_MS })
+  await expect(page.getByTestId('meta-strip')).toContainText('assumed:default-2layer')
   await expect(page.getByTestId('finding-F-0001')).toBeVisible()
 })
 
@@ -241,11 +241,8 @@ test('a custom stackup is entered, changes the physics, and is restored',
     const zip = path.join(here, '../../../cpp/tests/fixtures/gerber_set.zip')
     await page.goto('/')
     await page.getByTestId('file-input').setInputFiles(zip)
-    await expect(page.getByTestId('stackup-card')).toBeVisible({ timeout: LOAD_MS })
 
-    // first: the generic default, and remember the quantified coupling
-    await page.getByTestId('stackup-card')
-      .getByText('Default 2-layer FR4').click()
+    // first: the assumed default it opened on, and the quantified coupling
     await expect(page.getByTestId('finding-F-0001')).toBeVisible({ timeout: LOAD_MS })
     const coupling = () => page.getByTestId('finding-F-0001').textContent()
     const before = await coupling()
@@ -265,13 +262,13 @@ test('a custom stackup is entered, changes the physics, and is restored',
     // the select reflects it
     await expect(page.getByTestId('stackup-select')).toContainText('custom (2 layers)')
 
-    // a reload forgets nothing: the card offers the saved stackup by name
+    // a reload forgets nothing, and the saved stackup BEATS the assumption:
+    // the board comes back on the real dielectric with no banner and no click
     await page.reload()
     await page.getByTestId('file-input').setInputFiles(zip)
-    await expect(page.getByTestId('stackup-card')).toBeVisible({ timeout: LOAD_MS })
-    await page.getByTestId('stackup-saved').click()
     await expect(page.getByTestId('meta-strip'))
       .toContainText('user:custom', { timeout: LOAD_MS })
+    await expect(page.getByTestId('stackup-assumed')).toBeHidden()
   })
 
 test('revision diff: removing the plane is called a regression, with badges',

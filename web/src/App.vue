@@ -25,6 +25,10 @@ const fileName = ref('')
 const report = ref(null)
 const error = ref('')
 const needStackup = ref(false)
+// true while the board is being screened on a dielectric NOBODY chose. The
+// layer count is read off the board, so the board opens immediately; this flag
+// is what keeps the assumption loud until the user replaces it.
+const stackupAssumed = ref(false)
 const stackupChoice = ref('')   // '' = from board file
 const selectedId = ref('')
 const dragOver = ref(false)
@@ -85,22 +89,36 @@ async function analyze() {
   }
   error.value = ''
   needStackup.value = false
+  const spec = stackupSpec()
   const out = boardFiles.value.length
     ? JSON.parse(engine.value.analyzeSet(JSON.stringify(
-        { files: boardFiles.value, stackup: stackupSpec() })))
-    : JSON.parse(engine.value.analyze(boardText.value, stackupSpec()))
+        { files: boardFiles.value, stackup: spec })))
+    : JSON.parse(engine.value.analyze(boardText.value, spec))
   if (out.error) {
     report.value = null
     if (out.needStackup) {
-      // explicit choice required — Faraday never assumes a stackup silently.
-      // The COUNT is not a guess: the engine read it off the board and sends
-      // it with the ask, so the card offers the one builtin that fits.
-      needStackup.value = true
+      // The LAYER COUNT is not a guess — the engine read it off the board. So
+      // rather than block on a card, adopt the matching default and open the
+      // board; what stays unknown is the DIELECTRIC, and that is carried as an
+      // explicit "assumed:" provenance everywhere it matters (banner, meta
+      // strip, exported report) instead of being blocked on up front.
       stackupSuggest.value = `default-${out.copperCount}layer`
       hasSavedStackup.value = !!savedStackup()
-    } else {
-      error.value = out.error
+      // Only ever retry when we had supplied NOTHING — a spec that was already
+      // set and still came back "no stackup" is a real refusal (a stackup with
+      // the wrong copper count), not something to answer again and loop on.
+      if (spec) { error.value = out.error; return }
+      const saved = savedStackup()
+      if (saved) {                       // a stackup the user set for THIS board wins
+        customStackup.value = saved
+        stackupAssumed.value = false
+      } else {
+        stackupChoice.value = 'assumed:' + stackupSuggest.value
+        stackupAssumed.value = true
+      }
+      return analyze()                   // stackupSpec() is now set
     }
+    error.value = out.error
     return
   }
   report.value = out
@@ -136,6 +154,7 @@ async function onFiles(list) {
     return
   }
   stackupChoice.value = ''
+  stackupAssumed.value = false
   customStackup.value = null
   clearBaseline()
   fixResult.value = ''
@@ -151,6 +170,7 @@ function chooseStackup(name) {
   if (name === '__custom__') { stackupOpen.value = true; return }
   customStackup.value = null
   stackupChoice.value = name
+  stackupAssumed.value = false   // chosen, not assumed, from here on
   analyze()
 }
 
@@ -264,12 +284,13 @@ function savedStackup() {
 function applyStackup(layers) {
   customStackup.value = layers
   stackupOpen.value = false
+  stackupAssumed.value = false
   try { localStorage.setItem(stackupKey(), JSON.stringify(layers)) } catch {}
   analyze()
 }
 function useSavedStackup() {
   const l = savedStackup()
-  if (l) { customStackup.value = l; analyze() }
+  if (l) { customStackup.value = l; stackupAssumed.value = false; analyze() }
 }
 const stackupSpec = () => customStackup.value
   ? JSON.stringify({ layers: customStackup.value })
@@ -463,11 +484,22 @@ function toggleRule(rule) {
 
     <div v-if="nfError" class="banner error" data-testid="nf-error">{{ nfError }}</div>
 
+    <!-- The layer COUNT is read off the board, so nothing blocks on it and the
+         board opens straight away. What no Gerber, ODB++ or bare KiCad file
+         carries is the DIELECTRIC, and every Z0 and coupling number stands on
+         it — so the assumption rides along in view, with the fix one click
+         away, rather than gating the import behind a card. -->
+    <div v-if="stackupAssumed && report" class="banner ask" data-testid="stackup-assumed">
+      <p>Screened on an <b>assumed</b> dielectric: default {{ suggestCopper }}-layer FR4,
+         1.6 mm. The {{ suggestCopper }} copper layers are read from your board — the
+         dielectric is not in the file, and Z₀, coupling and every dB below depend on it.</p>
+      <button class="chip real" data-testid="stackup-custom"
+              @click="stackupOpen = true">Set the real stackup</button>
+      <button v-if="hasSavedStackup" class="chip" data-testid="stackup-saved"
+              @click="useSavedStackup">Use the stackup you saved for this board</button>
+    </div>
+
     <div v-if="needStackup" class="banner ask" data-testid="stackup-card">
-      <!-- The layer COUNT is read off the board, never asked. What no Gerber,
-           ODB++ or bare KiCad file carries is the DIELECTRIC — thicknesses and
-           εr — and every Z₀ and coupling number stands on those. So the card
-           states what is known and asks only for what is not. -->
       <p><b>{{ suggestCopper }} copper layers</b> — read from the board. What the file does
          not carry is the dielectric: no thicknesses, no εr, and every Z₀ and coupling
          figure stands on them. Choose what the board is built on (the report will state

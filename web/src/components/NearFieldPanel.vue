@@ -49,6 +49,9 @@ const mv = x => (Math.abs(x) >= 1 ? `${num(x, 2)} mV` : `${num(x * 1000, 0)} µV
 // Past 10x a percentage conveys nothing. Engineers read decibels.
 const overBy = r => (r >= 10 ? `${num(20 * Math.log10(r), 0)} dB over`
                              : `${num(r * 100, 0)}% of`)
+// Per-can bond verdicts, measured off the board by the engine (not from the
+// can's datasheet) — only meaningful once a can has actually been drawn.
+const bonds = computed(() => props.result.shields ?? [])
 const magnetic = computed(() => shield.value?.results?.find(r => r.field === 'magnetic'))
 const electric = computed(() => shield.value?.results?.find(r => r.field === 'electric'))
 const worst = computed(() => props.result.victims?.[0] ?? null)
@@ -136,6 +139,32 @@ function set(k, v) { emit('params', { [k]: Number(v) }) }
               ({{ num(magnetic.skinDepthUm, 1) }} µm at {{ num(shield.fMhz, 2) }} MHz{{
               muR ? `, µ′ ${muR}` : '' }}).</p>
             <p v-if="magnetic.caveat" class="warn">{{ magnetic.caveat }}.</p>
+            <!-- The bond is the one shield caveat the LAYOUT can settle: a
+                 contact pitch is only real if there is a ground fence at that
+                 pitch to solder the can to. Counted from the board, per can. -->
+            <div v-for="(b, i) in bonds" :key="i" class="bond"
+                 data-testid="nf-shield-bond">
+              <p v-if="b.limitsTheCan" class="warn">
+                Can {{ i + 1 }}: your board offers <b>{{ b.contacts }}</b> return-net
+                contacts on this can's {{ num(b.perimeterMm, 0) }} mm outline —
+                a <b>{{ num(b.achievablePitchMm, 1) }} mm</b> pitch, not the
+                {{ num(b.specSeamMm, 1) }} mm specified. That is what the board can
+                deliver, so the map applies <b>{{ num(b.seDb, 0) }} dB</b>, not
+                {{ num(b.specSeDb, 0) }} dB. Add ground vias around the rim to earn
+                the rest.</p>
+              <p v-else-if="!b.fencePresent" class="note">
+                Can {{ i + 1 }}: no countable return-net via or pad on this outline.
+                A can fence is usually a solder-mask opening onto the pour — bare
+                copper, which a layout file does not distinguish — so this is
+                <b>unverified</b>, not a failure: the {{ num(b.specSeamMm, 1) }} mm
+                pitch you specified is taken at face value. If the can is not
+                actually bonded, it couples rather than shields.</p>
+              <p v-else class="note">
+                Can {{ i + 1 }}: <b>{{ b.contacts }}</b> return-net contacts on a
+                {{ num(b.perimeterMm, 0) }} mm outline — a
+                {{ num(b.achievablePitchMm, 1) }} mm pitch, which supports the
+                {{ num(b.specSeamMm, 1) }} mm you specified.</p>
+            </div>
             <p class="note">
               At <b>{{ num(result.ringMhz, 0) }} MHz</b> the metal is opaque and only the
               <b>contact pitch</b> matters — on a two-part can that is the cover-to-frame

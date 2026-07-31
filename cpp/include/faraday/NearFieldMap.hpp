@@ -134,10 +134,23 @@ struct CapHit {
     double overlap_mm2 = 0, c12_f = 0, dv_v = 0, threshold_v = 0, ratio = 0;
 };
 
+// One drawn can, judged against the board it would be soldered to. The SE the
+// can's datasheet earns is only delivered if the layout has a ground fence at
+// that contact pitch — see shield::bond_check.
+struct ShieldBond {
+    double x1 = 0, y1 = 0, x2 = 0, y2 = 0;
+    double spec_seam_mm = 0, spec_se_db = 0;
+    int contacts = 0;
+    double perimeter_mm = 0, achievable_pitch_mm = 0;
+    double delivered_se_db = 0;   // SE at the pitch the BOARD can actually give
+    bool fence_present = false, limits_the_can = false;
+};
+
 struct MapResult {
     std::vector<Aggressor> aggressors;
     std::vector<VictimHit> victims;
     std::vector<CapHit> cap_hits;
+    std::vector<ShieldBond> shield_bonds;
     double max_h = 0;
     size_t too_close_count = 0, shielded_victims = 0;   // how many are inside the dipole radius
     // context the reader needs to interpret any of it
@@ -238,6 +251,55 @@ inline MapResult compute(const BoardIR& board, const Screener& screener,
             "map is built around switching aggressors, and this layout has none "
             "the screener could identify");
 
+    // ---- can bonding: what the BOARD can deliver, not what the can claims ---
+    // Done BEFORE the victims so the SE actually applied below is the delivered
+    // one. A can whose contact pitch the layout cannot support is the single
+    // most common way a shield underperforms its datasheet, and it is the one
+    // shield caveat a layout file can settle.
+    std::vector<shield::Rect> shields = p.shields;
+    if (!shields.empty()) {
+        std::vector<std::pair<double, double>> return_pts;
+        for (const auto& v : board.vias)
+            if (screener.is_return_net(v.net)) return_pts.push_back({v.x, v.y});
+        for (const auto& pad : board.pads)
+            if (screener.is_return_net(pad.net))
+                return_pts.push_back({pad.x, pad.y});
+        for (auto& sh : shields) {
+            const shield::BondCheck bc =
+                shield::bond_check(sh, return_pts, sh.spec_seam_mm);
+            ShieldBond sb;
+            sb.x1 = sh.x1; sb.y1 = sh.y1; sb.x2 = sh.x2; sb.y2 = sh.y2;
+            sb.spec_seam_mm = sh.spec_seam_mm;
+            sb.spec_se_db = sh.se_db;
+            sb.contacts = bc.contacts;
+            sb.perimeter_mm = bc.perimeter_mm;
+            sb.achievable_pitch_mm = bc.achievable_pitch_mm;
+            sb.fence_present = bc.fence_present;
+            sb.limits_the_can = bc.limits_the_can;
+            if (!bc.fence_present) {
+                // NOT evidence of an unbonded can. The usual can fence is a
+                // solder-mask opening onto the pour — bare copper, which is not
+                // a pad or a via and so cannot be counted here. Absence of
+                // countable contacts means "cannot verify", and a check that
+                // cannot see the thing must not rule on it: the specified
+                // figure stands, flagged, rather than being zeroed on evidence
+                // the IR does not actually contain.
+                sb.delivered_se_db = sh.se_db;
+                sb.limits_the_can = false;
+            } else if (bc.limits_the_can) {
+                shield::Can c = sh.can;
+                c.seam_pitch_mm = bc.achievable_pitch_mm;
+                sb.delivered_se_db =
+                    shield::evaluate(c, p.ring_hz,
+                                     shield::FieldKind::MagneticNear).se_db;
+                sh.se_db = std::min(sh.se_db, sb.delivered_se_db);
+            } else {
+                sb.delivered_se_db = sh.se_db;
+            }
+            r.shield_bonds.push_back(sb);
+        }
+    }
+
     // ---- victims: components on nets whose class we actually recognise ----
     const double area_m2 = p.default_victim_area_mm2 * 1e-6;
     for (const auto& pad : board.pads) {
@@ -324,7 +386,7 @@ inline MapResult compute(const BoardIR& board, const Screener& screener,
         }
         // A can between the pair attenuates by its SE; around both or neither
         // it does nothing.
-        for (const auto& sh : p.shields) {
+        for (const auto& sh : shields) {
             const bool agg_in = sh.contains(best->x_mm, best->y_mm);
             const bool vic_in = sh.contains(pad.x, pad.y);
             if (agg_in != vic_in) v.shield_db = std::max(v.shield_db, sh.se_db);

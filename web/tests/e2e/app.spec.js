@@ -44,7 +44,13 @@ test('board loads, findings rank, selection links list and canvas', async ({ pag
   expect(consoleErrors).toEqual([])
 })
 
-test('board without stackup gets the explicit stackup card, never a silent default', async ({ page }) => {
+// A board whose file carries no dielectric OPENS — the layer count is read off
+// the board, so there is nothing to ask about that. What is assumed is the
+// dielectric, and that assumption must be impossible to miss and one click
+// from being replaced: an "assumed:" provenance in the meta strip (so an
+// exported report never claims the user chose it) and a standing banner.
+test('board without stackup opens on an assumed dielectric, and says so everywhere',
+     async ({ page }) => {
   await page.goto('/')
   const bare = `(kicad_pcb
     (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
@@ -55,11 +61,17 @@ test('board without stackup gets the explicit stackup card, never a silent defau
   await page.getByTestId('file-input').setInputFiles({
     name: 'bare.kicad_pcb', mimeType: 'text/plain', buffer: Buffer.from(bare),
   })
-  const card = page.getByTestId('stackup-card')
-  await expect(card).toBeVisible()
-  await card.getByText('Default 2-layer FR4').click()
+  // no card, no click: the board is screened straight away
   await expect(page.getByTestId('finding-count')).toBeVisible()
-  await expect(page.getByTestId('meta-strip')).toContainText('user:default-2layer')
+  await expect(page.getByTestId('stackup-card')).toBeHidden()
+  // provenance says ASSUMED, never "user:" — nobody chose this dielectric
+  await expect(page.getByTestId('meta-strip')).toContainText('assumed:default-2layer')
+  const banner = page.getByTestId('stackup-assumed')
+  await expect(banner).toBeVisible()
+  await expect(banner).toContainText('assumed')
+  await expect(banner).toContainText('2 copper layers are read from your board')
+  // and the fix is one click away, at any time after loading
+  await expect(banner.getByTestId('stackup-custom')).toBeVisible()
 })
 
 test('power converter: switch node identified and shown in the meta strip', async ({ page }) => {
@@ -67,15 +79,15 @@ test('power converter: switch node identified and shown in the meta strip', asyn
   page.on('pageerror', e => consoleErrors.push(String(e)))
 
   await page.goto('/')
-  // KiCad 5 power board, carries no stackup -> explicit card first
+  // KiCad 5 power board, carries no stackup -> opens on the assumed dielectric
+  // at the copper count read off the board (4), with no click needed
   await page.getByTestId('file-input').setInputFiles(
     path.join(here, '../../../cpp/tests/fixtures/real/mppt-2420-hc.kicad_pcb'))
-  await page.getByTestId('stackup-card').getByRole('button', { name: /4-layer/ }).click()
 
   await expect(page.getByTestId('finding-count')).toBeVisible()
   // the converter's switch node, found by connectivity not by name
   await expect(page.getByTestId('meta-switchnodes')).toContainText('SW_NODE')
-  await expect(page.getByTestId('meta-strip')).toContainText('user:default-4layer')
+  await expect(page.getByTestId('meta-strip')).toContainText('assumed:default-4layer')
   // and its commutation loop — the headline converter EMC metric
   const loop = page.locator('[data-testid^="finding-"]', { hasText: 'Commutation loop' }).first()
   await expect(loop).toContainText('mm²')

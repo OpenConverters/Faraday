@@ -130,17 +130,6 @@ inline double seam_resonance_hz(double seam_mm) {
 
 enum class FieldKind { MagneticNear, ElectricNear, PlaneWave };
 
-// A shield can drawn over part of the board, carrying the SE its own material,
-// wall and seam earn at the frequency in question — never a flat assumption.
-struct Rect {
-    double x1 = 0, y1 = 0, x2 = 0, y2 = 0;   // mm
-    double se_db = 0;
-    bool contains(double x, double y) const {
-        return x >= std::min(x1, x2) && x <= std::max(x1, x2) &&
-               y >= std::min(y1, y2) && y <= std::max(y1, y2);
-    }
-};
-
 struct Can {
     std::string material = "tinsteel";
     double wall_mm = 0.2;
@@ -154,6 +143,70 @@ struct Can {
     // flag does not apply to it.
     double mu_r = 0;
 };
+
+// A shield can drawn over part of the board, carrying the SE its own material,
+// wall and seam earn at the frequency in question — never a flat assumption.
+struct Rect {
+    double x1 = 0, y1 = 0, x2 = 0, y2 = 0;   // mm
+    double se_db = 0;             // as SPECIFIED (the can's own seam pitch)
+    double spec_seam_mm = 0;      // the pitch that figure was earned at
+    Can can;                      // the spec, kept for re-evaluation
+    bool contains(double x, double y) const {
+        return x >= std::min(x1, x2) && x <= std::max(x1, x2) &&
+               y >= std::min(y1, y2) && y <= std::max(y1, y2);
+    }
+    double perimeter_mm() const {
+        return 2.0 * (std::abs(x2 - x1) + std::abs(y2 - y1));
+    }
+};
+
+// ---------------------------------------------------------------------------
+// Does the BOARD have anything to bond the can to?
+// ---------------------------------------------------------------------------
+// The seam pitch in a can's spec is a promise about the PART. It is only real
+// if the layout provides a ground fence to solder that can onto: a ring of
+// return-net pads/vias following the can outline. A 5 mm contact pitch quoted
+// over a board with four ground vias on a 60 mm perimeter is not a 5 mm pitch,
+// it is a 15 mm one, and at 130 MHz that is 10 dB of difference.
+//
+// This is the one shield caveat that geometry CAN answer, so it should not be
+// left to the user's good intentions. Everything else about the bond (contact
+// force, gasket, plating) is outside a layout file; the pitch is not.
+struct BondCheck {
+    bool fence_present = false;
+    int contacts = 0;             // return-net features on the can perimeter
+    double perimeter_mm = 0;
+    double achievable_pitch_mm = 0;   // perimeter / contacts; 0 if no fence
+    bool limits_the_can = false;      // board is coarser than the can's spec
+};
+
+// return_pts: positions of every return/pour-net via and pad, in mm.
+// band_mm: how far from the outline a feature still counts as on the fence.
+inline BondCheck bond_check(const Rect& r,
+                            const std::vector<std::pair<double, double>>& return_pts,
+                            double spec_seam_mm, double band_mm = 1.5) {
+    BondCheck b;
+    b.perimeter_mm = r.perimeter_mm();
+    if (!(b.perimeter_mm > 0)) return b;
+    const double lo_x = std::min(r.x1, r.x2), hi_x = std::max(r.x1, r.x2);
+    const double lo_y = std::min(r.y1, r.y2), hi_y = std::max(r.y1, r.y2);
+    for (const auto& [x, y] : return_pts) {
+        // distance to the rectangle OUTLINE (not the interior): a via in the
+        // middle of the can bonds nothing to the wall
+        if (x < lo_x - band_mm || x > hi_x + band_mm ||
+            y < lo_y - band_mm || y > hi_y + band_mm)
+            continue;
+        const double d = std::min({std::abs(x - lo_x), std::abs(x - hi_x),
+                                   std::abs(y - lo_y), std::abs(y - hi_y)});
+        if (d <= band_mm) ++b.contacts;
+    }
+    b.fence_present = b.contacts > 0;
+    if (b.fence_present) b.achievable_pitch_mm = b.perimeter_mm / b.contacts;
+    b.limits_the_can =
+        !b.fence_present || b.achievable_pitch_mm > spec_seam_mm * 1.05;
+    return b;
+}
+
 
 struct Verdict {
     double absorption_db = 0;

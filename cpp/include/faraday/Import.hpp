@@ -200,6 +200,15 @@ inline Stackup stackup_from_json(const nlohmann::json& j) {
 inline std::optional<Stackup> resolve_stackup(const std::string& spec) {
     if (spec.empty()) return std::nullopt;
     if (spec[0] == '{') return stackup_from_json(nlohmann::json::parse(spec));
+    // "assumed:default-4layer" — the SAME builtin, but stamped so the report
+    // never claims a dielectric the user chose. The layer count behind it is
+    // read off the board; only the dielectric is assumed, and a reader of the
+    // exported report has to be able to tell those apart.
+    if (spec.rfind("assumed:", 0) == 0) {
+        Stackup s = builtin_stackup(spec.substr(8));
+        s.source = "assumed:" + spec.substr(8);
+        return s;
+    }
     return builtin_stackup(spec);
 }
 
