@@ -9,6 +9,7 @@
 #include "HypImporter.hpp"
 #include "IpcImporter.hpp"
 #include "KicadImporter.hpp"
+#include "Plausible.hpp"
 
 #include <optional>
 #include <string>
@@ -84,12 +85,18 @@ inline BoardIR import_board(const std::string& text,
                             BoardFormat* detected = nullptr) {
     BoardFormat f = detect_format(text);
     if (detected) *detected = f;
+    BoardIR b;
     switch (f) {
-        case BoardFormat::Kicad: return import_kicad(text, std::move(user_stackup));
-        case BoardFormat::Ipc2581: return import_ipc2581(text, std::move(user_stackup));
-        case BoardFormat::Hyp: return import_hyp(text);
+        case BoardFormat::Kicad: b = import_kicad(text, std::move(user_stackup)); break;
+        case BoardFormat::Ipc2581: b = import_ipc2581(text, std::move(user_stackup)); break;
+        case BoardFormat::Hyp: b = import_hyp(text); break;
+        default: throw BoardError("import_board: unreachable");
     }
-    throw BoardError("import_board: unreachable");
+    // EVERY import passes the plausibility gate. An importer bug that scales,
+    // flips or truncates the board still parses and still screens — the gate
+    // is the only thing between that and a confidently wrong report.
+    b.plausibility_notes = plausible::enforce(b);
+    return b;
 }
 
 // Import a SET of files. One file that is not Gerber → the single-file path;
@@ -101,7 +108,9 @@ inline BoardIR import_board_set(const std::vector<gerber::NamedFile>& files,
     if (files.empty()) throw BoardError("import_board_set: no files");
     if (odb::is_odb_set(files)) {
         if (detected) *detected = BoardFormat::Odb;
-        return odb::import_odb(files, std::move(user_stackup));
+        BoardIR b = odb::import_odb(files, std::move(user_stackup));
+        b.plausibility_notes = plausible::enforce(b);
+        return b;
     }
     // Binary members are never board data — a dropped project zip carries the
     // .PcbDoc, PDFs and spreadsheets alongside the export. Skip them rather
@@ -123,7 +132,9 @@ inline BoardIR import_board_set(const std::vector<gerber::NamedFile>& files,
             "Faraday takes one KiCad/HyperLynx/IPC-2581 file, a Gerber X2 "
             "set, or an ODB++ job (zip or directory).");
     if (detected) *detected = BoardFormat::GerberSet;
-    return gerber::import_gerber_set(text_files, std::move(user_stackup));
+    BoardIR b = gerber::import_gerber_set(text_files, std::move(user_stackup));
+    b.plausibility_notes = plausible::enforce(b);
+    return b;
 }
 
 // ---------------------------------------------------------------------------

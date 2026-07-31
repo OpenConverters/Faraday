@@ -98,6 +98,8 @@ int main(int argc, char** argv) {
 
         const auto& meta = report["meta"];
         std::cout << "stackup: " << meta["stackupSource"].get<std::string>() << "\n";
+        for (const auto& n : report["board"]["plausibilityNotes"])
+            std::cout << "note: " << n.get<std::string>() << "\n";
         for (const auto& p : meta["planes"])
             std::cout << "layer " << p["layer"].get<std::string>()
                       << (p["isPlane"].get<bool>() ? "  [plane]" : "  [signal]")

@@ -103,6 +103,7 @@ if(FARADAY_BUILD_TESTS)
         tests/test_ipc.cpp
         tests/test_gerber.cpp
         tests/test_odb.cpp
+        tests/test_plausible.cpp
         tests/test_rlgc.cpp
         tests/test_bem.cpp
         tests/test_mna.cpp

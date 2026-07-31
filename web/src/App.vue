@@ -650,6 +650,10 @@ function toggleRule(rule) {
       <span v-if="meta.droppedBelowFloorDb" class="m">{{ meta.droppedBelowFloorDb }} pairs below {{ meta.reportFloorDb }} dB floor</span>
       <span v-if="meta.droppedByFindingCap" class="m warn">{{ meta.droppedByFindingCap }} findings over cap — tighten scope</span>
       <span v-if="!report.board.bboxFromOutline" class="m warn">no Edge.Cuts outline — extents from geometry</span>
+      <!-- import-time plausibility gate: the fatal tier never gets here (it
+           refuses the board), so anything shown is the "odd, look at it" tier -->
+      <span v-for="(n, i) in report.board.plausibilityNotes || []" :key="i"
+            class="m warn" data-testid="plausibility-note">{{ n }}</span>
     </footer>
   </div>
 </template>
