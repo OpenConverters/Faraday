@@ -463,6 +463,15 @@ function toggleRule(rule) {
              data-testid="baseline-input"
              accept=".json,.kicad_pcb,.hyp,.HYP,.xml"
              @change="e => { onBaselineFile(e.target.files[0]); e.target.value = '' }" />
+      <!-- the dielectric was ASSUMED (layer count is read off the board, the
+           dielectric is not in the file). One compact header button instead
+           of a banner: the assumption stays visible without eating a row,
+           the meta strip carries the full "assumed:" provenance, and the
+           fix is still one click. -->
+      <button v-if="stackupAssumed && report" class="filebtn warn"
+              data-testid="stackup-assumed" @click="stackupOpen = true"
+              title="Screened on an assumed dielectric: default FR4, 1.6 mm. The copper layer count is read from your board; the dielectric is not in the file, and Z₀, coupling and every dB depend on it. Click to enter the real stackup.">
+        ⚠ assumed stackup — set real</button>
       <select v-if="report || needStackup" data-testid="stackup-select" class="stackup"
               :value="customStackup ? '__active__' : stackupChoice"
               @change="e => chooseStackup(e.target.value)"
@@ -483,21 +492,6 @@ function toggleRule(rule) {
     <div v-if="rpError" class="banner error" data-testid="rp-error">{{ rpError }}</div>
 
     <div v-if="nfError" class="banner error" data-testid="nf-error">{{ nfError }}</div>
-
-    <!-- The layer COUNT is read off the board, so nothing blocks on it and the
-         board opens straight away. What no Gerber, ODB++ or bare KiCad file
-         carries is the DIELECTRIC, and every Z0 and coupling number stands on
-         it — so the assumption rides along in view, with the fix one click
-         away, rather than gating the import behind a card. -->
-    <div v-if="stackupAssumed && report" class="banner ask" data-testid="stackup-assumed">
-      <p>Screened on an <b>assumed</b> dielectric: default {{ suggestCopper }}-layer FR4,
-         1.6 mm. The {{ suggestCopper }} copper layers are read from your board — the
-         dielectric is not in the file, and Z₀, coupling and every dB below depend on it.</p>
-      <button class="chip real" data-testid="stackup-custom"
-              @click="stackupOpen = true">Set the real stackup</button>
-      <button v-if="hasSavedStackup" class="chip" data-testid="stackup-saved"
-              @click="useSavedStackup">Use the stackup you saved for this board</button>
-    </div>
 
     <div v-if="needStackup" class="banner ask" data-testid="stackup-card">
       <p><b>{{ suggestCopper }} copper layers</b> — read from the board. What the file does
@@ -716,6 +710,8 @@ function toggleRule(rule) {
   background: var(--bare-fr4);
 }
 .filebtn:hover { border-color: var(--copper); }
+.filebtn.warn { color: #e8b34a; border-color: #8a6a2a; }
+.filebtn.warn:hover { border-color: #e8b34a; }
 .filebtn input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 
 .stackup {

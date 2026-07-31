@@ -66,12 +66,14 @@ test('board without stackup opens on an assumed dielectric, and says so everywhe
   await expect(page.getByTestId('stackup-card')).toBeHidden()
   // provenance says ASSUMED, never "user:" — nobody chose this dielectric
   await expect(page.getByTestId('meta-strip')).toContainText('assumed:default-2layer')
-  const banner = page.getByTestId('stackup-assumed')
-  await expect(banner).toBeVisible()
-  await expect(banner).toContainText('assumed')
-  await expect(banner).toContainText('2 copper layers are read from your board')
-  // and the fix is one click away, at any time after loading
-  await expect(banner.getByTestId('stackup-custom')).toBeVisible()
+  // a compact header button carries the assumption (a banner ate a full row);
+  // the full wording lives in its tooltip, the fix is one click
+  const btn = page.getByTestId('stackup-assumed')
+  await expect(btn).toBeVisible()
+  await expect(btn).toContainText('assumed stackup')
+  await expect(btn).toHaveAttribute('title', /dielectric/)
+  await btn.click()
+  await expect(page.getByTestId('stackup-editor')).toBeVisible()
 })
 
 test('power converter: switch node identified and shown in the meta strip', async ({ page }) => {
