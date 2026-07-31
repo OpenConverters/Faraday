@@ -279,6 +279,9 @@ class Screener {
         find_via_stubs(out);
         find_dangling_stubs(out);
         find_decoupling(out);
+        find_connector_ground_spread(out);
+        find_plane_cavity_modes(out);
+        find_cap_via_stubs(out);
         find_diff_skew(out);
         // rank: severity desc, then coupled length desc
         std::sort(out.begin(), out.end(), [](const Finding& x, const Finding& y) {
@@ -1470,6 +1473,255 @@ class Screener {
             f.geom.lines.push_back({rail, 0, cap_pt.x, cap_pt.y, ic_pt.x, ic_pt.y, 0.2});
             out.push_back(std::move(f));
         }
+    }
+
+    // ---- rule: connector grounds scattered around the board ----
+    // Franz (EMV, 5th ed., §7.2): "Die Masseanschlüsse aller von einer
+    // Baugruppe nach außen gehenden Leitungen sind möglichst nahe beieinander
+    // zu platzieren und niederimpedant miteinander zu verbinden
+    // (Sternstruktur)." — his single most emphasized layout rule. Ground
+    // entries scattered around the perimeter make the board a
+    // Reihenmassestruktur: the ground potential difference between two entry
+    // points drives the attached CABLES as a dipole (measured on his GTEM
+    // fixture: 23.5 dB between the scattered and the star layout, §7.3.1),
+    // and every external ground loop couples through the copper between the
+    // entries. Cable common-mode is what actually fails EMC tests, so this is
+    // the one rule that sees it in pure layout geometry.
+    //
+    // What softens it, also from Franz: a continuous plane between the
+    // entries is his "Vermaschung" decoupling method — the coupling impedance
+    // gets small (not zero). So the severity keys on whether a return plane
+    // exists: without one this is the loudest defect on the board; with one
+    // it is a stated, reviewable risk.
+    void find_connector_ground_spread(std::vector<Finding>& out) {
+        // Connectors, by refdes AND position: connector-class prefixes only,
+        // carrying the return net, sitting near the outline (cables leave at
+        // the edge). Refdes alone is not a contract — the edge test is what
+        // keeps mid-board test-point grids and headers out.
+        const double bw = b_.bbox_x2 - b_.bbox_x1, bh = b_.bbox_y2 - b_.bbox_y1;
+        if (!(bw > 0) || !(bh > 0)) return;
+        const double edge_band = 0.15 * std::min(bw, bh);
+        struct Conn { std::string ref; double gx = 0, gy = 0; int n = 0; };
+        std::map<std::string, Conn> conns;
+        for (const auto& p : b_.pads) {
+            const std::string pre = ref_prefix(p.component);
+            if (pre != "J" && pre != "X" && pre != "P" && pre != "CN" &&
+                pre != "CON")
+                continue;
+            if (p.net <= 0 || !is_pour_net(p.net)) continue;
+            const double de = std::min(
+                std::min(p.x - b_.bbox_x1, b_.bbox_x2 - p.x),
+                std::min(p.y - b_.bbox_y1, b_.bbox_y2 - p.y));
+            if (de > edge_band) continue;
+            Conn& c = conns[p.component];
+            c.ref = p.component;
+            c.gx += p.x; c.gy += p.y; ++c.n;
+        }
+        if (conns.size() < 2) return;
+        const Conn *wa = nullptr, *wb = nullptr;
+        double worst = 0;
+        for (auto i = conns.begin(); i != conns.end(); ++i)
+            for (auto j = std::next(i); j != conns.end(); ++j) {
+                const double d = std::hypot(i->second.gx / i->second.n -
+                                                j->second.gx / j->second.n,
+                                            i->second.gy / i->second.n -
+                                                j->second.gy / j->second.n);
+                if (d > worst) { worst = d; wa = &i->second; wb = &j->second; }
+            }
+        const double diag = std::hypot(bw, bh);
+        if (!wa || worst < 0.4 * diag) return;   // clustered enough — the star
+        bool have_plane = false;
+        for (const auto& lm : layers_) have_plane = have_plane || lm.is_plane;
+        Finding f;
+        f.rule = "connector-ground-spread";
+        f.severity = have_plane ? 0.28 : 0.55;
+        f.severity_label = have_plane ? "low" : "medium";
+        f.confidence = "heuristic";
+        char buf[420];
+        std::snprintf(buf, sizeof buf,
+                      "Ground entries of %s and %s sit %.0f mm apart (board "
+                      "diagonal %.0f mm). Every cable attached between them is "
+                      "driven by the ground potential difference across that "
+                      "copper — a series-ground structure, and the mechanism "
+                      "behind most cable common-mode failures. %s",
+                      wa->ref.c_str(), wb->ref.c_str(), worst, diag,
+                      have_plane
+                          ? "A return plane covers the span, which keeps the "
+                            "coupling impedance low — review, not necessarily "
+                            "rework."
+                          : "No continuous return plane connects them, so the "
+                            "full ground impedance appears between the cable "
+                            "roots.");
+        f.title = "Connector grounds " + std::to_string((int)std::lround(worst)) +
+                  " mm apart: " + wa->ref + " <-> " + wb->ref;
+        f.detail = buf;
+        f.remediation =
+            "Cluster the off-board connections on one board edge so their "
+            "grounds share one reference point (Franz's star structure, worth "
+            "~24 dB of cable radiation in his measured comparison). Where the "
+            "placement is fixed, make the copper between the entries as "
+            "low-impedance as possible and consider a common-mode choke per "
+            "cable.";
+        f.geom.lines.push_back({-1, 0, wa->gx / wa->n, wa->gy / wa->n,
+                                wb->gx / wb->n, wb->gy / wb->n, 0.3});
+        out.push_back(std::move(f));
+    }
+
+    // ---- rule: power/ground plane cavity modes ----
+    // Franz (EMV, 5th ed., §5.9.3): a VCC/GND plane pair is a 2-D
+    // transmission line, open at the board edge; above the parallel resonance
+    // the decoupling capacitors do NOTHING and standing waves (modes) set the
+    // supply impedance. f_mn = c0/(2*sqrt(eps_r)) * sqrt((m/a)^2 + (n/b)^2)
+    // (his Gl. 5.3). Every mode has an extremum in the CORNERS, so a switching
+    // part in a corner can pump them all; the board centre is a null of the
+    // 10, 01 and 11 modes — his measured difference is 17 dB on the 10-mode.
+    void find_plane_cavity_modes(std::vector<Finding>& out) {
+        // an adjacent plane PAIR on different nets (the unstitchable cavity)
+        int top = -1;
+        double h = 0, er = 4.5;
+        for (size_t i = 0; i + 1 < layers_.size(); ++i)
+            if (layers_[i].is_plane && layers_[i + 1].is_plane &&
+                layers_[i].plane_net != layers_[i + 1].plane_net &&
+                layers_[i + 1].ref_up == (int)i) {
+                top = (int)i;
+                h = layers_[i + 1].h_up;
+                er = layers_[i + 1].eps_up;
+                break;
+            }
+        if (top < 0 || sw_nets_.empty()) return;
+        const double a = (b_.bbox_x2 - b_.bbox_x1) * 1e-3;
+        const double bl = (b_.bbox_y2 - b_.bbox_y1) * 1e-3;
+        if (!(a > 0) || !(bl > 0)) return;
+        const double c0 = 299792458.0, k = c0 / (2.0 * std::sqrt(er));
+        const double f10 = k / a, f01 = k / bl,
+                     f11 = k * std::hypot(1.0 / a, 1.0 / bl);
+        // where does the loudest aggressor sit relative to the cavity?
+        double sx = 0, sy = 0; int sn = 0;
+        for (const auto& p : b_.pads)
+            if (sw_nets_.count(p.net)) { sx += p.x; sy += p.y; ++sn; }
+        if (!sn) return;
+        sx /= sn; sy /= sn;
+        const double rx = (sx - b_.bbox_x1) / (b_.bbox_x2 - b_.bbox_x1);
+        const double ry = (sy - b_.bbox_y1) / (b_.bbox_y2 - b_.bbox_y1);
+        const bool corner = (rx < 0.25 || rx > 0.75) && (ry < 0.25 || ry > 0.75);
+        Finding f;
+        f.rule = "plane-cavity-mode";
+        f.severity = corner ? 0.3 : 0.18;
+        f.severity_label = corner ? "low" : "info";
+        f.confidence = "heuristic";
+        f.cu_a = top;
+        char buf[460];
+        std::snprintf(
+            buf, sizeof buf,
+            "The %s/%s plane pair (%.2f mm apart) is a resonant cavity: "
+            "first modes at %.0f, %.0f and %.0f MHz. Above the "
+            "capacitor/plane parallel resonance the decoupling capacitors no "
+            "longer act — these modes set the supply impedance there. The "
+            "switching aggressor's centroid sits at (%.0f%%, %.0f%%) of the "
+            "board: %s",
+            b_.copper_names[top].c_str(), b_.copper_names[top + 1].c_str(), h,
+            f10 * 1e-6, f01 * 1e-6, f11 * 1e-6, rx * 100, ry * 100,
+            corner ? "a corner region, where every mode has an extremum and "
+                     "can be pumped (centre placement suppresses the first "
+                     "three modes — 17 dB measured on the 10-mode)"
+                   : "away from the corners, which limits how many modes it "
+                     "can excite");
+        f.title = "Plane cavity: first mode " +
+                  std::to_string((int)std::lround(f10 * 1e-6)) + " MHz (" +
+                  b_.copper_names[top] + "/" + b_.copper_names[top + 1] + ")";
+        f.detail = buf;
+        f.remediation =
+            "If emissions cluster at these frequencies: thinner plane "
+            "spacing lowers the cavity impedance everywhere; lossy "
+            "termination (R+C to the plane edge, or ESR-controlled "
+            "capacitors) damps the modes; and moving the switching cluster "
+            "toward the board centre stops the first three modes being "
+            "driven at all.";
+        f.geom.markers.push_back({sx, sy});
+        out.push_back(std::move(f));
+    }
+
+    // ---- rule: decoupling caps reaching their plane through a long stub ----
+    // Franz (EMV, 5th ed., §5.6/§5.9.5): above its series resonance a
+    // decoupling capacitor IS its inductance, and the connection stubs are
+    // in series with it — "Verbindungsleitungen im Abblockzweig müssen so
+    // kurz wie fertigungstechnisch möglich ausgeführt werden." His measured
+    // via table (Tab. 5.2): a second via pair alone cuts the branch
+    // inductance ~19%. The Würth checklist's version: plane vias within
+    // 0.3 mm of the pad. A pad whose nearest same-net via is millimetres
+    // away adds ~0.8 nH/mm of stub — often more than the capacitor itself.
+    void find_cap_via_stubs(std::vector<Finding>& out) {
+        // needs a plane to reach: skip boards without one
+        std::set<int> plane_nets;
+        for (const auto& lm : layers_)
+            if (lm.is_plane && lm.plane_net > 0) plane_nets.insert(lm.plane_net);
+        if (plane_nets.empty()) return;
+        struct Worst { std::string ref; double d; double x, y, vx, vy; };
+        std::vector<Worst> bad;
+        std::map<std::string, double> cap_worst;   // ref -> worst pad stub
+        std::map<std::string, Worst> cap_geom;
+        for (const auto& p : b_.pads) {
+            if (ref_prefix(p.component) != "C") continue;
+            if (p.net <= 0 || !plane_nets.count(p.net)) continue;
+            if (p.through_hole) continue;          // its own barrel IS the via
+            // the plane carrying this net must be on ANOTHER layer — a pour
+            // on the pad's own layer is a direct lateral connection
+            bool remote = false;
+            for (size_t i = 0; i < layers_.size(); ++i)
+                if (layers_[i].is_plane && layers_[i].plane_net == p.net &&
+                    (int)i != p.cu)
+                    remote = true;
+            if (!remote) continue;
+            double best = 1e30, vx = 0, vy = 0;
+            for (const auto& v : b_.vias)
+                if (v.net == p.net) {
+                    const double d = std::hypot(v.x - p.x, v.y - p.y);
+                    if (d < best) { best = d; vx = v.x; vy = v.y; }
+                }
+            if (best > 1e29) continue;             // no via anywhere: zone-connected
+            auto it = cap_worst.find(p.component);
+            if (it == cap_worst.end() || best > it->second) {
+                cap_worst[p.component] = best;
+                cap_geom[p.component] = {p.component, best, p.x, p.y, vx, vy};
+            }
+        }
+        for (auto& [ref, d] : cap_worst)
+            if (d > 2.0) bad.push_back(cap_geom[ref]);
+        if (bad.empty()) return;
+        std::sort(bad.begin(), bad.end(),
+                  [](const Worst& x, const Worst& y) { return x.d > y.d; });
+        Finding f;
+        f.rule = "cap-via-stub";
+        f.severity = std::clamp(0.2 + bad[0].d / 30.0, 0.2, 0.6);
+        f.severity_label = f.severity > 0.33 ? "medium" : "low";
+        f.confidence = "geometric-only";
+        f.coupled_len_mm = bad[0].d;
+        std::string worst_list;
+        for (size_t i = 0; i < bad.size() && i < 5; ++i)
+            worst_list += (i ? ", " : "") + bad[i].ref + " (" +
+                          std::to_string((int)std::lround(bad[i].d)) + " mm)";
+        char buf[420];
+        std::snprintf(
+            buf, sizeof buf,
+            "%d decoupling capacitor(s) reach their plane through a stub "
+            "longer than 2 mm — worst %s. Above series resonance the "
+            "capacitor is only its inductance, and every millimetre of stub "
+            "adds ~0.8 nH in series: at %.0f mm the connection out-inducts "
+            "the capacitor itself. A second via pair beside the pad alone is "
+            "worth ~19%% of the branch inductance.",
+            (int)bad.size(), worst_list.c_str(), bad[0].d);
+        f.title = "Decoupling via stubs: " + std::to_string(bad.size()) +
+                  " cap(s), worst " +
+                  std::to_string((int)std::lround(bad[0].d)) + " mm";
+        f.detail = buf;
+        f.remediation =
+            "Give each such pad its own via pair into the plane, placed "
+            "beside the pad (not at the end of a trace run) — the checklist "
+            "figure is vias within 0.3 mm of the pad.";
+        for (size_t i = 0; i < bad.size() && i < 8; ++i)
+            f.geom.lines.push_back(
+                {-1, 0, bad[i].x, bad[i].y, bad[i].vx, bad[i].vy, 0.25});
+        out.push_back(std::move(f));
     }
 
     // ---- rule: signal runs crossing plane voids/splits ----

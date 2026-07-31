@@ -953,3 +953,130 @@ TEST_CASE("fixes: a single-plane board gets zero vias and the honest reason",
     REQUIRE(!plan.notes.empty());
     CHECK(plan.notes[0].find("stackup problem") != std::string::npos);
 }
+
+// ---------------------------------------------------------------------------
+// Rules extracted from Franz, "EMV: Störungssicherer Aufbau elektronischer
+// Schaltungen", 5th ed. (2013). Each cites the section it implements.
+// ---------------------------------------------------------------------------
+
+// §7.2: connector grounds scattered around the board = Reihenmassestruktur;
+// the ground potential difference between the entries drives the cables.
+TEST_CASE("franz: scattered connector grounds are flagged, a star is not",
+          "[screener][franz]") {
+    auto board = [](bool scattered) {
+        std::string t = R"((kicad_pcb
+          (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+          (net 0 "") (net 1 "GND") (net 2 "SIG")
+          (segment (start 10 10) (end 60 10) (width 0.3) (layer "F.Cu") (net 2))
+          (zone (net 1) (net_name "GND") (layer "B.Cu")
+            (filled_polygon (layer "B.Cu")
+              (pts (xy 0 0) (xy 80 0) (xy 80 50) (xy 0 50))))
+          (gr_line (start 0 0) (end 80 0) (layer "Edge.Cuts"))
+          (gr_line (start 80 0) (end 80 50) (layer "Edge.Cuts"))
+          (gr_line (start 80 50) (end 0 50) (layer "Edge.Cuts"))
+          (gr_line (start 0 50) (end 0 0) (layer "Edge.Cuts"))
+          (footprint "conn" (layer "F.Cu") (at 2 2)
+            (property "Reference" "J1")
+            (pad "1" smd rect (at 0 0) (size 1.5 1.5) (layers "F.Cu") (net 1 "GND"))
+            (pad "2" smd rect (at 2 0) (size 1.5 1.5) (layers "F.Cu") (net 2 "SIG")))
+        )";
+        // J2 either far away (opposite corner) or next to J1 (star). The raw
+        // string above deliberately leaves (kicad_pcb open — close it here.
+        std::string at = scattered ? "(at 78 48)" : "(at 6 2)";
+        t += "(footprint \"conn\" (layer \"F.Cu\") " + at +
+             " (property \"Reference\" \"J2\")"
+             " (pad \"1\" smd rect (at 0 0) (size 1.5 1.5)"
+             " (layers \"F.Cu\") (net 1 \"GND\"))))";
+        return t;
+    };
+    nlohmann::json scattered = analyze_board(
+        import_kicad(board(true), builtin_stackup("default-2layer")));
+    const auto* f = find_rule(scattered["findings"], "connector-ground-spread");
+    REQUIRE(f != nullptr);
+    CHECK((*f)["title"].get<std::string>().find("J1") != std::string::npos);
+    // the plane between them keeps it review-grade, per Franz's Vermaschung
+    CHECK((*f)["severityLabel"] == "low");
+
+    nlohmann::json star = analyze_board(
+        import_kicad(board(false), builtin_stackup("default-2layer")));
+    CHECK(find_rule(star["findings"], "connector-ground-spread") == nullptr);
+}
+
+// §5.9.3: the VCC/GND cavity's first modes from Gl. 5.3, and the corner
+// placement of the aggressor named.
+TEST_CASE("franz: plane cavity modes are computed from Gl. 5.3",
+          "[screener][franz]") {
+    // 4-layer with GND and VCC inner planes and a corner switch cluster
+    std::string t = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (1 "In1.Cu" signal) (2 "In2.Cu" signal)
+              (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SW") (net 2 "GND") (net 3 "VCC")
+      (segment (start 5 5) (end 15 5) (width 1.0) (layer "F.Cu") (net 1))
+      (zone (net 2) (net_name "GND") (layer "In1.Cu")
+        (filled_polygon (layer "In1.Cu")
+          (pts (xy 0 0) (xy 100 0) (xy 100 60) (xy 0 60))))
+      (zone (net 3) (net_name "VCC") (layer "In2.Cu")
+        (filled_polygon (layer "In2.Cu")
+          (pts (xy 0 0) (xy 100 0) (xy 100 60) (xy 0 60))))
+      (gr_line (start 0 0) (end 100 0) (layer "Edge.Cuts"))
+      (gr_line (start 100 0) (end 100 60) (layer "Edge.Cuts"))
+      (gr_line (start 100 60) (end 0 60) (layer "Edge.Cuts"))
+      (gr_line (start 0 60) (end 0 0) (layer "Edge.Cuts"))
+      (footprint "L" (layer "F.Cu") (at 5 5)
+        (property "Reference" "L1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SW")))
+      (footprint "Q" (layer "F.Cu") (at 15 5)
+        (property "Reference" "Q1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SW")))
+    ))";
+    nlohmann::json rep = analyze_board(
+        import_kicad(t, builtin_stackup("default-4layer")));
+    const auto* f = find_rule(rep["findings"], "plane-cavity-mode");
+    REQUIRE(f != nullptr);
+    // f10 = c0 / (2*sqrt(er)*a); default-4layer's inner dielectric er=4.5,
+    // a=100mm -> ~707 MHz. Title carries the rounded figure.
+    CHECK((*f)["title"].get<std::string>().find("707") != std::string::npos);
+    // the aggressor sits in a corner and the detail must say what that means
+    CHECK((*f)["detail"].get<std::string>().find("corner") != std::string::npos);
+}
+
+// §5.6 / Tab. 5.2: a decoupling cap whose plane via is millimetres away is
+// decoupling through a stub; one with a via at the pad is fine.
+TEST_CASE("franz: a long via stub on a decoupling cap is flagged",
+          "[screener][franz]") {
+    auto board = [](double via_x) {
+        std::string t = R"((kicad_pcb
+          (layers (0 "F.Cu" signal) (1 "In1.Cu" signal) (2 "In2.Cu" signal)
+                  (31 "B.Cu" signal))
+          (net 0 "") (net 1 "GND") (net 2 "VCC") (net 3 "S")
+          (segment (start 5 40) (end 25 40) (width 0.3) (layer "F.Cu") (net 3))
+          (segment (start 5 41) (end 25 41) (width 0.3) (layer "F.Cu") (net 3))
+          (zone (net 1) (net_name "GND") (layer "In1.Cu")
+            (filled_polygon (layer "In1.Cu")
+              (pts (xy 0 0) (xy 60 0) (xy 60 50) (xy 0 50))))
+          (footprint "C" (layer "F.Cu") (at 10 10)
+            (property "Reference" "C1")
+            (pad "1" smd rect (at 0 0) (size 1 0.6) (layers "F.Cu") (net 1 "GND"))
+            (pad "2" smd rect (at 1.6 0) (size 1 0.6) (layers "F.Cu") (net 2 "VCC")))
+        )";
+        // the raw string leaves (kicad_pcb open — the via and the final close
+        // are appended, per the raw-string-terminator trap noted above
+        char via[170];
+        std::snprintf(via, sizeof via,
+                      "(via (at %.1f 10) (size 0.6) (drill 0.3) "
+                      "(layers \"F.Cu\" \"B.Cu\") (net 1)))",
+                      via_x);
+        t += via;
+        return t;
+    };
+    // via 8 mm from the GND pad -> stub finding
+    nlohmann::json far = analyze_board(
+        import_kicad(board(2.0), builtin_stackup("default-4layer")));
+    const auto* f = find_rule(far["findings"], "cap-via-stub");
+    REQUIRE(f != nullptr);
+    CHECK((*f)["detail"].get<std::string>().find("C1") != std::string::npos);
+    // via at the pad -> no finding
+    nlohmann::json near_ = analyze_board(
+        import_kicad(board(10.5), builtin_stackup("default-4layer")));
+    CHECK(find_rule(near_["findings"], "cap-via-stub") == nullptr);
+}

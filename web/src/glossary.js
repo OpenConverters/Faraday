@@ -100,6 +100,30 @@ export const RULES = [
     fix: 'Move the cap to the pin, on the same side if possible; shorten the via escape.',
     confidence: 'geometric-only',
   },
+  {
+    id: 'connector-ground-spread',
+    name: 'Connector ground spread',
+    what: 'Ground entries of off-board connectors scattered around the board instead of clustered — a series-ground structure toward the outside world.',
+    physics: 'The ground potential difference between two cable roots drives the attached cables as a dipole; cable common-mode is what actually fails EMC tests. Franz (EMV 5th ed., §7.2–7.3) measured 23.5 dB between the scattered and the clustered layout of the same board. A continuous plane between the entries softens it (his Vermaschung), which is why the severity drops when one exists.',
+    fix: 'Cluster the off-board connections on one edge so their grounds share one reference point (star structure). Where placement is fixed: lowest possible copper impedance between the entries, and a common-mode choke per cable.',
+    confidence: 'heuristic',
+  },
+  {
+    id: 'plane-cavity-mode',
+    name: 'Plane cavity mode',
+    what: 'The VCC/GND plane pair as a resonant 2-D cavity, with its first mode frequencies computed from the board size and dielectric.',
+    physics: 'f_mn = c0/(2√εr)·√((m/a)²+(n/b)²) — Franz Gl. 5.3. Above the capacitor/plane parallel resonance the decaps stop acting and these modes set the supply impedance. Every mode peaks in the corners; the board centre is a null of the first three (17 dB measured on the 10-mode).',
+    fix: 'Thinner plane spacing lowers the cavity impedance everywhere; lossy edge termination or ESR-controlled caps damp the modes; placing the switching cluster centrally stops the first three modes being driven.',
+    confidence: 'heuristic',
+  },
+  {
+    id: 'cap-via-stub',
+    name: 'Decoupling via stub',
+    what: 'A decoupling capacitor whose nearest same-net via into its plane is millimetres from the pad — the cap decouples through a trace stub.',
+    physics: 'Above series resonance a capacitor IS its inductance, and the stub (~0.8 nH/mm) is in series with it. Franz §5.6: connection lengths in the decoupling branch must be as short as manufacturable; his via table shows a second via pair alone is worth ~19% of the branch inductance.',
+    fix: 'A via pair directly beside each pad (checklist figure: within 0.3 mm), not at the end of a trace run.',
+    confidence: 'geometric-only',
+  },
 ]
 
 // The deep tools — not findings, but part of the same vocabulary.

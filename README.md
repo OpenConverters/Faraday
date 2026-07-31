@@ -28,6 +28,10 @@ coupling, never a defect) · `3w` · `plane-crossing` and `sparse-reference` (re
 rolled up when systemic) · `via-stub` and `dangling-stub` (λ/4 resonators) ·
 `decoupling-distance` · and for power converters, `switch-node` and **`commutation-loop`** —
 the input-cap → switch-pair → return loop whose enclosed area dominates converter emissions.
+Three rules implement Franz (*EMV: Störungssicherer Aufbau elektronischer Schaltungen*, 5th ed.):
+`connector-ground-spread` (scattered cable-ground entries drive the cables as antennas, §7.2),
+`plane-cavity-mode` (VCC/GND cavity resonances from Gl. 5.3, corner vs. centre excitation, §5.9.3)
+and `cap-via-stub` (decoupling-branch stub inductance, §5.6).
 
 Faraday is an automated **design review**, not compliance prediction. Screening-tier numbers are
 first-order estimates for *ranking* risk; a field-solver tier (OMFEM 2D cross-section RLGC +
