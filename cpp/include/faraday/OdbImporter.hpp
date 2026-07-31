@@ -120,10 +120,31 @@ struct OLayer {
     int arcs = 0;
 };
 
-inline OLayer parse_features(const std::string& text) {
+// The job's unit, in mm per file unit. ODB++ declares it per FILE, as a
+// leading "UNITS=MM|INCH" line — and a file that omits it inherits the job's,
+// whose FORMAT DEFAULT IS INCH. Defaulting to mm instead silently shrank
+// every undeclared job by 25.4x: Altium's exporter writes no UNITS line
+// anywhere, so a real 92 x 80 mm board imported as 3.6 x 3.1 mm, with 5 mil
+// traces read as 5 um and via stubs resonating at 23 GHz instead of 0.9 GHz.
+// We take the declaration from ANY file in the job that carries one, so a
+// partly-annotated export stays self-consistent.
+inline double declared_unit(const std::string& text) {
+    // the line is at the top of the file, before any feature record
+    std::istringstream ss(text);
+    std::string line;
+    for (int i = 0; i < 40 && std::getline(ss, line); ++i) {
+        while (!line.empty() && (line.back() == '\r' || line.back() == ' '))
+            line.pop_back();
+        if (line.rfind("UNITS=", 0) == 0)
+            return line.substr(6) == "MM" ? 1.0 : 25.4;
+    }
+    return 0.0;   // not declared here
+}
+
+inline OLayer parse_features(const std::string& text, double job_unit) {
     OLayer L;
     std::map<int, detail::Symbol> syms;
-    double unit = 1.0;
+    double unit = job_unit;
     OFeature* surf = nullptr;         // open S record
     bool in_hole = false;
     std::istringstream ss(text);
@@ -252,6 +273,13 @@ inline BoardIR import_odb(const std::vector<NamedFile>& files,
         return nullptr;
     };
 
+    // job unit: the first explicit declaration anywhere in the set wins;
+    // absent one, the format's default (inch) — never mm, see declared_unit
+    double job_unit = 0.0;
+    for (const auto& f : files)
+        if (double u = declared_unit(f.text)) { job_unit = u; break; }
+    if (job_unit == 0.0) job_unit = 25.4;
+
     // ---- matrix: layer order, types, drill spans ----
     struct MLayer { std::string name, type, start, end; int row = 0; };
     std::vector<MLayer> mlayers;
@@ -325,11 +353,12 @@ inline BoardIR import_odb(const std::vector<NamedFile>& files,
                 " copper layers but the job has " +
                 std::to_string(coppers.size()));
     } else {
-        throw BoardError(
+        throw StackupNeeded(
             "odb: no stackup — ODB++ carries no dielectric thicknesses. This "
             "job has " + std::to_string(coppers.size()) +
             " copper layers; choose default-" + std::to_string(coppers.size()) +
-            "layer or supply one.");
+            "layer or supply one.",
+            (int)coppers.size());
     }
 
     // ---- eda/data: nets + feature→net + toeprint ownership ----
@@ -390,7 +419,7 @@ inline BoardIR import_odb(const std::vector<NamedFile>& files,
             file_at("steps/" + step + "/layers/" + detail::lower(m.name) +
                     "/features");
         if (!ft) continue;   // a copper layer with no features file is empty
-        OLayer L = parse_features(*ft);
+        OLayer L = parse_features(*ft, job_unit);
         b.approximated_arcs += L.arcs;
         const int cu = cu_of[detail::lower(m.name)];
         const int fl = fid_lyr(m.name);
@@ -448,6 +477,10 @@ inline BoardIR import_odb(const std::vector<NamedFile>& files,
                     "/components");
         if (!ct) continue;
         const bool top = detail::lower(m.name).find("top") != std::string::npos;
+        // CMP x/y are in file units like every other coordinate — they were
+        // read raw, which put every component's placement 25.4x off on an
+        // inch job (and left it right only because mm jobs scale by 1)
+        const double cunit = declared_unit(*ct) ? declared_unit(*ct) : job_unit;
         std::istringstream ss(*ct);
         std::string line;
         int cmp_idx = -1;
@@ -463,8 +496,8 @@ inline BoardIR import_odb(const std::vector<NamedFile>& files,
                 cur_ref = t[6];
                 b.components.push_back({cur_ref,
                                         t.size() >= 8 ? t[7] : "", "",
-                                        std::atof(t[2].c_str()),
-                                        -std::atof(t[3].c_str()),
+                                        std::atof(t[2].c_str()) * cunit,
+                                        -std::atof(t[3].c_str()) * cunit,
                                         std::atof(t[4].c_str())});
                 // rewrite the placeholder component keys on pads
                 const std::string key =
@@ -527,7 +560,7 @@ inline BoardIR import_odb(const std::vector<NamedFile>& files,
         const int to = cu_of.count(detail::lower(m.end))
                            ? cu_of[detail::lower(m.end)]
                            : (int)coppers.size() - 1;
-        OLayer L = parse_features(*ft);
+        OLayer L = parse_features(*ft, job_unit);
         const int fl = fid_lyr(m.name);
         for (size_t fi = 0; fi < L.feats.size(); ++fi) {
             const OFeature& f = L.feats[fi];
@@ -548,7 +581,7 @@ inline BoardIR import_odb(const std::vector<NamedFile>& files,
         x2 = std::max(x2, x); y2 = std::max(y2, y);
     };
     if (const std::string* pf = file_at("steps/" + step + "/profile")) {
-        OLayer P = parse_features(*pf);
+        OLayer P = parse_features(*pf, job_unit);
         for (const auto& f : P.feats) {
             for (const auto& isl : f.islands)
                 for (const auto& p : isl.ring) grow(p.x, p.y);

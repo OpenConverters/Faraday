@@ -19,6 +19,18 @@ struct BoardError : std::runtime_error {
     using std::runtime_error::runtime_error;
 };
 
+// "This format carries no dielectric" is a QUESTION, not a failure, and the
+// one thing the asker already knows is how many copper layers the board has —
+// every importer counts them before it asks. Carrying that count structurally
+// (rather than leaving the UI to regex it back out of the message, which made
+// every stackup-less KiCad board suggest 2-layer because the CLI usage text
+// says "default-2layer") lets the caller offer the ONE builtin that fits.
+struct StackupNeeded : BoardError {
+    StackupNeeded(const std::string& what, int copper_count)
+        : BoardError(what), copper_count(copper_count) {}
+    int copper_count;
+};
+
 // ---- Stackup ----
 
 enum class LayerKind { Copper, Dielectric };

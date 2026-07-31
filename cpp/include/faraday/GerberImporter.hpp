@@ -398,12 +398,13 @@ inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
     if (user_stackup) {
         b.stackup = *user_stackup;   // builtin_stackup already stamps "user:"
     } else {
-        throw BoardError(
+        throw StackupNeeded(
             "gerber: no stackup — a Gerber set carries no layer thicknesses "
             "and no permittivity. This set has " +
             std::to_string(coppers.size()) +
             " copper layers; choose default-" + std::to_string(coppers.size()) +
-            "layer or supply one.");
+            "layer or supply one.",
+            (int)coppers.size());
     }
 
     // nets

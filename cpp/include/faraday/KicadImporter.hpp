@@ -130,10 +130,12 @@ inline BoardIR import_kicad(const std::string& text,
     } else if (file_stackup) {
         b.stackup = detail::parse_file_stackup(*file_stackup);
     } else {
-        throw BoardError(
+        throw StackupNeeded(
             "kicad: the board file carries no stackup. Faraday does not assume "
-            "one — pass an explicit stackup (CLI: --stackup default-2layer|"
-            "default-4layer, GUI: stackup card).");
+            "one — this board has " + std::to_string(b.copper_names.size()) +
+            " copper layers; choose default-" +
+            std::to_string(b.copper_names.size()) + "layer or supply one.",
+            (int)b.copper_names.size());
     }
     size_t n_cu_stack = b.stackup.copper_indices().size();
     if (n_cu_stack != b.copper_names.size())

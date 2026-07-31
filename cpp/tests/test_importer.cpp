@@ -85,10 +85,46 @@ TEST_CASE("importer: no stackup and no user stackup -> loud refusal", "[importer
     ))";
     CHECK_THROWS_WITH(import_kicad(txt),
                       Catch::Matchers::ContainsSubstring("no stackup"));
+    // and it names the copper count it read, both in the text and structurally
+    try {
+        import_kicad(txt);
+        FAIL("expected StackupNeeded");
+    } catch (const StackupNeeded& e) {
+        CHECK(e.copper_count == 2);
+    }
     // explicit user stackup unblocks it
     BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
     CHECK(b.stackup.source == "user:default-2layer");
     CHECK_FALSE(b.bbox_from_outline);  // no Edge.Cuts -> geometry bbox, reported
+}
+
+// A vendor's native database is the single most likely wrong file to be
+// dropped, and it must be named as such. Sniffing it for board signatures
+// found "M48" somewhere in 8.9 MB of OLE2 and reported a drill-format error
+// about a file that is not a drill file.
+TEST_CASE("importer: a binary CAD database is refused by name, not mis-sniffed",
+          "[importer]") {
+    std::string ole("\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1", 8);
+    ole.append(4000, 'x');
+    ole += "M48";                      // the byte sequence that fooled Excellon
+    ole.append(1, '\0');
+    ole.append(4000, 'y');
+    CHECK_THROWS_WITH(import_board(ole),
+                      Catch::Matchers::ContainsSubstring("Altium .PcbDoc"));
+    CHECK_THROWS_WITH(import_board_set({{"board.PcbDoc", ole}}),
+                      Catch::Matchers::ContainsSubstring("Export ODB++"));
+    // and a binary sitting NEXT to a real board must not derail the import
+    std::string kicad = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "A") (net 2 "B")
+      (segment (start 0 0) (end 10 0) (width 0.3) (layer "F.Cu") (net 1))
+      (segment (start 0 1) (end 10 1) (width 0.3) (layer "F.Cu") (net 2))
+    ))";
+    BoardFormat fmt;
+    BoardIR b = import_board_set({{"junk.PcbDoc", ole}, {"b.kicad_pcb", kicad}},
+                                 builtin_stackup("default-2layer"), &fmt);
+    CHECK(fmt == BoardFormat::Kicad);
+    CHECK(b.segments.size() == 2);
 }
 
 TEST_CASE("importer: stackup/board copper-count mismatch throws", "[importer]") {

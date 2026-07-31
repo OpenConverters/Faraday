@@ -65,6 +65,16 @@ struct ScreenerParams {
     // capacitor COMPONENTS is bulk/decoupling and marks a DC rail
     // (mppt-2420-hc's HV+ input rail: 5 caps; its SW_NODE: 1).
     int sw_max_caps = 3;
+    // Isolated-converter (flyback/forward) switch node: FET drain + transformer
+    // primary + RCD snubber and nothing else. Tighter than sw_max_components
+    // because this shape has no inductor to anchor it — the PoE flyback's
+    // NetD17_3 is {T7 FET, T2 transformer, D17+R29 snubber, T5 gate helper}.
+    int sw_flyback_max_components = 6;
+    // A power-package switching device: SO-8/PowerPAK and up. Excludes the
+    // 3-pad SOT-23 small-signal transistors that share the prefix.
+    int sw_flyback_min_switch_pads = 8;
+    // A wound part (inductor or transformer), by pad count.
+    int sw_magnetic_min_pads = 4;
     double min_via_stub_mm = 0.3;    // ignore stubs shorter than this
     double min_dangling_mm = 1.0;    // ignore dangling ends shorter than this
     double decoupling_far_mm = 6.0;  // beyond this a decoupling cap is "reaching"
@@ -502,26 +512,68 @@ class Screener {
         return p;
     }
 
+    // Which reference prefix marks a SWITCHING device on THIS board. The rule
+    // above hardcoded ANSI "Q", which made every converter rule silent on an
+    // IEC/DIN board: the PoE/USB-C flyback here names its FETs T1..T7, its
+    // ICs IC1..IC6 and its test points TP1..TP21, and carries not one "Q".
+    // "T" cannot simply be added to the set — on HackRF One T1..T4 ARE test
+    // points (10 false hits when it was tried). So decide once per board, on
+    // evidence: any "Q" at all means ANSI, and "T" keeps its test-point
+    // reading; no "Q" plus IEC-style naming elsewhere ("IC" instead of "U",
+    // or test points that already have their own "TP") means "T" is the
+    // transistor prefix. A board with neither signal keeps the old "Q".
+    std::string decide_sw_prefix() const {
+        bool has_q = false, has_t = false, has_ic = false, has_tp = false;
+        for (const auto& p : b_.pads) {
+            if (p.component.empty()) continue;
+            const std::string pre = ref_prefix(p.component);
+            if (pre == "Q") has_q = true;
+            else if (pre == "T") has_t = true;
+            else if (pre == "IC") has_ic = true;
+            else if (pre == "TP") has_tp = true;
+        }
+        if (!has_q && has_t && (has_ic || has_tp)) return "T";
+        return "Q";
+    }
+
     void build_sw_nets() {
+        sw_prefix_ = decide_sw_prefix();
+        // pads per component — the flyback test needs package size to tell a
+        // power FET (SO-8/PowerPAK, 8+ pads) and a transformer (4+ pads) from
+        // the 3-pad small-signal transistors that share their prefix
+        std::map<std::string, int> pad_count;
+        for (const auto& p : b_.pads)
+            if (!p.component.empty()) ++pad_count[p.component];
+
         std::map<int, std::set<std::string>> prefixes;
-        std::map<int, std::set<std::string>> comps, sw_comps, cap_comps;
+        std::map<int, std::set<std::string>> comps, sw_comps, cap_comps,
+            mag_comps;
         for (const auto& p : b_.pads) {
             if (p.net <= 0 || p.component.empty() || is_plane_net(p.net)) continue;
             std::string pre = ref_prefix(p.component);
             prefixes[p.net].insert(pre);
             comps[p.net].insert(p.component);
-            // Q only: counting diodes as bridge legs made every power-button
-            // FET+D pair a "switch node" (ulx3s, bms-c1). The async-buck case
-            // (one FET, one diode, one L) is buck_like's job, not this one's.
-            if (pre == "Q") sw_comps[p.net].insert(p.component);
+            // switching devices only: counting diodes as bridge legs made
+            // every power-button FET+D pair a "switch node" (ulx3s, bms-c1).
+            // The async-buck case (one FET, one diode, one L) is buck_like's
+            // job, not this one's.
+            if (pre == sw_prefix_) sw_comps[p.net].insert(p.component);
             if (pre == "C") cap_comps[p.net].insert(p.component);
+            // MAGNETICS, for the isolated case. A transformer is "T" in BOTH
+            // conventions, so on an IEC board it shares the switching prefix
+            // and only its pad count separates it from a FET; a wound part
+            // has 4+ pads where even a power FET package tops out lower on
+            // this board (T2 the flyback transformer: 10 pads).
+            if ((pre == "L" || pre == "T" || pre == "TR") &&
+                pad_count[p.component] >= p_.sw_magnetic_min_pads)
+                mag_comps[p.net].insert(p.component);
         }
         for (auto& [net, pre] : prefixes) {
             if ((int)comps[net].size() > p_.sw_max_components)
                 continue;   // a rail, not a node
             if ((int)cap_comps[net].size() > p_.sw_max_caps)
                 continue;   // bulk/decoupling crowd: a DC rail, not a node
-            bool buck_like = pre.count("L") && pre.count("Q");
+            bool buck_like = pre.count("L") && pre.count(sw_prefix_);
             // Inverter/half-bridge: several FETs meet with no inductor (the
             // motor IS the inductance — VESC found 0 switch nodes without
             // this). But GATE nets also gather Q pads (VESC's H1_LOW has 5),
@@ -535,7 +587,25 @@ class Screener {
             bool power_path = pre.count("C") || pre.count("L") ||
                               pre.count("P") || pre.count("J");
             bool bridge_like = sw_comps[net].size() >= 2 && power_path;
-            if (buck_like || bridge_like) sw_nets_.insert(net);
+            // Isolated (flyback/forward): the drain node runs to a TRANSFORMER
+            // primary, not to an inductor, and its only other company is the
+            // RCD snubber. buck_like misses it (no "L" on the net) and
+            // bridge_like misses it too (the snubber is D+R, so the C/L/P/J
+            // power path is absent) — which is how a TPS23754 PoE flyback
+            // scored zero switch nodes. So: a power-package switching device
+            // AND a wound part that is not that same component, a clamp/
+            // snubber leg (D or C), and a deliberately small component count.
+            bool flyback_like = false;
+            if ((int)comps[net].size() <= p_.sw_flyback_max_components &&
+                (pre.count("D") || pre.count("C"))) {
+                for (const auto& sw : sw_comps[net]) {
+                    if (pad_count[sw] < p_.sw_flyback_min_switch_pads) continue;
+                    for (const auto& mag : mag_comps[net])
+                        if (mag != sw) { flyback_like = true; break; }
+                    if (flyback_like) break;
+                }
+            }
+            if (buck_like || bridge_like || flyback_like) sw_nets_.insert(net);
         }
     }
 
@@ -555,7 +625,7 @@ class Screener {
         for (const auto& p : b_.pads) {
             if (p.net != sw_net) continue;
             std::string pre = ref_prefix(p.component);
-            if (pre == "Q" || pre == "D") fets.insert(p.component);
+            if (pre == sw_prefix_ || pre == "D") fets.insert(p.component);
         }
         if (fets.empty()) return std::nullopt;
 
@@ -1355,7 +1425,12 @@ class Screener {
             std::string ic;
             Point ic_pt{0, 0}, cap_pt{0, 0};
             for (const auto& p : b_.pads) {
-                if (p.net != rail || ref_prefix(p.component) != "U") continue;
+                // "U" (ANSI) or "IC" (IEC) — unlike Q/T these never collide
+                // with another part class, so both are accepted on any board.
+                // Only "U" was, which left every IEC board's decoupling rule
+                // with no load to measure the distance TO.
+                const std::string pre = ref_prefix(p.component);
+                if (p.net != rail || (pre != "U" && pre != "IC")) continue;
                 for (const auto& cp : ci.pts) {
                     double d = std::hypot(p.x - cp.x, p.y - cp.y);
                     if (d < best) { best = d; ic = p.component; ic_pt = {p.x, p.y};
@@ -1586,6 +1661,7 @@ class Screener {
     size_t diff_pairs_recognized_ = 0;
     std::set<std::string> unverifiable_planes_;
     std::set<int> sw_nets_;
+    std::string sw_prefix_ = "Q";   // see decide_sw_prefix()
     std::set<int> big_pour_nets_;
     std::vector<double> routed_mm_;
 };

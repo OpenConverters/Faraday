@@ -28,7 +28,32 @@ inline const char* format_name(BoardFormat f) {
     return "?";
 }
 
+// Every format Faraday reads is TEXT. A binary file must be rejected on that
+// fact alone, before any signature sniffing: looks_excellon() is satisfied by
+// the bytes "M48" appearing anywhere with no "%FS", which an 8.9 MB Altium
+// .PcbDoc hits by pure chance — the user then gets "this drill file uses
+// fixed-format coordinates" about a file that is not a drill file at all.
+inline bool looks_binary(const std::string& text) {
+    const size_t n = std::min<size_t>(text.size(), 8192);
+    return text.find('\0') < n;
+}
+
+// Altium/OrCAD native databases are OLE2 compound files, and that is by far
+// the most likely binary to be dropped on Faraday — name it exactly.
+inline bool looks_ole2(const std::string& text) {
+    return text.compare(0, 8, "\xD0\xCF\x11\xE0\xA1\xB1\x1A\xE1", 8) == 0;
+}
+
 inline BoardFormat detect_format(const std::string& text) {
+    if (looks_binary(text))
+        throw BoardError(
+            looks_ole2(text)
+                ? "this is a native CAD database (an OLE2 compound file — "
+                  "Altium .PcbDoc, OrCAD .brd), not a board interchange "
+                  "format. Faraday cannot read a vendor's binary project. "
+                  "Export ODB++ or Gerber X2 from it and drop that."
+                : "this file is binary; Faraday reads text board formats "
+                  "(KiCad, HyperLynx, IPC-2581, Gerber X2, ODB++).");
     // look past leading whitespace/comments for the first meaningful token
     size_t n = std::min<size_t>(text.size(), 4096);
     std::string head = text.substr(0, n);
@@ -78,19 +103,27 @@ inline BoardIR import_board_set(const std::vector<gerber::NamedFile>& files,
         if (detected) *detected = BoardFormat::Odb;
         return odb::import_odb(files, std::move(user_stackup));
     }
-    bool any_gerber = false;
+    // Binary members are never board data — a dropped project zip carries the
+    // .PcbDoc, PDFs and spreadsheets alongside the export. Skip them rather
+    // than letting a chance byte sequence sniff as Gerber.
+    std::vector<gerber::NamedFile> text_files;
     for (const auto& f : files)
+        if (!looks_binary(f.text)) text_files.push_back(f);
+    if (text_files.empty())
+        return import_board(files[0].text, std::move(user_stackup), detected);
+    bool any_gerber = false;
+    for (const auto& f : text_files)
         any_gerber = any_gerber || gerber::looks_gerber(f.text) ||
                      gerber::looks_excellon(f.text);
-    if (files.size() == 1 && !any_gerber)
-        return import_board(files[0].text, std::move(user_stackup), detected);
+    if (text_files.size() == 1 && !any_gerber)
+        return import_board(text_files[0].text, std::move(user_stackup), detected);
     if (!any_gerber)
         throw BoardError(
             "multiple files, none of them Gerber and no ODB++ matrix/matrix — "
             "Faraday takes one KiCad/HyperLynx/IPC-2581 file, a Gerber X2 "
             "set, or an ODB++ job (zip or directory).");
     if (detected) *detected = BoardFormat::GerberSet;
-    return gerber::import_gerber_set(files, std::move(user_stackup));
+    return gerber::import_gerber_set(text_files, std::move(user_stackup));
 }
 
 // ---------------------------------------------------------------------------

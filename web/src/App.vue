@@ -19,6 +19,8 @@ const boardFiles = ref([])
 // when the engine names the copper count ("choose default-6layer"), the
 // stackup card offers exactly that button
 const stackupSuggest = ref('')
+const suggestCopper = computed(
+  () => Number((stackupSuggest.value.match(/\d+/) || [0])[0]))
 const fileName = ref('')
 const report = ref(null)
 const error = ref('')
@@ -89,10 +91,12 @@ async function analyze() {
     : JSON.parse(engine.value.analyze(boardText.value, stackupSpec()))
   if (out.error) {
     report.value = null
-    if (out.error.includes('no stackup')) {
-      // explicit choice required — Faraday never assumes a stackup silently
+    if (out.needStackup) {
+      // explicit choice required — Faraday never assumes a stackup silently.
+      // The COUNT is not a guess: the engine read it off the board and sends
+      // it with the ask, so the card offers the one builtin that fits.
       needStackup.value = true
-      stackupSuggest.value = (out.error.match(/default-\d+layer/) || [''])[0]
+      stackupSuggest.value = `default-${out.copperCount}layer`
       hasSavedStackup.value = !!savedStackup()
     } else {
       error.value = out.error
@@ -460,14 +464,17 @@ function toggleRule(rule) {
     <div v-if="nfError" class="banner error" data-testid="nf-error">{{ nfError }}</div>
 
     <div v-if="needStackup" class="banner ask" data-testid="stackup-card">
-      <p>This board file carries no stackup. Z₀ and coupling need one — choose what the
-         board is built on (the report will state your choice):</p>
-      <button class="chip" @click="chooseStackup('default-2layer')">Default 2-layer FR4 (1.6 mm)</button>
-      <button class="chip" @click="chooseStackup('default-4layer')">Default 4-layer FR4 (1.6 mm)</button>
-      <button v-if="stackupSuggest && !['default-2layer', 'default-4layer'].includes(stackupSuggest)"
-              class="chip" data-testid="stackup-suggest"
+      <!-- The layer COUNT is read off the board, never asked. What no Gerber,
+           ODB++ or bare KiCad file carries is the DIELECTRIC — thicknesses and
+           εr — and every Z₀ and coupling number stands on those. So the card
+           states what is known and asks only for what is not. -->
+      <p><b>{{ suggestCopper }} copper layers</b> — read from the board. What the file does
+         not carry is the dielectric: no thicknesses, no εr, and every Z₀ and coupling
+         figure stands on them. Choose what the board is built on (the report will state
+         your choice):</p>
+      <button class="chip" data-testid="stackup-suggest"
               @click="chooseStackup(stackupSuggest)">
-        Default {{ stackupSuggest.match(/\d+/)[0] }}-layer FR4 (this set's copper count)</button>
+        Default {{ suggestCopper }}-layer FR4 (1.6 mm)</button>
       <button class="chip real" data-testid="stackup-custom"
               @click="stackupOpen = true">
         Enter the real stackup — every Z₀ and coupling figure stands on it</button>
@@ -622,7 +629,7 @@ function toggleRule(rule) {
                    @toggle-rule="toggleRule" @close="glossaryOpen = false" />
 
     <StackupPanel v-if="stackupOpen" :initial="customStackup"
-                  :copper-hint="Number((stackupSuggest.match(/\d+/) || [0])[0])"
+                  :copper-hint="suggestCopper"
                   @apply="applyStackup" @close="stackupOpen = false" />
 
     <footer v-if="meta" class="metastrip" data-testid="meta-strip">

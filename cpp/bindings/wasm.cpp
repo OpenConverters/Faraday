@@ -26,6 +26,16 @@
 // what the UI does, so the state is bounded and its lifetime is obvious.
 static std::optional<faraday::BoardIR> g_board;
 
+// "no stackup" is the one error the UI answers rather than reports, so it
+// travels with the copper count the importer already knows — the card then
+// offers the single builtin that FITS the board instead of a 2-or-4 guess.
+static std::string stackup_needed_json(const faraday::StackupNeeded& e) {
+    return nlohmann::json{{"error", e.what()},
+                          {"needStackup", true},
+                          {"copperCount", e.copper_count}}
+        .dump();
+}
+
 static std::string analyze(std::string board_text, std::string stackup_name) {
     try {
         // stackup_name: builtin name, or a full custom stackup as JSON
@@ -38,6 +48,8 @@ static std::string analyze(std::string board_text, std::string stackup_name) {
         out["format"] = faraday::format_name(fmt);
         g_board = std::move(board);
         return out.dump();
+    } catch (const faraday::StackupNeeded& e) {
+        return stackup_needed_json(e);
     } catch (const std::exception& e) {
         return nlohmann::json{{"error", e.what()}}.dump();
     }
@@ -62,6 +74,8 @@ static std::string analyze_set(std::string request_json) {
         out["format"] = faraday::format_name(fmt);
         g_board = std::move(board);
         return out.dump();
+    } catch (const faraday::StackupNeeded& e) {
+        return stackup_needed_json(e);
     } catch (const std::exception& e) {
         return nlohmann::json{{"error", e.what()}}.dump();
     }

@@ -13,8 +13,13 @@ each with the mechanism, the number, a stated confidence tier, and a remediation
 | **KiCad** `.kicad_pcb` | KiCad 5–9 | legacy layer names, `(module)`, zone-inherited fills |
 | **HyperLynx** `.hyp` | Altium, PADS, Expedition, Eagle | carries its own stackup with permittivity |
 | **IPC-2581** `.xml` | rev B/C exporters | no other open-source reader exists |
+| **ODB++** job | Altium, Cadence, Mentor, KiCad 9 | exact nets, refdes and values; a directory or one zip |
+| **Gerber X2** set | anything that fabs | net attributes where present; all files or one zip |
 
-Format is detected from the file's **contents**, not its name.
+Format is detected from the file's **contents**, not its name. Native CAD
+databases are not read — an Altium `.PcbDoc` is a binary OLE file; export
+ODB++ (or Gerber X2) from it and drop that. Neither carries a dielectric, so
+Faraday reads the layer count off the board and asks only what it is built on.
 
 ## Rules
 

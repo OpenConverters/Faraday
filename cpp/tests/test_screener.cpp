@@ -269,6 +269,76 @@ TEST_CASE("screener: switch node found by connectivity; rails and LEDs are not",
     CHECK((*f)["coupledLenMm"].get<double>() > 0.0);  // copper extent, mm^2
 }
 
+// IEC/DIN designators. A European schematic names transistors T*, ICs IC*
+// and test points TP* — the TPS23754 PoE flyback that exposed this has T1..T7
+// and NOT ONE "Q", so the ANSI-only prefix left it with zero switch nodes and
+// a permanently greyed-out near-field button. Two things are pinned here:
+// the per-board convention call, and the isolated-converter shape (FET drain
+// + transformer primary + RCD snubber) that neither buck_like nor bridge_like
+// can see, because the net has no inductor and no C/L/P/J power path.
+namespace {
+// n pads of one component, all on `net`, laid out along a row at y
+std::string iec_part(const std::string& ref, int n, double x, double y,
+                     int net, const std::string& net_name) {
+    std::string s = "(footprint \"F\" (layer \"F.Cu\") (at " +
+                    std::to_string(x) + " " + std::to_string(y) +
+                    ") (property \"Reference\" \"" + ref + "\")";
+    for (int i = 0; i < n; ++i)
+        s += " (pad \"" + std::to_string(i + 1) +
+             "\" smd rect (at " + std::to_string(i * 0.5) +
+             " 0) (size 0.4 0.4) (layers \"F.Cu\") (net " +
+             std::to_string(net) + " \"" + net_name + "\"))";
+    return s + ")";
+}
+}  // namespace
+
+TEST_CASE("screener: an IEC-designator flyback is a switch node, not silence",
+          "[screener][switchnode]") {
+    std::string b = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "DRAIN") (net 2 "G")
+      (segment (start 5 5) (end 15 5) (width 1.0) (layer "F.Cu") (net 1))
+      (zone (net 2) (net_name "G") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 30))))
+    )";
+    b += iec_part("T7", 9, 15, 5, 1, "DRAIN");    // SI7852DP, PowerPAK SO-8
+    b += iec_part("T2", 10, 5, 5, 1, "DRAIN");    // flyback transformer
+    b += iec_part("D17", 3, 10, 3, 1, "DRAIN");   // RCD snubber diode
+    b += iec_part("R29", 2, 10, 7, 1, "DRAIN");   // RCD snubber resistor
+    b += iec_part("T5", 3, 12, 7, 1, "DRAIN");    // SOT-23 gate helper
+    b += iec_part("IC4", 21, 25, 20, 0, "");      // the IEC tell: IC, not U
+    b += iec_part("TP9", 1, 27, 20, 0, "");       // test points have their own
+    BoardIR board = import_kicad(b + ")", builtin_stackup("default-2layer"));
+    nlohmann::json report = analyze_board(board);
+
+    const auto& sw = report["meta"]["switchNodes"];
+    REQUIRE(sw.size() == 1);
+    CHECK(sw[0] == "DRAIN");
+}
+
+TEST_CASE("screener: on an ANSI board T stays a test point", "[screener][switchnode]") {
+    // The same shape, but the board also carries a "Q" — which is what HackRF
+    // One does, where T1..T4 are TEST POINTS. Any Q at all means the board is
+    // named the ANSI way and T must not be read as a transistor.
+    std::string b = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "PROBE") (net 2 "G")
+      (segment (start 5 5) (end 15 5) (width 1.0) (layer "F.Cu") (net 1))
+      (zone (net 2) (net_name "G") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 30))))
+    )";
+    b += iec_part("T7", 9, 15, 5, 1, "PROBE");
+    b += iec_part("T2", 10, 5, 5, 1, "PROBE");
+    b += iec_part("D17", 3, 10, 3, 1, "PROBE");
+    b += iec_part("R29", 2, 10, 7, 1, "PROBE");
+    b += iec_part("Q1", 3, 25, 20, 0, "");        // the ANSI tell
+    b += iec_part("IC4", 21, 27, 20, 0, "");      // present but outvoted by Q
+    BoardIR board = import_kicad(b + ")", builtin_stackup("default-2layer"));
+    nlohmann::json report = analyze_board(board);
+
+    CHECK(report["meta"]["switchNodes"].empty());
+}
+
 TEST_CASE("screener: multi-pad power FETs do not hide the switch node",
           "[screener][switchnode]") {
     // mppt-2420-lc in miniature: the node has only 6 COMPONENTS but the FETs

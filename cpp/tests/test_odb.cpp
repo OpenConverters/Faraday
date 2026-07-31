@@ -120,6 +120,48 @@ TEST_CASE("odb: a job without eda/data is refused, with the reason named",
 TEST_CASE("odb: no stackup names the copper count", "[odb]") {
     CHECK_THROWS_WITH(import_board_set(odb_set()),
                       Catch::Matchers::ContainsSubstring("default-2layer"));
+    // and carries it structurally, so the UI never has to regex it back out
+    try {
+        import_board_set(odb_set());
+        FAIL("expected StackupNeeded");
+    } catch (const StackupNeeded& e) {
+        CHECK(e.copper_count == 2);
+    }
+}
+
+// A job that declares no units at all is INCH — that is the format's default,
+// and Altium's exporter writes no UNITS= line anywhere. Reading it as mm
+// shrank a real 92 x 80 mm board to 3.6 x 3.1 mm and every derived number
+// with it. Same fixture, same bytes, only the declaration removed.
+TEST_CASE("odb: an undeclared job is inches, not millimetres", "[odb]") {
+    BoardIR mm = import_board_set(odb_set(), builtin_stackup("default-2layer"));
+
+    auto files = odb_set();
+    int stripped = 0;
+    for (auto& f : files) {
+        // the declaration is a line of its own, not always the first
+        // (eda/data carries it under a comment header)
+        for (size_t at; (at = f.text.find("UNITS=")) != std::string::npos;) {
+            if (at != 0 && f.text[at - 1] != '\n') break;   // not a line start
+            f.text.erase(at, f.text.find('\n', at) + 1 - at);
+            ++stripped;
+        }
+    }
+    REQUIRE(stripped >= 5);   // the fixture really did declare MM everywhere
+    BoardIR in = import_board_set(files, builtin_stackup("default-2layer"));
+
+    REQUIRE(in.segments.size() == mm.segments.size());
+    REQUIRE(!in.segments.empty());
+    CHECK_THAT(in.bbox_x2 - in.bbox_x1,
+               WithinAbs((mm.bbox_x2 - mm.bbox_x1) * 25.4, 1e-6));
+    CHECK_THAT(in.segments[0].width,
+               WithinAbs(mm.segments[0].width * 25.4, 1e-9));
+    // CMP x/y are coordinates like any other and were read RAW — a component
+    // that did not move when the unit changed is the bug this pins
+    REQUIRE(in.components.size() == mm.components.size());
+    REQUIRE(!mm.components.empty());
+    CHECK_THAT(in.components[0].x, WithinAbs(mm.components[0].x * 25.4, 1e-6));
+    CHECK_THAT(in.components[0].y, WithinAbs(mm.components[0].y * 25.4, 1e-6));
 }
 
 TEST_CASE("odb: an unsupported copper symbol throws, never guesses a width",
