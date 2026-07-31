@@ -1362,3 +1362,50 @@ TEST_CASE("franz mesh: pad area resolves single-pad drains and D2PAKs",
     CHECK(p2 == std::set<std::string>{"SW", "GND"});
     CHECK(!g.conduction("Q9").has_value());   // SOT-23 equal pads: refuse
 }
+
+// A low-side current-sense shunt sits INSIDE the hot loop (the reason
+// Kelvin sensing exists): the low FET's source lands on a small sense net,
+// then the shunt to ground. The mesh must include the shunt — including a
+// 4-terminal Kelvin part, whose current path is its two LARGE pads.
+TEST_CASE("franz mesh: a Kelvin shunt is bridged into the half-bridge mesh",
+          "[screener][franz][mesh]") {
+    std::string t = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SW") (net 2 "GND") (net 3 "VIN") (net 4 "G1")
+      (net 5 "G2") (net 6 "SENSE") (net 7 "SP") (net 8 "SN")
+      (segment (start 5 5) (end 25 5) (width 1.0) (layer "F.Cu") (net 1))
+      (zone (net 2) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu")
+          (pts (xy 0 0) (xy 60 0) (xy 60 40) (xy 0 40))))
+      (footprint "hs" (layer "F.Cu") (at 10 5)
+        (property "Reference" "Q1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SW"))
+        (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net 1 "SW"))
+        (pad "3" smd rect (at 2 0) (size 0.5 0.5) (layers "F.Cu") (net 4 "G1"))
+        (pad "4" smd rect (at 1 2) (size 4 3) (layers "F.Cu") (net 3 "VIN")))
+      (footprint "ls" (layer "F.Cu") (at 20 5)
+        (property "Reference" "Q2")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SW"))
+        (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net 1 "SW"))
+        (pad "3" smd rect (at 2 0) (size 0.5 0.5) (layers "F.Cu") (net 5 "G2"))
+        (pad "4" smd rect (at 1 2) (size 4 3) (layers "F.Cu") (net 6 "SENSE")))
+      (footprint "shunt4" (layer "F.Cu") (at 20 12)
+        (property "Reference" "R9")
+        (pad "1" smd rect (at 0 0) (size 2 3) (layers "F.Cu") (net 6 "SENSE"))
+        (pad "2" smd rect (at 3 0) (size 2 3) (layers "F.Cu") (net 2 "GND"))
+        (pad "3" smd rect (at 0.5 2) (size 0.4 0.4) (layers "F.Cu") (net 7 "SP"))
+        (pad "4" smd rect (at 2.5 2) (size 0.4 0.4) (layers "F.Cu") (net 8 "SN")))
+      (footprint "cin" (layer "F.Cu") (at 8 10)
+        (property "Reference" "C3")
+        (pad "1" smd rect (at 0 0) (size 1.2 1) (layers "F.Cu") (net 3 "VIN"))
+        (pad "2" smd rect (at 1.8 0) (size 1.2 1) (layers "F.Cu") (net 2 "GND")))
+    ))";
+    BoardIR b = import_kicad(t, builtin_stackup("default-2layer"));
+    int sw = -1;
+    for (const auto& n : b.nets)
+        if (n.name == "SW") sw = n.id;
+    auto m = mesh::derive(b, sw, "Q");
+    REQUIRE(m.has_value());
+    std::set<std::string> got(m->members.begin(), m->members.end());
+    CHECK(got == std::set<std::string>{"Q1", "Q2", "R9", "C3"});
+}

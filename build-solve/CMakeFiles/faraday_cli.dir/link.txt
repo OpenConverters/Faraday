@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/faraday_cli.dir/tools/faraday_cli.cpp.o -o faraday_cli

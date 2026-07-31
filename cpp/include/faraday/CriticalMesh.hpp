@@ -74,6 +74,11 @@ struct Graph {
     // centroid per component, for compactness tie-breaks
     std::map<std::string, Point> pos;
 
+    // net owning the pad NAMED "1" — the JEDEC control terminal of 3-lead
+    // transistor packages (TO-220/TO-247/DPAK/SOT-223: gate or base is
+    // pin 1). Only meaningful when pin names survived the import.
+    std::map<std::string, int> pin1;
+
     explicit Graph(const BoardIR& b) {
         std::map<std::string, Point> sum;
         std::map<std::string, int> cnt;
@@ -83,6 +88,7 @@ struct Graph {
                 comp[p.component][p.net]++;
                 area[p.component][p.net] += std::max(p.w * p.h, 0.01);
                 net[p.net].insert(p.component);
+                if (p.pin == "1") pin1[p.component] = p.net;
             }
             sum[p.component].x += p.x;
             sum[p.component].y += p.y;
@@ -125,18 +131,40 @@ struct Graph {
             (k == 1 ? one : multi).push_back(n);
         if (one.size() == 1 && multi.size() == 2)
             return std::make_pair(multi[0], multi[1]);
+        // d) area tie-break failed but the pads carry PIN NAMES and the
+        //    device has exactly three nets: pin 1 is the control terminal
+        //    of every JEDEC 3-lead transistor package (TO-220/TO-247/
+        //    DPAK/SOT-223 — gate or base), so the other two nets are the
+        //    path. This is what derives through-hole TO-220 converters
+        //    (mppt-2420-hc), whose three equal pads defeat the area test.
+        auto by_pin1 = [&]() -> std::optional<std::pair<int, int>> {
+            if (it->second.size() != 3) return std::nullopt;
+            auto p1 = pin1.find(ref);
+            if (p1 == pin1.end()) return std::nullopt;
+            std::vector<int> path;
+            for (const auto& [n, k] : it->second)
+                if (n != p1->second) path.push_back(n);
+            if (path.size() != 2) return std::nullopt;
+            // power packages only: a TO-220/SOT-223 lead pad is >= 2 mm^2,
+            // a SOT-23 small-signal's ~0.6 mm^2 — without this floor every
+            // 3-pin transistor with numbered pins would "infer", and the
+            // PoE board's gate-drive SOT-23s hijacked the mesh
+            if (ar.at(path[0]) < 2.0 || ar.at(path[1]) < 2.0)
+                return std::nullopt;
+            return std::make_pair(path[0], path[1]);
+        };
         if (one.size() == 2 && multi.size() == 1) {
             const double a0 = ar.at(one[0]), a1 = ar.at(one[1]);
             const int big = a0 > a1 ? one[0] : one[1];
             if (std::max(a0, a1) < 3.0 * std::min(a0, a1))
-                return std::nullopt;
+                return by_pin1();
             return std::make_pair(multi[0], big);
         }
         if (one.size() == 3 && multi.empty()) {
             std::vector<std::pair<double, int>> byarea;
             for (int n : one) byarea.push_back({ar.at(n), n});
             std::sort(byarea.begin(), byarea.end());
-            if (byarea[1].first < 3.0 * byarea[0].first) return std::nullopt;
+            if (byarea[1].first < 3.0 * byarea[0].first) return by_pin1();
             return std::make_pair(byarea[1].second, byarea[2].second);
         }
         return std::nullopt;
@@ -219,26 +247,84 @@ inline std::optional<DerivedMesh> derive(const BoardIR& b, int sw_net,
                      [](const Dev& a, const Dev& b) {
                          return a.is_switch > b.is_switch;
                      });
+    // the switch = the LARGEST switching device on the node (total pad
+    // area): the power FET, never a gate-drive small-signal that happened
+    // to infer. Map/set ordering must never decide a mesh.
     const Dev* sw = nullptr;
+    auto total_area = [&](const std::string& ref) {
+        double a = 0;
+        for (const auto& [n, v] : g.area.at(ref)) a += v;
+        return a;
+    };
     for (const auto& d : devs)
-        if (d.is_switch && (!sw || g.comp.at(d.ref).size() <
-                                       g.comp.at(sw->ref).size()))
+        if (d.is_switch &&
+            (!sw || total_area(d.ref) > total_area(sw->ref)))
             sw = &d;
     if (!sw) return std::nullopt;
     const Point at = g.pos.count(sw->ref) ? g.pos.at(sw->ref) : Point{0, 0};
 
     // ---- shape A: a second conducting device + a chain between far rails --
-    for (const auto& d : devs) {
-        if (d.ref == sw->ref || d.far == sw->far) continue;
-        auto chain = detail::cap_chain(g, sw->far, d.far, at);
-        if (!chain || chain->empty()) continue;
-        DerivedMesh m;
-        m.shape = "two-device";
-        m.sw_ref = sw->ref;
-        m.members = {sw->ref, d.ref};
-        m.members.insert(m.members.end(), chain->begin(), chain->end());
-        m.chain = *chain;
-        return m;
+    // A far rail may reach the chain through a CURRENT-SENSE SHUNT: on a
+    // three-phase drive the low FET's source often lands on a small Kelvin
+    // net, then one (or several parallel) shunt resistors to ground — and
+    // those shunts are INSIDE the hot loop, which is exactly why Kelvin
+    // sensing exists. Guarded: the bridged net must be SMALL (a sense net,
+    // <= 6 members), and a direct capacitor chain always wins first.
+    auto shunt_bridges = [&](int far)
+        -> std::vector<std::pair<std::vector<std::string>, int>> {
+        std::vector<std::pair<std::vector<std::string>, int>> out;
+        auto it = g.net.find(far);
+        if (it == g.net.end() || it->second.size() > 6) return out;
+        std::map<int, std::vector<std::string>> by_dest;
+        for (const auto& rr : it->second) {
+            if (detail::prefix(rr) != "R") continue;
+            const auto& nets = g.comp.at(rr);
+            if (nets.size() < 2 || nets.size() > 4) continue;
+            // the shunt's current path = its LARGEST-pad other net. A
+            // 4-terminal Kelvin shunt has two big current pads and two
+            // small sense pads; a plain 2-terminal R has one choice.
+            int dest = -1;
+            double best_a = 0;
+            for (const auto& [n, k] : nets) {
+                if (n == far) continue;
+                const double a = g.area.at(rr).at(n);
+                if (a > best_a) { best_a = a; dest = n; }
+            }
+            if (dest >= 0 && dest != sw_net) by_dest[dest].push_back(rr);
+        }
+        for (auto& [dest, rs] : by_dest) out.push_back({rs, dest});
+        return out;
+    };
+    for (int pass = 0; pass < 2; ++pass) {
+        for (const auto& d : devs) {
+            if (d.ref == sw->ref || d.far == sw->far) continue;
+            const int far_a = sw->far, far_b = d.far;
+            // candidate (extra-members, far_a, far_b) triples: the direct
+            // pair on pass 0; every shunt-bridged variant on pass 1
+            std::vector<std::tuple<std::vector<std::string>, int, int>> cands;
+            if (pass == 0) {
+                cands.push_back({{}, far_a, far_b});
+            } else {
+                for (auto& [rs, dest] : shunt_bridges(far_b))
+                    cands.push_back({rs, far_a, dest});
+                for (auto& [rs, dest] : shunt_bridges(far_a))
+                    cands.push_back({rs, dest, far_b});
+            }
+            for (auto& [ex, fa, fb] : cands) {
+                auto chain = detail::cap_chain(g, fa, fb, at);
+                if (!chain || chain->empty()) continue;
+                DerivedMesh m;
+                m.shape = "two-device";
+                m.sw_ref = sw->ref;
+                m.members = {sw->ref, d.ref};
+                m.members.insert(m.members.end(), ex.begin(), ex.end());
+                m.members.insert(m.members.end(), chain->begin(),
+                                 chain->end());
+                m.chain = *chain;
+                return m;
+            }
+            continue;
+        }
     }
 
     // ---- shape B: winding on the node + clamp path -----------------------

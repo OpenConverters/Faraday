@@ -1,1 +1,0 @@
-/usr/bin/c++ -O3 -DNDEBUG CMakeFiles/faraday_spice.dir/tools/faraday_spice.cpp.o -o faraday_spice  /home/alf/OpenConverters/Kirchhoff/build-latest/libkirchhoff.a /usr/lib/x86_64-linux-gnu/libngspice.so

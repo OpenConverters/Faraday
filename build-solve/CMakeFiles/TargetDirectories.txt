@@ -1,7 +1,0 @@
-/home/alf/OpenConverters/Faraday/build-solve/CMakeFiles/faraday_cli.dir
-/home/alf/OpenConverters/Faraday/build-solve/CMakeFiles/faraday_solve.dir
-/home/alf/OpenConverters/Faraday/build-solve/CMakeFiles/faraday_spice.dir
-/home/alf/OpenConverters/Faraday/build-solve/CMakeFiles/edit_cache.dir
-/home/alf/OpenConverters/Faraday/build-solve/CMakeFiles/rebuild_cache.dir
-/home/alf/OpenConverters/Faraday/build-solve/_deps/json-build/CMakeFiles/edit_cache.dir
-/home/alf/OpenConverters/Faraday/build-solve/_deps/json-build/CMakeFiles/rebuild_cache.dir

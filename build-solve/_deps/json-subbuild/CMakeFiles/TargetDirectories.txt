@@ -1,3 +1,0 @@
-/home/alf/OpenConverters/Faraday/build-solve/_deps/json-subbuild/CMakeFiles/json-populate.dir
-/home/alf/OpenConverters/Faraday/build-solve/_deps/json-subbuild/CMakeFiles/edit_cache.dir
-/home/alf/OpenConverters/Faraday/build-solve/_deps/json-subbuild/CMakeFiles/rebuild_cache.dir
