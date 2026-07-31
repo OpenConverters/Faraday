@@ -1,0 +1,208 @@
+- generic [active] [ref=f11e1]:
+  - banner [ref=f11e2]:
+    - link "Close" [ref=f11e6] [cursor=pointer]:
+      - /url: "#"
+    - generic [ref=f11e8]:
+      - link "Skip to main content" [ref=f11e10] [cursor=pointer]:
+        - /url: "#"
+      - generic [ref=f11e11]:
+        - link "Home" [ref=f11e12] [cursor=pointer]:
+          - /url: //www.ti.com
+          - img "Texas Instruments" [ref=f11e13]
+        - generic [ref=f11e14]:
+          - generic [ref=f11e20]:
+            - generic:
+              - generic:
+                - status
+                - status
+              - generic [ref=f11e22]:
+                - combobox "Enter a query with minimum of 2 character(s) to enable search." [ref=f11e24]
+                - button "Search" [disabled] [ref=f11e25]
+          - link "Cross-reference" [ref=f11e27] [cursor=pointer]:
+            - /url: //www.ti.com/cross-reference-search/en-us/
+            - generic [ref=f11e28]: crossReference
+        - generic [ref=f11e33]:
+          - link "Login / Register" [ref=f11e36] [cursor=pointer]:
+            - /url: /secure-link-forward/?gotoUrl=https%3A%2F%2Fwww.ti.com%2Ftool%2FLM5122EVM-1PH
+          - generic:
+            - generic: OK
+            - generic:
+              - option "English" [selected]
+              - option "简体中文"
+              - option "繁體中文"
+              - option "Deutsch"
+              - option "日本語"
+              - option "한국어"
+              - option "Español"
+              - option "USD" [selected]
+            - generic:
+              - generic: Save
+              - generic: Cancel
+    - navigation "Primary" [ref=f11e37]:
+      - menubar [ref=f11e38]:
+        - button "Menu" [ref=f11e39] [cursor=pointer]
+        - menuitem "Language" [ref=f11e41] [cursor=pointer]
+        - menuitem "My cart" [ref=f11e43] [cursor=pointer]
+  - main [ref=f11e45]:
+    - generic [ref=f11e47]:
+      - generic [ref=f11e51]:
+        - link "Home" [ref=f11e53] [cursor=pointer]:
+          - /url: /
+        - generic [ref=f11e54]:
+          - text: /
+          - link "Design & development" [ref=f11e55] [cursor=pointer]:
+            - /url: /design-development/overview.html
+      - generic [ref=f11e56]:
+        - generic [ref=f11e57]:
+          - heading "LM5122EVM-1PH" [level=1] [ref=f11e58]
+          - heading "LM5122EVM-1PH Wide Vin Synchronous Boost Controller Evaluation Module" [level=2] [ref=f11e59]
+        - link "Order now" [ref=f11e63] [cursor=pointer]:
+          - /url: "#order-start-development"
+    - navigation [ref=f11e72]:
+      - list [ref=f11e73]:
+        - listitem [ref=f11e74]:
+          - link "Overview" [ref=f11e75] [cursor=pointer]:
+            - /url: "#overview"
+        - listitem [ref=f11e76]:
+          - link "Order & start development" [ref=f11e77] [cursor=pointer]:
+            - /url: "#order-start-development"
+        - listitem [ref=f11e78]:
+          - link "Technical documentation" [ref=f11e79] [cursor=pointer]:
+            - /url: "#tech-docs"
+        - listitem [ref=f11e80]:
+          - link "Support & training" [ref=f11e81] [cursor=pointer]:
+            - /url: "#support-training"
+    - generic [ref=f11e84]:
+      - heading "Overview" [level=3] [ref=f11e85]
+      - generic [ref=f11e87]:
+        - generic [ref=f11e90]:
+          - tablist [ref=f11e92]:
+            - tab "Description & features" [selected] [ref=f11e93] [cursor=pointer]
+            - tab "Supported products" [ref=f11e94] [cursor=pointer]
+          - tabpanel "Description & features" [ref=f11e96]:
+            - generic [ref=f11e104]:
+              - paragraph [ref=f11e105]: The LM5122EVM-1PH evaluation module (EVM) provides the design engineer with a fully functional synchronous boost converter to evaluate the Texas Instruments LM5122 synchronous boost controller IC. The EVM provides 24V output at up to 4.5A current from a 9V to 20V input. The EVM is designed to start up from a single power supply without any additional bias voltage.
+              - heading "Features" [level=5] [ref=f11e106]
+              - list [ref=f11e108]:
+                - listitem [ref=f11e109]: 9V to 20V Input Range
+                - listitem [ref=f11e110]: 24V/4.5A output
+                - listitem [ref=f11e111]: 250kHz switching frequency
+                - listitem [ref=f11e112]: Selectable light load switching mode
+                - listitem [ref=f11e113]: Easy accessible test points
+        - generic [ref=f11e116]:
+          - figure "test" [ref=f11e117]:
+            - button "Navigate images with the arrow keys, or click to zoom the image" [ref=f11e118]
+            - generic [ref=f11e131]: Image 1 of 3
+          - generic [ref=f11e132]:
+            - img "LM5122EVM-1PH - LM5122 Wide Vin Synchronous Boost Controller Evaluation Module (angled board image)" [ref=f11e136] [cursor=pointer]
+            - img "LM5122EVM-1PH - LM5122 Wide Vin Synchronous Boost Controller Evaluation Module (top board image)" [ref=f11e140] [cursor=pointer]
+            - img "LM5122EVM-1PH - LM5122 Wide Vin Synchronous Boost Controller Evaluation Module (bottom board image)" [ref=f11e144] [cursor=pointer]
+    - generic [ref=f11e147]:
+      - heading "Order & start development" [level=3] [ref=f11e148]
+      - generic [ref=f11e150]:
+        - generic [ref=f11e153]:
+          - img "Image for LM5122EVM-1PH" [ref=f11e158]
+          - generic [ref=f11e160]:
+            - generic [ref=f11e161]: Evaluation board
+            - heading "LM5122EVM-1PH — LM5122 Wide Vin Synchronous Boost Controller Evaluation Module" [level=4] [ref=f11e162]
+          - generic [ref=f11e164]:
+            - generic [ref=f11e167]:
+              - link "Log in to order" [ref=f11e169] [cursor=pointer]:
+                - /url: /secure-link-forward/?gotoUrl=https%3A%2F%2Fwww.ti.com%2Ftool%2FLM5122EVM-1PH
+              - generic [ref=f11e170]: $108.90 (USD)
+              - link "Log in to view inventory" [ref=f11e172] [cursor=pointer]:
+                - /url: /secure-link-forward/?gotoUrl=https%3A%2F%2Fwww.ti.com%2Ftool%2FLM5122EVM-1PH
+                - generic [ref=f11e173]: lock
+            - button [ref=f11e180]:
+              - generic:
+                - generic [ref=f11e181]: alarm
+                - text: Part notifications
+        - generic [ref=f11e188]:
+          - img "Image for Calculation tool" [ref=f11e193]
+          - generic [ref=f11e194]:
+            - generic [ref=f11e195]:
+              - generic [ref=f11e196]: Calculation tool
+              - heading "LM5122-BOOST-CALC — LM5122 quick start calculator" [level=4] [ref=f11e197]
+            - button "Supported products & hardware" [ref=f11e200]
+          - link "Download options" [ref=f11e204] [cursor=pointer]:
+            - /url: /tool/download/LM5122-BOOST-CALC
+      - link "TI's Standard Terms and Conditions for Evaluation Items apply." [ref=f11e207] [cursor=pointer]:
+        - /url: /legal/terms-of-sale.html
+    - generic [ref=f11e210]:
+      - heading "Technical documentation" [level=3] [ref=f11e211]
+      - generic [ref=f11e212]:
+        - generic [ref=f11e214]:
+          - generic [ref=f11e215]: star
+          - generic [ref=f11e218]:
+            - text: =
+            - emphasis [ref=f11e219]: Top documentation selected by TI
+        - table [ref=f11e221]:
+          - rowgroup [ref=f11e227]:
+            - row [ref=f11e228]:
+              - columnheader "Top documentation" [ref=f11e229]
+              - columnheader "Type" [ref=f11e231]
+              - columnheader "Title" [ref=f11e233]
+              - columnheader "Format options" [ref=f11e235]
+            - row "filter results" [ref=f11e237]:
+              - cell [ref=f11e238]
+              - cell [ref=f11e239]:
+                - combobox [ref=f11e241] [cursor=pointer]:
+                  - option "All" [selected]
+                  - option "Certificate"
+                  - option "EVM User's guide"
+              - cell [ref=f11e242]:
+                - generic [ref=f11e244]:
+                  - textbox "Filter title by keyword" [ref=f11e245]
+                  - button "Search" [ref=f11e247] [cursor=pointer]:
+                    - generic [ref=f11e248]: search
+              - cell [ref=f11e251]
+          - rowgroup [ref=f11e252]:
+            - row [ref=f11e253]:
+              - cell "Yes" [ref=f11e254]:
+                - generic [ref=f11e256]: star
+              - cell "EVM User's guide" [ref=f11e259]
+              - cell [ref=f11e260]:
+                - link "LM5122EVM-1PH User's Guide" [ref=f11e261] [cursor=pointer]:
+                  - /url: https://www.ti.com/lit/pdf/SNVU197
+              - cell [ref=f11e262]
+            - row [ref=f11e263]:
+              - cell "No" [ref=f11e264]
+              - cell "Certificate" [ref=f11e266]
+              - cell [ref=f11e267]:
+                - link "LM5122EVM-1PH EU Declaration of Conformity (DoC)" [ref=f11e268] [cursor=pointer]:
+                  - /url: https://www.ti.com/lit/pdf/SSZQE59
+              - cell [ref=f11e269]
+    - generic [ref=f11e271]:
+      - heading "Support & training" [level=3] [ref=f11e274]
+      - article [ref=f11e275]:
+        - generic [ref=f11e277]:
+          - heading "TI E2E™ forums with technical support from TI engineers" [level=4] [ref=f11e278]
+          - progressbar "Progress... Please wait" [ref=f11e284]
+          - link "View all forum topics" [ref=f11e289] [cursor=pointer]:
+            - /url: https://e2e.ti.com/search?category=forum&q=LM5122EVM-1PH
+          - paragraph [ref=f11e290]:
+            - generic [ref=f11e291]:
+              - text: Content is provided "as is" by TI and community contributors and does not constitute TI specifications. See
+              - link "terms of use" [ref=f11e292] [cursor=pointer]:
+                - /url: /legal/terms-of-use.html
+              - text: .
+          - paragraph [ref=f11e293]:
+            - text: If you have questions about quality, packaging or ordering TI products, see
+            - link "TI support" [ref=f11e294] [cursor=pointer]:
+              - /url: /guidedsupport/call-ti-support/#popularlinks
+            - text: .
+      - article [ref=f11e295]:
+        - progressbar "Progress... Please wait" [ref=f11e303]
+      - article [ref=f11e306]:
+        - progressbar "Progress... Please wait" [ref=f11e311]
+  - generic [ref=f11e317]:
+    - generic [ref=f11e320]:
+      - text: Los sitios web de TI utilizan cookies para optimizar la funcionalidad del sitio y mejorar su experiencia. Para obtener más información o cambiar sus preferencias, visite nuestra página acerca de la
+      - link "política de cookies" [ref=f11e321] [cursor=pointer]:
+        - /url: https://www.ti.com/legal/terms-conditions/cookie-policy/north-america.html?dnt=1
+      - text: . Haga clic en Aceptar y continuar para aceptar las cookies y acceder al sitio.
+    - generic [ref=f11e322]:
+      - link "Administrar preferencias" [ref=f11e323] [cursor=pointer]:
+        - /url: javascript:void(0)
+      - link "Aceptar y continuar" [ref=f11e324] [cursor=pointer]:
+        - /url: javascript:void(0)

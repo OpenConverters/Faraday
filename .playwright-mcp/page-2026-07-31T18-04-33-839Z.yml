@@ -1,0 +1,211 @@
+- generic [active] [ref=f5e1]:
+  - banner [ref=f5e2]:
+    - link "Close" [ref=f5e6] [cursor=pointer]:
+      - /url: "#"
+    - generic [ref=f5e8]:
+      - link "Skip to main content" [ref=f5e10] [cursor=pointer]:
+        - /url: "#"
+      - generic [ref=f5e11]:
+        - link "Home" [ref=f5e12] [cursor=pointer]:
+          - /url: //www.ti.com
+          - img "Texas Instruments" [ref=f5e13]
+        - link "Cross-reference" [ref=f5e20] [cursor=pointer]:
+          - /url: //www.ti.com/cross-reference-search/en-us/
+          - generic [ref=f5e21]: crossReference
+        - generic [ref=f5e26]:
+          - link "Login / Register" [ref=f5e29] [cursor=pointer]:
+            - /url: /secure-link-forward/?gotoUrl=https%3A%2F%2Fwww.ti.com%2Ftool%2FLM5177EVM-HP
+          - generic:
+            - generic: OK
+            - generic:
+              - option "English" [selected]
+              - option "简体中文"
+              - option "繁體中文"
+              - option "Deutsch"
+              - option "日本語"
+              - option "한국어"
+              - option "Español"
+              - option "USD" [selected]
+            - generic:
+              - generic: Save
+              - generic: Cancel
+    - navigation "Primary" [ref=f5e30]:
+      - menubar [ref=f5e31]:
+        - button "Menu" [ref=f5e32] [cursor=pointer]
+        - menuitem "Language" [ref=f5e34] [cursor=pointer]
+        - menuitem "My cart" [ref=f5e36] [cursor=pointer]
+  - main [ref=f5e38]:
+    - generic [ref=f5e40]:
+      - generic [ref=f5e44]:
+        - link "Home" [ref=f5e46] [cursor=pointer]:
+          - /url: /
+        - generic [ref=f5e47]:
+          - text: /
+          - link "Design & development" [ref=f5e48] [cursor=pointer]:
+            - /url: /design-development/overview.html
+      - generic [ref=f5e49]:
+        - generic [ref=f5e50]:
+          - heading "LM5177EVM-HP" [level=1] [ref=f5e51]
+          - heading "LM5177 evaluation module with four switch buck-boost controller" [level=2] [ref=f5e52]
+        - link "Order now" [ref=f5e56] [cursor=pointer]:
+          - /url: "#order-start-development"
+    - navigation [ref=f5e65]:
+      - list [ref=f5e66]:
+        - listitem [ref=f5e67]:
+          - link "Overview" [ref=f5e68] [cursor=pointer]:
+            - /url: "#overview"
+        - listitem [ref=f5e69]:
+          - link "Order & start development" [ref=f5e70] [cursor=pointer]:
+            - /url: "#order-start-development"
+        - listitem [ref=f5e71]:
+          - link "Design files" [ref=f5e72] [cursor=pointer]:
+            - /url: "#design-files"
+        - listitem [ref=f5e73]:
+          - link "Technical documentation" [ref=f5e74] [cursor=pointer]:
+            - /url: "#tech-docs"
+        - listitem [ref=f5e75]:
+          - link "Support & training" [ref=f5e76] [cursor=pointer]:
+            - /url: "#support-training"
+    - generic [ref=f5e79]:
+      - heading "Overview" [level=3] [ref=f5e80]
+      - generic [ref=f5e82]:
+        - generic [ref=f5e85]:
+          - tablist [ref=f5e87]:
+            - tab "Description & features" [selected] [ref=f5e88] [cursor=pointer]
+            - tab "Supported products" [ref=f5e89] [cursor=pointer]
+          - tabpanel "Description & features" [ref=f5e91]:
+            - generic [ref=f5e99]:
+              - paragraph [ref=f5e100]: The LM5177EVM-HP demonstrates a flexible high power buck-boost design using the LM5177 wide-vin buck-boost controller. The evaluation module is configured to operate from input voltage range of 4.2 V to 36 V and provide a regulated 16-V output with up to 9.4 A of load current.
+              - heading "Features" [level=5] [ref=f5e101]
+              - list [ref=f5e103]:
+                - listitem [ref=f5e104]: 4.2 V to 36 V input voltage range
+                - listitem [ref=f5e105]: 16 V with up to 9.4 A (150 W) output voltage
+                - listitem [ref=f5e106]: High efficiency synchronous buck-boost conversion
+                - listitem [ref=f5e107]: Easy access to configuration features
+                - listitem [ref=f5e108]: Flexible design using standard 5 mm x 6 mm FETs
+        - generic [ref=f5e111]:
+          - figure "test" [ref=f5e112]:
+            - button "Navigate images with the arrow keys, or click to zoom the image" [ref=f5e113]
+            - generic [ref=f5e126]: Image 1 of 3
+          - generic [ref=f5e127]:
+            - img "LM5177EVM-HP - LM5177 evaluation module with four switch buck-boost controller (angled board image)" [ref=f5e131] [cursor=pointer]
+            - img "LM5177EVM-HP - LM5177 evaluation module with four switch buck-boost controller (top board image)" [ref=f5e135] [cursor=pointer]
+            - img "LM5177EVM-HP - LM5177 evaluation module with four switch buck-boost controller (bottom board image)" [ref=f5e139] [cursor=pointer]
+    - generic [ref=f5e142]:
+      - heading "Order & start development" [level=3] [ref=f5e143]
+      - generic [ref=f5e145]:
+        - generic [ref=f5e148]:
+          - img "Image for LM5177EVM-HP" [ref=f5e153]
+          - generic [ref=f5e155]:
+            - generic [ref=f5e156]: Evaluation board
+            - heading "LM5177EVM-HP — LM5177 evaluation module with four switch buck-boost controller" [level=4] [ref=f5e157]
+          - generic [ref=f5e159]:
+            - progressbar "Progress... Please wait" [ref=f5e164]
+            - button [ref=f5e169]:
+              - generic:
+                - generic [ref=f5e170]: alarm
+                - text: Part notifications
+            - button "Add sample to cart" [ref=f5e178]
+        - generic [ref=f5e181]:
+          - img "Image for Calculation tool" [ref=f5e186]
+          - generic [ref=f5e187]:
+            - generic [ref=f5e188]:
+              - generic [ref=f5e189]: Calculation tool
+              - heading "SNVR519 — LM5177 BuckBoost Quickstart Calculator Tool" [level=4] [ref=f5e190]
+            - button "Supported products & hardware" [ref=f5e193]
+          - generic [ref=f5e195]:
+            - link "Download options" [ref=f5e197] [cursor=pointer]:
+              - /url: /tool/download/SNVR519
+            - button "Add sample to cart" [ref=f5e203]
+      - link "TI's Standard Terms and Conditions for Evaluation Items apply." [ref=f5e204] [cursor=pointer]:
+        - /url: /legal/terms-of-sale.html
+    - generic [ref=f5e207]:
+      - heading "Design files" [level=3] [ref=f5e208]
+      - generic [ref=f5e212]:
+        - link "LM5177EVM-HP PCB Layout (Rev. A)" [ref=f5e214] [cursor=pointer]:
+          - /url: https://www.ti.com/lit/zip/SNVR526
+          - generic [ref=f5e215]: download
+        - generic [ref=f5e221]: SNVR526A.ZIP (1767 KB)
+    - generic [ref=f5e224]:
+      - heading "Technical documentation" [level=3] [ref=f5e225]
+      - generic [ref=f5e226]:
+        - generic [ref=f5e228]:
+          - generic [ref=f5e229]: star
+          - generic [ref=f5e232]:
+            - text: =
+            - emphasis [ref=f5e233]: Top documentation selected by TI
+        - table [ref=f5e235]:
+          - rowgroup [ref=f5e241]:
+            - row [ref=f5e242]:
+              - columnheader "Top documentation" [ref=f5e243]
+              - columnheader "Type" [ref=f5e245]
+              - columnheader "Title" [ref=f5e247]
+              - columnheader "Format options" [ref=f5e249]
+            - row "filter results" [ref=f5e251]:
+              - cell [ref=f5e252]
+              - cell [ref=f5e253]:
+                - combobox [ref=f5e255] [cursor=pointer]:
+                  - option "All" [selected]
+                  - option "Certificate"
+                  - option "EVM User's guide"
+              - cell [ref=f5e256]:
+                - generic [ref=f5e258]:
+                  - textbox "Filter title by keyword" [ref=f5e259]
+                  - button "Search" [ref=f5e261] [cursor=pointer]:
+                    - generic [ref=f5e262]: search
+              - cell [ref=f5e265]
+          - rowgroup [ref=f5e266]:
+            - row [ref=f5e267]:
+              - cell "Yes" [ref=f5e268]:
+                - generic [ref=f5e270]: star
+              - cell "EVM User's guide" [ref=f5e273]
+              - cell [ref=f5e274]:
+                - link "LM5177 Buck-Boost Controller Evaluation Module User's Guide (Rev. D)" [ref=f5e275] [cursor=pointer]:
+                  - /url: https://www.ti.com/lit/pdf/SNVU797
+              - cell [ref=f5e276]:
+                - link "PDF" [ref=f5e277] [cursor=pointer]:
+                  - /url: https://www.ti.com/lit/pdf/snvu797
+                - text: "|"
+                - link "HTML" [ref=f5e278] [cursor=pointer]:
+                  - /url: https://www.ti.com/document-viewer/lit/html/snvu797
+            - row [ref=f5e279]:
+              - cell "No" [ref=f5e280]
+              - cell "Certificate" [ref=f5e282]
+              - cell [ref=f5e283]:
+                - link "LM5177EVM-HP EU RoHS Declaration of Conformity (DoC)" [ref=f5e284] [cursor=pointer]:
+                  - /url: https://www.ti.com/lit/pdf/SSZQPN6
+              - cell [ref=f5e285]
+    - generic [ref=f5e287]:
+      - heading "Support & training" [level=3] [ref=f5e290]
+      - article [ref=f5e291]:
+        - generic [ref=f5e293]:
+          - heading "TI E2E™ forums with technical support from TI engineers" [level=4] [ref=f5e294]
+          - progressbar "Progress... Please wait" [ref=f5e300]
+          - link "View all forum topics" [ref=f5e305] [cursor=pointer]:
+            - /url: https://e2e.ti.com/search?category=forum&q=LM5177EVM-HP
+          - paragraph [ref=f5e306]:
+            - generic [ref=f5e307]:
+              - text: Content is provided "as is" by TI and community contributors and does not constitute TI specifications. See
+              - link "terms of use" [ref=f5e308] [cursor=pointer]:
+                - /url: /legal/terms-of-use.html
+              - text: .
+          - paragraph [ref=f5e309]:
+            - text: If you have questions about quality, packaging or ordering TI products, see
+            - link "TI support" [ref=f5e310] [cursor=pointer]:
+              - /url: /guidedsupport/call-ti-support/#popularlinks
+            - text: .
+      - article [ref=f5e311]:
+        - progressbar "Progress... Please wait" [ref=f5e319]
+      - article [ref=f5e322]:
+        - progressbar "Progress... Please wait" [ref=f5e327]
+  - generic [ref=f5e333]:
+    - generic [ref=f5e336]:
+      - text: Los sitios web de TI utilizan cookies para optimizar la funcionalidad del sitio y mejorar su experiencia. Para obtener más información o cambiar sus preferencias, visite nuestra página acerca de la
+      - link "política de cookies" [ref=f5e337] [cursor=pointer]:
+        - /url: https://www.ti.com/legal/terms-conditions/cookie-policy/north-america.html?dnt=1
+      - text: . Haga clic en Aceptar y continuar para aceptar las cookies y acceder al sitio.
+    - generic [ref=f5e338]:
+      - link "Administrar preferencias" [ref=f5e339] [cursor=pointer]:
+        - /url: javascript:void(0)
+      - link "Aceptar y continuar" [ref=f5e340] [cursor=pointer]:
+        - /url: javascript:void(0)

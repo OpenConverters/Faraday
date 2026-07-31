@@ -111,3 +111,63 @@ TEST_CASE("real: LibreSolar MPPT 2420 HC (KiCad v5, power converter) imports and
     // CAN_H/CAN_L recognized as a differential pair, not a defect
     CHECK(report["meta"]["diffPairsRecognized"].get<int>() >= 1);
 }
+
+// ---------------------------------------------------------------------------
+// Tier-4 regression pins (ABT #422): human-reviewed derived critical meshes
+// on corpus boards. The corpus is FETCHED (scripts/fetch_corpus.py), not
+// committed, so these pin only when the board is present — a fetched corpus
+// that regresses must fail loudly, an absent corpus is not a failure.
+// ---------------------------------------------------------------------------
+
+static std::string corpus_path(const char* name) {
+    return std::string(FARADAY_FIXTURE_DIR) + "/../../../corpus/" + name;
+}
+
+TEST_CASE("corpus pin: mppt-2420-lc derives its sync buck mesh Q1+Q4+C4",
+          "[real][corpus-pin]") {
+    std::ifstream in(corpus_path("mppt-2420-lc.kicad_pcb"));
+    if (!in.good()) SKIP("corpus not fetched");
+    std::stringstream ss;
+    ss << in.rdbuf();
+    BoardIR b = import_kicad(ss.str(), builtin_stackup("default-2layer"));
+    Screener sc(b);
+    int sw = -1;
+    for (const auto& n : b.nets)
+        if (n.name == "/DCDC power stage/SW_NODE") sw = n.id;
+    REQUIRE(sw >= 0);
+    auto loop = sc.commutation_loop(sw);
+    REQUIRE(loop.has_value());
+    // reviewed 2026-07-31: both FETs of the synchronous buck + the input
+    // capacitor — the member set is the point, not the exact area
+    std::set<std::string> got(loop->members.begin(), loop->members.end());
+    CHECK(got == std::set<std::string>{"Q1", "Q4", "C4"});
+    CHECK(loop->shape == "two-device");
+    CHECK(loop->area_mm2 > 40.0);
+    CHECK(loop->area_mm2 < 110.0);
+}
+
+TEST_CASE("corpus pin: mppt-1210-hus derives Q1+Q4+C4; LOAD_S falls back",
+          "[real][corpus-pin]") {
+    std::ifstream in(corpus_path("mppt-1210-hus.kicad_pcb"));
+    if (!in.good()) SKIP("corpus not fetched");
+    std::stringstream ss;
+    ss << in.rdbuf();
+    BoardIR b = import_kicad(ss.str(), builtin_stackup("default-2layer"));
+    Screener sc(b);
+    int sw = -1, load = -1;
+    for (const auto& n : b.nets) {
+        if (n.name == "/DCDC power stage/SW_NODE") sw = n.id;
+        if (n.name == "LOAD_S") load = n.id;
+    }
+    REQUIRE(sw >= 0);
+    auto loop = sc.commutation_loop(sw);
+    REQUIRE(loop.has_value());
+    std::set<std::string> got(loop->members.begin(), loop->members.end());
+    CHECK(got == std::set<std::string>{"Q1", "Q4", "C4"});
+    // LOAD_S: a load switch whose only 'clamp' candidates are dividers —
+    // the derived trace must REFUSE (R+R rule) and fall back to geometry
+    if (load >= 0) {
+        auto ll = sc.commutation_loop(load);
+        if (ll) CHECK(ll->members.empty());   // geometric fallback, not R+R
+    }
+}

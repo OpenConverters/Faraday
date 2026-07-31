@@ -1,0 +1,228 @@
+- generic [active] [ref=f20e1]:
+  - banner [ref=f20e2]:
+    - link "Close" [ref=f20e6] [cursor=pointer]:
+      - /url: "#"
+    - generic [ref=f20e8]:
+      - link "Skip to main content" [ref=f20e10] [cursor=pointer]:
+        - /url: "#"
+      - generic [ref=f20e11]:
+        - link "Home" [ref=f20e12] [cursor=pointer]:
+          - /url: //www.ti.com
+          - img "Texas Instruments" [ref=f20e13]
+        - generic [ref=f20e14]:
+          - generic [ref=f20e20]:
+            - generic:
+              - generic:
+                - status
+                - status
+              - generic [ref=f20e22]:
+                - combobox "Enter a query with minimum of 2 character(s) to enable search." [ref=f20e24]
+                - button "Search" [disabled] [ref=f20e25]
+          - link "Cross-reference" [ref=f20e27] [cursor=pointer]:
+            - /url: //www.ti.com/cross-reference-search/en-us/
+            - generic [ref=f20e28]: crossReference
+        - generic [ref=f20e33]:
+          - link "Login / Register" [ref=f20e36] [cursor=pointer]:
+            - /url: /secure-link-forward/?gotoUrl=https%3A%2F%2Fwww.ti.com%2Ftool%2FLM5123EVM-BST
+          - generic:
+            - generic: OK
+            - generic:
+              - option "English" [selected]
+              - option "简体中文"
+              - option "繁體中文"
+              - option "Deutsch"
+              - option "日本語"
+              - option "한국어"
+              - option "Español"
+              - option "USD" [selected]
+            - generic:
+              - generic: Save
+              - generic: Cancel
+    - navigation "Primary" [ref=f20e37]:
+      - menubar [ref=f20e38]:
+        - button "Menu" [ref=f20e39] [cursor=pointer]
+        - menuitem "Language" [ref=f20e41] [cursor=pointer]
+        - menuitem "My cart" [ref=f20e43] [cursor=pointer]
+  - main [ref=f20e45]:
+    - generic [ref=f20e47]:
+      - generic [ref=f20e51]:
+        - link "Home" [ref=f20e53] [cursor=pointer]:
+          - /url: /
+        - generic [ref=f20e54]:
+          - text: /
+          - link "Design & development" [ref=f20e55] [cursor=pointer]:
+            - /url: /design-development/overview.html
+      - generic [ref=f20e56]:
+        - generic [ref=f20e57]:
+          - heading "LM5123EVM-BST" [level=1] [ref=f20e58]
+          - heading "LM5123 boost controller evaluation module" [level=2] [ref=f20e59]
+        - link "Order now" [ref=f20e63] [cursor=pointer]:
+          - /url: "#order-start-development"
+    - navigation [ref=f20e72]:
+      - list [ref=f20e73]:
+        - listitem [ref=f20e74]:
+          - link "Overview" [ref=f20e75] [cursor=pointer]:
+            - /url: "#overview"
+        - listitem [ref=f20e76]:
+          - link "Order & start development" [ref=f20e77] [cursor=pointer]:
+            - /url: "#order-start-development"
+        - listitem [ref=f20e78]:
+          - link "Design files" [ref=f20e79] [cursor=pointer]:
+            - /url: "#design-files"
+        - listitem [ref=f20e80]:
+          - link "Technical documentation" [ref=f20e81] [cursor=pointer]:
+            - /url: "#tech-docs"
+        - listitem [ref=f20e82]:
+          - link "Support & training" [ref=f20e83] [cursor=pointer]:
+            - /url: "#support-training"
+    - generic [ref=f20e86]:
+      - heading "Overview" [level=3] [ref=f20e87]
+      - generic [ref=f20e89]:
+        - generic [ref=f20e92]:
+          - tablist [ref=f20e94]:
+            - tab "Description & features" [selected] [ref=f20e95] [cursor=pointer]
+            - tab "Supported products" [ref=f20e96] [cursor=pointer]
+          - tabpanel "Description & features" [ref=f20e98]:
+            - generic [ref=f20e106]:
+              - paragraph [ref=f20e107]: The LM5123EVM-BST evaluation module showcases the features and performance of the LM5123-Q1 wide input voltage synchronous boost controller. The standard configuration is designed to provide a regulated output of 24 V at 100 W, from an input voltage of 9 V to 18 V and switching at 440 kHz. The output voltage can be dynamically modified up to 45 V at 100 W using the TRK pin of the LM5123-Q1.
+              - paragraph [ref=f20e108]:
+                - text: This EVM is designed for ease of configuration, enabling a user to evaluate many different applications on the same module. Functionality includes; low IQ operation, internal feedback resistors, bypass mode operation when V
+                - subscript [ref=f20e109]: IN
+                - text: is greater than V
+                - subscript [ref=f20e110]: OUT
+                - text: ", dynamic output voltage tracking, power good (PGOOD) indicator, programmable frequency dithering, programmable under voltage lock out (UVLO), and over voltage protection."
+              - heading "Features" [level=5] [ref=f20e111]
+              - list [ref=f20e113]:
+                - listitem [ref=f20e114]: "Input voltage range: 9 V to 18 V"
+                - listitem [ref=f20e115]: Output voltage 24 V at 100 W
+                - listitem [ref=f20e116]: 440 kHz switching frequency
+                - listitem [ref=f20e117]: Dynamically configurable output voltage up to 45 V at 100 W
+        - generic [ref=f20e120]:
+          - figure "test" [ref=f20e121]:
+            - button "Navigate images with the arrow keys, or click to zoom the image" [ref=f20e122]
+            - generic [ref=f20e135]: Image 1 of 3
+          - generic [ref=f20e136]:
+            - img "LM5123EVM-BST - LM5123 boost controller evaluation module (angled board image)" [ref=f20e140] [cursor=pointer]
+            - img "LM5123EVM-BST - LM5123 boost controller evaluation module (top board image)" [ref=f20e144] [cursor=pointer]
+            - img "LM5123EVM-BST - LM5123 boost controller evaluation module (bottom board image)" [ref=f20e148] [cursor=pointer]
+    - generic [ref=f20e151]:
+      - heading "Order & start development" [level=3] [ref=f20e152]
+      - generic [ref=f20e154]:
+        - generic [ref=f20e157]:
+          - img "Image for LM5123EVM-BST" [ref=f20e162]
+          - generic [ref=f20e164]:
+            - generic [ref=f20e165]: Evaluation board
+            - heading "LM5123EVM-BST — LM5123 boost controller evaluation module" [level=4] [ref=f20e166]
+          - generic [ref=f20e168]:
+            - progressbar "Progress... Please wait" [ref=f20e173]
+            - button [ref=f20e178]:
+              - generic:
+                - generic [ref=f20e179]: alarm
+                - text: Part notifications
+            - button "Add sample to cart" [ref=f20e187]
+        - generic [ref=f20e190]:
+          - img "Image for Calculation tool" [ref=f20e195]
+          - generic [ref=f20e196]:
+            - generic [ref=f20e197]:
+              - generic [ref=f20e198]: Calculation tool
+              - heading [level=4] [ref=f20e199]:
+                - link "SLVRBJ1" [ref=f20e200] [cursor=pointer]:
+                  - /url: /tool/LM5123-Q1-DESIGNCALC
+                - text: — LM5123-Q1 Boost Controller Quickstart Design Tool
+            - button "Supported products & hardware" [ref=f20e203]
+          - generic [ref=f20e205]:
+            - link "Download options" [ref=f20e207] [cursor=pointer]:
+              - /url: /tool/download/SLVRBJ1
+            - button "Add sample to cart" [ref=f20e213]
+      - link "TI's Standard Terms and Conditions for Evaluation Items apply." [ref=f20e214] [cursor=pointer]:
+        - /url: /legal/terms-of-sale.html
+    - generic [ref=f20e217]:
+      - heading "Design files" [level=3] [ref=f20e218]
+      - generic [ref=f20e222]:
+        - link "LM5123EVM-BST Altium CAD Files" [ref=f20e224] [cursor=pointer]:
+          - /url: https://www.ti.com/lit/zip/SNVR528
+          - generic [ref=f20e225]: download
+        - generic [ref=f20e231]: SNVR528.ZIP (1353 KB)
+    - generic [ref=f20e234]:
+      - heading "Technical documentation" [level=3] [ref=f20e235]
+      - generic [ref=f20e236]:
+        - generic [ref=f20e238]:
+          - generic [ref=f20e239]: star
+          - generic [ref=f20e242]:
+            - text: =
+            - emphasis [ref=f20e243]: Top documentation selected by TI
+        - table [ref=f20e245]:
+          - rowgroup [ref=f20e251]:
+            - row [ref=f20e252]:
+              - columnheader "Top documentation" [ref=f20e253]
+              - columnheader "Type" [ref=f20e255]
+              - columnheader "Title" [ref=f20e257]
+              - columnheader "Format options" [ref=f20e259]
+            - row "filter results" [ref=f20e261]:
+              - cell [ref=f20e262]
+              - cell [ref=f20e263]:
+                - combobox [ref=f20e265] [cursor=pointer]:
+                  - option "All" [selected]
+                  - option "Certificate"
+                  - option "EVM User's guide"
+              - cell [ref=f20e266]:
+                - generic [ref=f20e268]:
+                  - textbox "Filter title by keyword" [ref=f20e269]
+                  - button "Search" [ref=f20e271] [cursor=pointer]:
+                    - generic [ref=f20e272]: search
+              - cell [ref=f20e275]
+          - rowgroup [ref=f20e276]:
+            - row [ref=f20e277]:
+              - cell "Yes" [ref=f20e278]:
+                - generic [ref=f20e280]: star
+              - cell "EVM User's guide" [ref=f20e283]
+              - cell [ref=f20e284]:
+                - link "LM5123EVM-BST Evaluation Module (Rev. A)" [ref=f20e285] [cursor=pointer]:
+                  - /url: https://www.ti.com/lit/pdf/SNVU737
+              - cell [ref=f20e286]:
+                - link "PDF" [ref=f20e287] [cursor=pointer]:
+                  - /url: https://www.ti.com/lit/pdf/snvu737
+                - text: "|"
+                - link "HTML" [ref=f20e288] [cursor=pointer]:
+                  - /url: https://www.ti.com/document-viewer/lit/html/snvu737
+            - row [ref=f20e289]:
+              - cell "No" [ref=f20e290]
+              - cell "Certificate" [ref=f20e292]
+              - cell [ref=f20e293]:
+                - link "LM5123EVM-BST EU Declaration of Conformity (DoC) (Rev. A)" [ref=f20e294] [cursor=pointer]:
+                  - /url: https://www.ti.com/lit/pdf/SSZQOI0
+              - cell [ref=f20e295]
+    - generic [ref=f20e297]:
+      - heading "Support & training" [level=3] [ref=f20e300]
+      - article [ref=f20e301]:
+        - generic [ref=f20e303]:
+          - heading "TI E2E™ forums with technical support from TI engineers" [level=4] [ref=f20e304]
+          - progressbar "Progress... Please wait" [ref=f20e310]
+          - link "View all forum topics" [ref=f20e315] [cursor=pointer]:
+            - /url: https://e2e.ti.com/search?category=forum&q=LM5123EVM-BST
+          - paragraph [ref=f20e316]:
+            - generic [ref=f20e317]:
+              - text: Content is provided "as is" by TI and community contributors and does not constitute TI specifications. See
+              - link "terms of use" [ref=f20e318] [cursor=pointer]:
+                - /url: /legal/terms-of-use.html
+              - text: .
+          - paragraph [ref=f20e319]:
+            - text: If you have questions about quality, packaging or ordering TI products, see
+            - link "TI support" [ref=f20e320] [cursor=pointer]:
+              - /url: /guidedsupport/call-ti-support/#popularlinks
+            - text: .
+      - article [ref=f20e321]:
+        - progressbar "Progress... Please wait" [ref=f20e329]
+      - article [ref=f20e332]:
+        - progressbar "Progress... Please wait" [ref=f20e337]
+  - generic [ref=f20e343]:
+    - generic [ref=f20e346]:
+      - text: Los sitios web de TI utilizan cookies para optimizar la funcionalidad del sitio y mejorar su experiencia. Para obtener más información o cambiar sus preferencias, visite nuestra página acerca de la
+      - link "política de cookies" [ref=f20e347] [cursor=pointer]:
+        - /url: https://www.ti.com/legal/terms-conditions/cookie-policy/north-america.html?dnt=1
+      - text: . Haga clic en Aceptar y continuar para aceptar las cookies y acceder al sitio.
+    - generic [ref=f20e348]:
+      - link "Administrar preferencias" [ref=f20e349] [cursor=pointer]:
+        - /url: javascript:void(0)
+      - link "Aceptar y continuar" [ref=f20e350] [cursor=pointer]:
+        - /url: javascript:void(0)

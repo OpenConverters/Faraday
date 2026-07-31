@@ -1,0 +1,26 @@
+[      73ms] [LOG] %c EvalError
+    at Xa (https://www.ti.com/Dl82I3Ui/init.js:2:24629)
+    at Lo (https://www.ti.com/Dl82I3Ui/init.js:2:27085)
+    at https://www.ti.com/Dl82I3Ui/init.js:2:188986
+    at https://www.ti.com/Dl82I3Ui/init.js:2:189082
+    at https://www.ti.com/Dl82I3Ui/init.js:2:189427
+    at https://www.ti.com/Dl82I3Ui/init.js:2:189430 @ https://www.ti.com/Dl82I3Ui/init.js:1
+[     150ms] TypeError: Cannot read properties of undefined (reading 'en-US')
+    at https://www.ti.com/assets/js/@ticom/header-content/1.latest/en-us/js/header-responsive.js:66:28573
+[     305ms] [LOG] TrafficAgent: Initializing storage protection for internal items. @ https://static.katalon.com/libs/traffic-agent/v1/traffic-agent.min.js:0
+[     305ms] [LOG] Client code is required to start Traffic Agent. Please provide it in the script tag or as a query param. @ https://static.katalon.com/libs/traffic-agent/v1/traffic-agent.min.js:0
+[     305ms] [LOG] Force removing localStorage item with key: katalon_traffic_agent_pending_related_tab, bypassing protection. @ https://static.katalon.com/libs/traffic-agent/v1/traffic-agent.min.js:0
+[     305ms] [LOG] Force removing localStorage item with key: katalon_traffic_agent_pending_related_tab, bypassing protection. @ https://static.katalon.com/libs/traffic-agent/v1/traffic-agent.min.js:0
+[     355ms] [LOG] 0 @ https://www.ti.com/assets/js/@ticom/feature-components/2.4.25/p-b7c6ce9c.entry.js:3
+[     362ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://www.ti.com/samplescartmodel/cart/samples/validate:0
+[     365ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://www.ti.com/folders-inventory/api/v1/opns/inventory?opn=LM5122EVM-1PH:0
+[     365ms] [ERROR] s: Request for opn=LM5122EVM-1PH returned 401
+    at https://www.ti.com/assets/js/@ticom/folder-components/4.latest/p-3daf7a79.entry.js:1:437
+    at async Promise.all (index 0)
+    at async n._getInventory (https://www.ti.com/assets/js/@ticom/folder-components/4.latest/p-3daf7a79.entry.js:1:699) @ https://www.ti.com/assets/js/@ticom/folder-components/4.latest/p-3daf7a79.entry.js:0
+[     406ms] [LOG] Starting TrafficAgent for client code: KA-86773-5 @ https://static.katalon.com/libs/traffic-agent/v1/traffic-agent.min.js:0
+[     522ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://www.ti.com/samplescartmodel/cart/samples/validate:0
+[     864ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://www.ti.com/cartmodel/mini-cart?includeItems=false&locale=en-US:0
+[    1026ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://www.ti.com/cartmodel/mini-cart?currency=USD&includeItems=true&locale=en-US&cartType=PAID:0
+[   10715ms] TypeError: Cannot read properties of null (reading 'setAttribute')
+    at l.componentDidLoad (https://www.ti.com/assets/js/@ticom/coveo-components/2.latest/p-cd534600.entry.js:4:2388)

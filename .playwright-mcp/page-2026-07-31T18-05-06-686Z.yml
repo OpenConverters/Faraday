@@ -1,0 +1,189 @@
+- generic [active] [ref=f8e1]:
+  - banner [ref=f8e2]:
+    - link "Close" [ref=f8e6] [cursor=pointer]:
+      - /url: "#"
+    - generic [ref=f8e8]:
+      - link "Skip to main content" [ref=f8e10] [cursor=pointer]:
+        - /url: "#"
+      - generic [ref=f8e11]:
+        - link "Home" [ref=f8e12] [cursor=pointer]:
+          - /url: //www.ti.com
+          - img "Texas Instruments" [ref=f8e13]
+        - link "Cross-reference" [ref=f8e20] [cursor=pointer]:
+          - /url: //www.ti.com/cross-reference-search/en-us/
+          - generic [ref=f8e21]: crossReference
+        - generic [ref=f8e26]:
+          - link "Login / Register" [ref=f8e29] [cursor=pointer]:
+            - /url: /secure-link-forward/?gotoUrl=https%3A%2F%2Fwww.ti.com%2Ftool%2FTPS23754EVM-420
+          - generic:
+            - generic: OK
+            - generic:
+              - option "English" [selected]
+              - option "简体中文"
+              - option "繁體中文"
+              - option "Deutsch"
+              - option "日本語"
+              - option "한국어"
+              - option "Español"
+              - option "USD" [selected]
+            - generic:
+              - generic: Save
+              - generic: Cancel
+    - navigation "Primary" [ref=f8e30]:
+      - menubar [ref=f8e31]:
+        - button "Menu" [ref=f8e32] [cursor=pointer]
+        - menuitem "Language" [ref=f8e34] [cursor=pointer]
+        - menuitem "My cart" [ref=f8e36] [cursor=pointer]
+  - main [ref=f8e38]:
+    - generic [ref=f8e40]:
+      - generic [ref=f8e44]:
+        - link "Home" [ref=f8e46] [cursor=pointer]:
+          - /url: /
+        - generic [ref=f8e47]:
+          - text: /
+          - link "Design & development" [ref=f8e48] [cursor=pointer]:
+            - /url: /design-development/overview.html
+      - generic [ref=f8e49]:
+        - generic [ref=f8e50]:
+          - heading "TPS23754EVM-420" [level=1] [ref=f8e51]
+          - heading "20-57V Vin, 5V Vout High Power Evaluation Module for TPS23754" [level=2] [ref=f8e52]
+        - link "Order now" [ref=f8e56] [cursor=pointer]:
+          - /url: "#order-start-development"
+    - navigation [ref=f8e65]:
+      - list [ref=f8e66]:
+        - listitem [ref=f8e67]:
+          - link "Overview" [ref=f8e68] [cursor=pointer]:
+            - /url: "#overview"
+        - listitem [ref=f8e69]:
+          - link "Order & start development" [ref=f8e70] [cursor=pointer]:
+            - /url: "#order-start-development"
+        - listitem [ref=f8e71]:
+          - link "Technical documentation" [ref=f8e72] [cursor=pointer]:
+            - /url: "#tech-docs"
+        - listitem [ref=f8e73]:
+          - link "Support & training" [ref=f8e74] [cursor=pointer]:
+            - /url: "#support-training"
+    - generic [ref=f8e77]:
+      - heading "Overview" [level=3] [ref=f8e78]
+      - generic [ref=f8e80]:
+        - generic [ref=f8e83]:
+          - tablist [ref=f8e85]:
+            - tab "Description & features" [selected] [ref=f8e86] [cursor=pointer]
+            - tab "Supported products" [ref=f8e87] [cursor=pointer]
+          - tabpanel "Description & features" [ref=f8e89]:
+            - generic [ref=f8e97]:
+              - paragraph [ref=f8e98]: TPS23754EVM-420 contains evaluation and reference circuitry for the TPS23754, which is a Class 4 (25.5 W) PoE PD + PWM Controller. The TPS23754 is targeted at wide Vin aplications (24 V - 60 V) in isolated converter topologies and is compliant with the IEEE 802.3at Power over Ethernet (PoE) standard. This synchronous flyback EVM contains input and output power connectors and an array of on board test points for circuit evaluation. An active clamp forward, 12-V, 30-W EVM (TPS23754EVM-383) is also available.
+              - heading "Features" [level=5] [ref=f8e99]
+              - list [ref=f8e101]:
+                - listitem [ref=f8e102]: Efficient, general market design
+                - listitem [ref=f8e103]: Self driven, synchronous rectified secondary
+                - listitem [ref=f8e104]: 25-W output power from power over ethernet (PoE), 30-W output power from a 48-V adapter
+                - listitem [ref=f8e105]: Operates from either PoE or external adaptors (24 and 48 V)
+                - listitem [ref=f8e106]: 5-V output voltage
+        - generic [ref=f8e109]:
+          - figure "test" [ref=f8e110]:
+            - button "Navigate images with the arrow keys, or click to zoom the image" [ref=f8e111]
+            - generic [ref=f8e124]: Image 1 of 3
+          - generic [ref=f8e125]:
+            - img "TPS23754EVM-420 - 20-57V Vin, 5V Vout High Power Evaluation Module for TPS23754 (angled board image)" [ref=f8e129] [cursor=pointer]
+            - img "TPS23754EVM-420 - 20-57V Vin, 5V Vout High Power Evaluation Module for TPS23754 (top board image)" [ref=f8e133] [cursor=pointer]
+            - img "TPS23754EVM-420 - 20-57V Vin, 5V Vout High Power Evaluation Module for TPS23754 (bottom board image)" [ref=f8e137] [cursor=pointer]
+    - generic [ref=f8e140]:
+      - heading "Order & start development" [level=3] [ref=f8e141]
+      - generic [ref=f8e146]:
+        - img "Image for TPS23754EVM-420" [ref=f8e151]
+        - generic [ref=f8e153]:
+          - generic [ref=f8e154]: Evaluation board
+          - heading "TPS23754EVM-420 — 20-57V Vin, 5V Vout High Power Evaluation Module for TPS23754" [level=4] [ref=f8e155]
+        - generic [ref=f8e157]:
+          - generic [ref=f8e160]:
+            - link "Log in to order" [ref=f8e162] [cursor=pointer]:
+              - /url: /secure-link-forward/?gotoUrl=https%3A%2F%2Fwww.ti.com%2Ftool%2FTPS23754EVM-420
+            - generic [ref=f8e163]: $108.90 (USD)
+            - link "Log in to view inventory" [ref=f8e165] [cursor=pointer]:
+              - /url: /secure-link-forward/?gotoUrl=https%3A%2F%2Fwww.ti.com%2Ftool%2FTPS23754EVM-420
+              - generic [ref=f8e166]: lock
+          - button [ref=f8e173]:
+            - generic:
+              - generic [ref=f8e174]: alarm
+              - text: Part notifications
+      - link "TI's Standard Terms and Conditions for Evaluation Items apply." [ref=f8e179] [cursor=pointer]:
+        - /url: /legal/terms-of-sale.html
+    - generic [ref=f8e182]:
+      - heading "Technical documentation" [level=3] [ref=f8e183]
+      - generic [ref=f8e184]:
+        - generic [ref=f8e186]:
+          - generic [ref=f8e187]: star
+          - generic [ref=f8e190]:
+            - text: =
+            - emphasis [ref=f8e191]: Top documentation selected by TI
+        - table [ref=f8e193]:
+          - rowgroup [ref=f8e199]:
+            - row [ref=f8e200]:
+              - columnheader "Top documentation" [ref=f8e201]
+              - columnheader "Type" [ref=f8e203]
+              - columnheader "Title" [ref=f8e205]
+              - columnheader "Format options" [ref=f8e207]
+            - row "filter results" [ref=f8e209]:
+              - cell [ref=f8e210]
+              - cell [ref=f8e211]:
+                - combobox [ref=f8e213] [cursor=pointer]:
+                  - option "All" [selected]
+                  - option "Certificate"
+                  - option "EVM User's guide"
+              - cell [ref=f8e214]:
+                - generic [ref=f8e216]:
+                  - textbox "Filter title by keyword" [ref=f8e217]
+                  - button "Search" [ref=f8e219] [cursor=pointer]:
+                    - generic [ref=f8e220]: search
+              - cell [ref=f8e223]
+          - rowgroup [ref=f8e224]:
+            - row [ref=f8e225]:
+              - cell "Yes" [ref=f8e226]:
+                - generic [ref=f8e228]: star
+              - cell "EVM User's guide" [ref=f8e231]
+              - cell [ref=f8e232]:
+                - 'link "TPS23754EVM-420 EVM: Evaluation Module for TPS" [ref=f8e233] [cursor=pointer]':
+                  - /url: https://www.ti.com/lit/pdf/SLVU301
+              - cell [ref=f8e234]
+            - row [ref=f8e235]:
+              - cell "No" [ref=f8e236]
+              - cell "Certificate" [ref=f8e238]
+              - cell [ref=f8e239]:
+                - link "TPS23754EVM-420 EU Declaration of Conformity (DoC)" [ref=f8e240] [cursor=pointer]:
+                  - /url: https://www.ti.com/lit/pdf/SSZQJ49
+              - cell [ref=f8e241]
+    - generic [ref=f8e243]:
+      - heading "Support & training" [level=3] [ref=f8e246]
+      - article [ref=f8e247]:
+        - generic [ref=f8e249]:
+          - heading "TI E2E™ forums with technical support from TI engineers" [level=4] [ref=f8e250]
+          - progressbar "Progress... Please wait" [ref=f8e256]
+          - link "View all forum topics" [ref=f8e261] [cursor=pointer]:
+            - /url: https://e2e.ti.com/search?category=forum&q=TPS23754EVM-420
+          - paragraph [ref=f8e262]:
+            - generic [ref=f8e263]:
+              - text: Content is provided "as is" by TI and community contributors and does not constitute TI specifications. See
+              - link "terms of use" [ref=f8e264] [cursor=pointer]:
+                - /url: /legal/terms-of-use.html
+              - text: .
+          - paragraph [ref=f8e265]:
+            - text: If you have questions about quality, packaging or ordering TI products, see
+            - link "TI support" [ref=f8e266] [cursor=pointer]:
+              - /url: /guidedsupport/call-ti-support/#popularlinks
+            - text: .
+      - article [ref=f8e267]:
+        - progressbar "Progress... Please wait" [ref=f8e275]
+      - article [ref=f8e278]:
+        - progressbar "Progress... Please wait" [ref=f8e283]
+  - generic [ref=f8e289]:
+    - generic [ref=f8e292]:
+      - text: Los sitios web de TI utilizan cookies para optimizar la funcionalidad del sitio y mejorar su experiencia. Para obtener más información o cambiar sus preferencias, visite nuestra página acerca de la
+      - link "política de cookies" [ref=f8e293] [cursor=pointer]:
+        - /url: https://www.ti.com/legal/terms-conditions/cookie-policy/north-america.html?dnt=1
+      - text: . Haga clic en Aceptar y continuar para aceptar las cookies y acceder al sitio.
+    - generic [ref=f8e294]:
+      - link "Administrar preferencias" [ref=f8e295] [cursor=pointer]:
+        - /url: javascript:void(0)
+      - link "Aceptar y continuar" [ref=f8e296] [cursor=pointer]:
+        - /url: javascript:void(0)

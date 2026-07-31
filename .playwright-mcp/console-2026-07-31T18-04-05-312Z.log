@@ -1,0 +1,17 @@
+[     350ms] [ERROR] Failed to load resource: the server responded with a status of 404 () @ https://www.ti.com/tool/LM5177EVM-037:0
+[     585ms] TypeError: Cannot read properties of undefined (reading 'en-US')
+    at https://www.ti.com/assets/js/@ticom/header-content/1.latest/en/js/header-responsive.js:66:28573
+[     705ms] [LOG] TrafficAgent: Initializing storage protection for internal items. @ https://static.katalon.com/libs/traffic-agent/v1/traffic-agent.min.js:0
+[     705ms] [LOG] Client code is required to start Traffic Agent. Please provide it in the script tag or as a query param. @ https://static.katalon.com/libs/traffic-agent/v1/traffic-agent.min.js:0
+[     706ms] [LOG] Force removing localStorage item with key: katalon_traffic_agent_pending_related_tab, bypassing protection. @ https://static.katalon.com/libs/traffic-agent/v1/traffic-agent.min.js:0
+[     707ms] [LOG] Force removing localStorage item with key: katalon_traffic_agent_pending_related_tab, bypassing protection. @ https://static.katalon.com/libs/traffic-agent/v1/traffic-agent.min.js:0
+[     800ms] TypeError: Cannot read properties of undefined (reading 'en-US')
+    at https://www.ti.com/assets/js/@ticom/header-content/1.latest/en/js/header-responsive.js:66:28573
+[     808ms] [LOG] Starting TrafficAgent for client code: KA-86773-5 @ https://static.katalon.com/libs/traffic-agent/v1/traffic-agent.min.js:0
+[    1097ms] [ERROR] Refused to apply style from 'https://www.ti.com/assets/js/@ticom/header-components/2.latest/ui-components.css' because its MIME type ('text/html') is not a supported stylesheet MIME type, and strict MIME checking is enabled. @ https://www.ti.com/tool/LM5177EVM-037:0
+[    1183ms] [LOG] TrafficAgent: Initializing storage protection for internal items. @ https://static.katalon.com/libs/traffic-agent/v1/traffic-agent.min.js:0
+[    1218ms] [LOG] Force removing localStorage item with key: katalon_traffic_agent_pending_related_tab, bypassing protection. @ https://static.katalon.com/libs/traffic-agent/v1/traffic-agent.min.js:0
+[    1218ms] [LOG] Force removing localStorage item with key: katalon_traffic_agent_pending_related_tab, bypassing protection. @ https://static.katalon.com/libs/traffic-agent/v1/traffic-agent.min.js:0
+[    1321ms] [LOG] Starting TrafficAgent for client code: KA-86773-5 @ https://static.katalon.com/libs/traffic-agent/v1/traffic-agent.min.js:0
+[    1362ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://www.ti.com/cartmodel/mini-cart?includeItems=false&locale=en-US:0
+[    1530ms] [ERROR] Failed to load resource: the server responded with a status of 401 () @ https://www.ti.com/cartmodel/mini-cart?currency=USD&includeItems=true&locale=en-US&cartType=PAID:0

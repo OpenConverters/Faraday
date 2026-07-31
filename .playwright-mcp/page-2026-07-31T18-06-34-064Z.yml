@@ -1,0 +1,233 @@
+- generic [active] [ref=f17e1]:
+  - banner [ref=f17e2]:
+    - link "Close" [ref=f17e6] [cursor=pointer]:
+      - /url: "#"
+    - generic [ref=f17e8]:
+      - link "Skip to main content" [ref=f17e10] [cursor=pointer]:
+        - /url: "#"
+      - generic [ref=f17e11]:
+        - link "Home" [ref=f17e12] [cursor=pointer]:
+          - /url: //www.ti.com
+          - img "Texas Instruments" [ref=f17e13]
+        - link "Cross-reference" [ref=f17e20] [cursor=pointer]:
+          - /url: //www.ti.com/cross-reference-search/en-us/
+          - generic [ref=f17e21]: crossReference
+        - generic [ref=f17e26]:
+          - link "Login / Register" [ref=f17e29] [cursor=pointer]:
+            - /url: /secure-link-forward/?gotoUrl=https%3A%2F%2Fwww.ti.com%2Ftool%2FLM5143-Q1EVM-2100
+          - generic:
+            - generic: OK
+            - generic:
+              - option "English" [selected]
+              - option "简体中文"
+              - option "繁體中文"
+              - option "Deutsch"
+              - option "日本語"
+              - option "한국어"
+              - option "Español"
+              - option "USD" [selected]
+            - generic:
+              - generic: Save
+              - generic: Cancel
+    - navigation "Primary" [ref=f17e30]:
+      - menubar [ref=f17e31]:
+        - button "Menu" [ref=f17e32] [cursor=pointer]
+        - menuitem "Language" [ref=f17e34] [cursor=pointer]
+        - menuitem "My cart" [ref=f17e36] [cursor=pointer]
+  - main [ref=f17e38]:
+    - generic [ref=f17e40]:
+      - generic [ref=f17e44]:
+        - link "Home" [ref=f17e46] [cursor=pointer]:
+          - /url: /
+        - generic [ref=f17e47]:
+          - text: /
+          - link "Design & development" [ref=f17e48] [cursor=pointer]:
+            - /url: /design-development/overview.html
+      - generic [ref=f17e49]:
+        - generic [ref=f17e50]:
+          - heading "LM5143-Q1EVM-2100" [level=1] [ref=f17e51]
+          - heading "Dual-channel automotive synchronous buck controller evaluation module" [level=2] [ref=f17e52]
+        - link "Order now" [ref=f17e56] [cursor=pointer]:
+          - /url: "#order-start-development"
+    - navigation [ref=f17e65]:
+      - list [ref=f17e66]:
+        - listitem [ref=f17e67]:
+          - link "Overview" [ref=f17e68] [cursor=pointer]:
+            - /url: "#overview"
+        - listitem [ref=f17e69]:
+          - link "Order & start development" [ref=f17e70] [cursor=pointer]:
+            - /url: "#order-start-development"
+        - listitem [ref=f17e71]:
+          - link "Design files" [ref=f17e72] [cursor=pointer]:
+            - /url: "#design-files"
+        - listitem [ref=f17e73]:
+          - link "Technical documentation" [ref=f17e74] [cursor=pointer]:
+            - /url: "#tech-docs"
+        - listitem [ref=f17e75]:
+          - link "Related design resources" [ref=f17e76] [cursor=pointer]:
+            - /url: "#related-design-resources"
+        - listitem [ref=f17e77]:
+          - link "Support & training" [ref=f17e78] [cursor=pointer]:
+            - /url: "#support-training"
+    - generic [ref=f17e81]:
+      - heading "Overview" [level=3] [ref=f17e82]
+      - generic [ref=f17e84]:
+        - generic [ref=f17e87]:
+          - tablist [ref=f17e89]:
+            - tab "Description & features" [selected] [ref=f17e90] [cursor=pointer]
+            - tab "Supported products" [ref=f17e91] [cursor=pointer]
+          - tabpanel "Description & features" [ref=f17e93]:
+            - generic [ref=f17e98]:
+              - generic [ref=f17e101]:
+                - paragraph [ref=f17e102]: The LM5143-Q1-EVM2100 high density evaluation module (EVM) is designed to showcase the performance of the LM5143-Q1 high performance, dual-channel, automotive synchronous buck DC/DC buck controller. It operates over a wide input voltage range of 3.5 V to 36 V to deliver fixed 5-V and 3.3-V outputs with better than 1% setpoint accuracy and currents up to 7 A per channel. By virtue of the LM5143-Q1's minimum on-time of 65 ns, operation at very low duty cycle is feasible. The LM5143-Q1 offers a full suite of protection features to ensure protection of the regulator during fault conditions. These include undervoltage lockout to ensure proper operation during voltage-sag conditions, programmable soft-start to reduce inrush current, hiccup-mode overcurrent protection and thermal shutdown. Open-drain PGOOD indicator and SYNC IN / SYNC OUT features are also provided.
+                - heading "Features" [level=5] [ref=f17e103]
+                - list [ref=f17e105]:
+                  - listitem [ref=f17e106]: 3.5-V to 36-V input voltage range
+                  - listitem [ref=f17e107]: 5-V and 3.3-V output voltages with 1% setpoint accuracy
+                  - listitem [ref=f17e108]: Rated for up to 7 A of load current per channel
+                  - listitem [ref=f17e109]: Automotive grade power stage components, including MOSFETs, inductors and capacitors
+                  - listitem [ref=f17e110]: 2.1-MHz switching synchronizable up or down with external clock
+                  - listitem [ref=f17e111]: Fully assembled, tested and proven PCB layout with small footprint
+              - button "Expand to view more content (visual only)" [ref=f17e113] [cursor=pointer]:
+                - text: View all
+                - generic [ref=f17e114]: chevron-down
+        - generic [ref=f17e119]:
+          - figure "test" [ref=f17e120]:
+            - button "Navigate images with the arrow keys, or click to zoom the image" [ref=f17e121]
+            - generic [ref=f17e134]: Image 1 of 3
+          - generic [ref=f17e135]:
+            - img "LM5143-Q1EVM-2100 - Dual-channel automotive synchronous buck controller evaluation module (angled board image)" [ref=f17e139] [cursor=pointer]
+            - img "LM5143-Q1EVM-2100 - Dual-channel automotive synchronous buck controller evaluation module (top board image)" [ref=f17e143] [cursor=pointer]
+            - img "LM5143-Q1EVM-2100 - Dual-channel automotive synchronous buck controller evaluation module (bottom board image)" [ref=f17e147] [cursor=pointer]
+    - generic [ref=f17e150]:
+      - heading "Order & start development" [level=3] [ref=f17e151]
+      - generic [ref=f17e153]:
+        - generic [ref=f17e156]:
+          - img "Image for LM5143-Q1EVM-2100" [ref=f17e161]
+          - generic [ref=f17e163]:
+            - generic [ref=f17e164]: Evaluation board
+            - heading "LM5143-Q1EVM-2100 — Dual-channel automotive synchronous buck controller evaluation module" [level=4] [ref=f17e165]
+          - generic [ref=f17e167]:
+            - generic [ref=f17e170]:
+              - link "Log in to order" [ref=f17e172] [cursor=pointer]:
+                - /url: /secure-link-forward/?gotoUrl=https%3A%2F%2Fwww.ti.com%2Ftool%2FLM5143-Q1EVM-2100
+              - generic [ref=f17e173]: $108.90 (USD)
+              - link "Log in to view inventory" [ref=f17e175] [cursor=pointer]:
+                - /url: /secure-link-forward/?gotoUrl=https%3A%2F%2Fwww.ti.com%2Ftool%2FLM5143-Q1EVM-2100
+                - generic [ref=f17e176]: lock
+            - button [ref=f17e183]:
+              - generic:
+                - generic [ref=f17e184]: alarm
+                - text: Part notifications
+        - generic [ref=f17e191]:
+          - img "Image for Calculation tool" [ref=f17e196]
+          - generic [ref=f17e197]:
+            - generic [ref=f17e198]:
+              - generic [ref=f17e199]: Calculation tool
+              - heading [level=4] [ref=f17e200]:
+                - link "LM5143DESIGN-CALC" [ref=f17e201] [cursor=pointer]:
+                  - /url: /tool/LM5143DESIGN-CALC
+                - text: — LM5143-Q1 Controller Quickstart Design Tool
+            - button "Supported products & hardware" [ref=f17e204]
+          - generic [ref=f17e206]:
+            - link "Download options" [ref=f17e208] [cursor=pointer]:
+              - /url: /tool/download/LM5143DESIGN-CALC
+            - button "Add sample to cart" [ref=f17e214]
+      - link "TI's Standard Terms and Conditions for Evaluation Items apply." [ref=f17e215] [cursor=pointer]:
+        - /url: /legal/terms-of-sale.html
+    - generic [ref=f17e218]:
+      - heading "Design files" [level=3] [ref=f17e219]
+      - generic [ref=f17e223]:
+        - link "LM5143-Q1 PCB Source Files" [ref=f17e225] [cursor=pointer]:
+          - /url: https://www.ti.com/lit/zip/SNVR474
+          - generic [ref=f17e226]: download
+        - generic [ref=f17e232]: SNVR474.ZIP (2614 KB)
+    - generic [ref=f17e235]:
+      - heading "Technical documentation" [level=3] [ref=f17e236]
+      - generic [ref=f17e237]:
+        - generic [ref=f17e239]:
+          - generic [ref=f17e240]: star
+          - generic [ref=f17e243]:
+            - text: =
+            - emphasis [ref=f17e244]: Top documentation selected by TI
+        - table [ref=f17e246]:
+          - rowgroup [ref=f17e252]:
+            - row [ref=f17e253]:
+              - columnheader "Top documentation" [ref=f17e254]
+              - columnheader "Type" [ref=f17e256]
+              - columnheader "Title" [ref=f17e258]
+              - columnheader "Format options" [ref=f17e260]
+            - row "filter results" [ref=f17e262]:
+              - cell [ref=f17e263]
+              - cell [ref=f17e264]:
+                - combobox [ref=f17e266] [cursor=pointer]:
+                  - option "All" [selected]
+                  - option "Certificate"
+                  - option "EVM User's guide"
+              - cell [ref=f17e267]:
+                - generic [ref=f17e269]:
+                  - textbox "Filter title by keyword" [ref=f17e270]
+                  - button "Search" [ref=f17e272] [cursor=pointer]:
+                    - generic [ref=f17e273]: search
+              - cell [ref=f17e276]
+          - rowgroup [ref=f17e277]:
+            - row [ref=f17e278]:
+              - cell "Yes" [ref=f17e279]:
+                - generic [ref=f17e281]: star
+              - cell "EVM User's guide" [ref=f17e284]
+              - cell [ref=f17e285]:
+                - link "LM5143-Q1 EVM User's Guide (Rev. B)" [ref=f17e286] [cursor=pointer]:
+                  - /url: https://www.ti.com/lit/pdf/SNVU623
+              - cell [ref=f17e287]
+            - row [ref=f17e288]:
+              - cell "No" [ref=f17e289]
+              - cell "Certificate" [ref=f17e291]
+              - cell [ref=f17e292]:
+                - link "LM5143-Q1EVM-2100 EU Declaration of Conformity (DoC)" [ref=f17e293] [cursor=pointer]:
+                  - /url: https://www.ti.com/lit/pdf/SSZQN65
+              - cell [ref=f17e294]
+    - generic [ref=f17e298]:
+      - heading "Related design resources" [level=3] [ref=f17e299]
+      - generic [ref=f17e301]:
+        - heading "Design tools & simulation" [level=4] [ref=f17e302]
+        - generic [ref=f17e303]:
+          - heading "CALCULATION TOOL" [level=6] [ref=f17e304]
+          - generic [ref=f17e307]:
+            - generic:
+              - link "LM5143DESIGN-CALC" [ref=f17e308] [cursor=pointer]:
+                - /url: /tool/LM5143DESIGN-CALC
+              - text: — LM5143-Q1, LM5143A-Q1, LM5143, LM25143-Q1 and LM25143 controller quick start design tool
+    - generic [ref=f17e309]:
+      - heading "Support & training" [level=3] [ref=f17e312]
+      - article [ref=f17e313]:
+        - generic [ref=f17e315]:
+          - heading "TI E2E™ forums with technical support from TI engineers" [level=4] [ref=f17e316]
+          - progressbar "Progress... Please wait" [ref=f17e322]
+          - link "View all forum topics" [ref=f17e327] [cursor=pointer]:
+            - /url: https://e2e.ti.com/search?category=forum&q=LM5143-Q1EVM-2100
+          - paragraph [ref=f17e328]:
+            - generic [ref=f17e329]:
+              - text: Content is provided "as is" by TI and community contributors and does not constitute TI specifications. See
+              - link "terms of use" [ref=f17e330] [cursor=pointer]:
+                - /url: /legal/terms-of-use.html
+              - text: .
+          - paragraph [ref=f17e331]:
+            - text: If you have questions about quality, packaging or ordering TI products, see
+            - link "TI support" [ref=f17e332] [cursor=pointer]:
+              - /url: /guidedsupport/call-ti-support/#popularlinks
+            - text: .
+      - article [ref=f17e333]:
+        - progressbar "Progress... Please wait" [ref=f17e341]
+      - article [ref=f17e344]:
+        - progressbar "Progress... Please wait" [ref=f17e349]
+  - generic [ref=f17e355]:
+    - generic [ref=f17e358]:
+      - text: Los sitios web de TI utilizan cookies para optimizar la funcionalidad del sitio y mejorar su experiencia. Para obtener más información o cambiar sus preferencias, visite nuestra página acerca de la
+      - link "política de cookies" [ref=f17e359] [cursor=pointer]:
+        - /url: https://www.ti.com/legal/terms-conditions/cookie-policy/north-america.html?dnt=1
+      - text: . Haga clic en Aceptar y continuar para aceptar las cookies y acceder al sitio.
+    - generic [ref=f17e360]:
+      - link "Administrar preferencias" [ref=f17e361] [cursor=pointer]:
+        - /url: javascript:void(0)
+      - link "Aceptar y continuar" [ref=f17e362] [cursor=pointer]:
+        - /url: javascript:void(0)

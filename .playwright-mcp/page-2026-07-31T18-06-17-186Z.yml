@@ -1,0 +1,772 @@
+- generic [active] [ref=f14e1]:
+  - banner [ref=f14e2]:
+    - link "Close" [ref=f14e6] [cursor=pointer]:
+      - /url: "#"
+    - generic [ref=f14e8]:
+      - link "Skip to main content" [ref=f14e10] [cursor=pointer]:
+        - /url: "#"
+      - generic [ref=f14e11]:
+        - link "Home" [ref=f14e12] [cursor=pointer]:
+          - /url: //www.ti.com
+          - img "Texas Instruments" [ref=f14e13]
+        - link "Cross-reference" [ref=f14e20] [cursor=pointer]:
+          - /url: //www.ti.com/cross-reference-search/en-us/
+          - generic [ref=f14e21]: crossReference
+        - generic [ref=f14e26]:
+          - link "Login / Register" [ref=f14e29] [cursor=pointer]:
+            - /url: /secure-link-forward/?gotoUrl=https%3A%2F%2Fwww.ti.com%2Fproduct%2FLM5143
+          - generic:
+            - generic: OK
+            - generic:
+              - option "English" [selected]
+              - option "简体中文"
+              - option "繁體中文"
+              - option "Deutsch"
+              - option "日本語"
+              - option "한국어"
+              - option "Español"
+              - option "USD" [selected]
+            - generic:
+              - generic: Save
+              - generic: Cancel
+    - navigation "Primary" [ref=f14e30]:
+      - menubar [ref=f14e31]:
+        - button "Menu" [ref=f14e32] [cursor=pointer]
+        - menuitem "Language" [ref=f14e34] [cursor=pointer]
+        - menuitem "My cart" [ref=f14e36] [cursor=pointer]
+  - main [ref=f14e38]:
+    - generic [ref=f14e41]:
+      - generic [ref=f14e45]:
+        - link "Home" [ref=f14e47] [cursor=pointer]:
+          - /url: /
+        - generic [ref=f14e48]:
+          - text: /
+          - link "Power management" [ref=f14e49] [cursor=pointer]:
+            - /url: /product-category/power-management/overview.html
+        - generic [ref=f14e50]:
+          - text: /
+          - link "DC/DC switching regulators" [ref=f14e51] [cursor=pointer]:
+            - /url: /product-category/power-management/dc-dc-switching-regulators/overview.html
+        - generic [ref=f14e52]:
+          - text: /
+          - link "DC/DC controllers" [ref=f14e53] [cursor=pointer]:
+            - /url: /product-category/power-management/dc-dc-switching-regulators/dc-dc-controllers/overview.html
+      - generic [ref=f14e56]:
+        - generic [ref=f14e57]:
+          - generic [ref=f14e58]:
+            - heading "LM5143" [level=1] [ref=f14e59]
+            - link "ACTIVE" [ref=f14e62] [cursor=pointer]:
+              - /url: /support-quality/quality-policies-procedures/product-life-cycle.html
+          - heading "3.5-V to 65-V, dual-output, stackable, synchronous buck DC/DC controller with ultra-low IQ" [level=2] [ref=f14e67]
+        - generic [ref=f14e69]:
+          - button "Product notifications" [ref=f14e72]:
+            - generic:
+              - generic [ref=f14e73]: alarm
+              - text: Product notifications
+          - link "Order now" [ref=f14e77] [cursor=pointer]:
+            - /url: "#order-quality"
+      - generic [ref=f14e80]:
+        - generic [ref=f14e81]: Data sheet
+        - list [ref=f14e84]:
+          - listitem [ref=f14e85]:
+            - generic [ref=f14e86]:
+              - link [ref=f14e87] [cursor=pointer]:
+                - /url: https://www.ti.com/lit/gpn/LM5143
+                - generic [ref=f14e88]: document-pdfAcrobat
+              - generic [ref=f14e91]:
+                - link "LM5143 3.5-V to 65-V Dual Synchronous Buck DC/DC Controller With Ultra-Low IQ datasheet" [ref=f14e92] [cursor=pointer]:
+                  - /url: https://www.ti.com/lit/gpn/LM5143
+                - generic [ref=f14e93]:
+                  - link "PDF" [ref=f14e94] [cursor=pointer]:
+                    - /url: https://www.ti.com/lit/gpn/LM5143
+                  - generic [ref=f14e95]: "|"
+                  - link "HTML" [ref=f14e96] [cursor=pointer]:
+                    - /url: https://www.ti.com/document-viewer/LM5143/datasheet
+    - navigation [ref=f14e105]:
+      - list [ref=f14e106]:
+        - listitem [ref=f14e107]:
+          - link "Product details" [ref=f14e108] [cursor=pointer]:
+            - /url: "#product-details"
+        - listitem [ref=f14e109]:
+          - link "Technical documentation" [ref=f14e110] [cursor=pointer]:
+            - /url: "#tech-docs"
+        - listitem [ref=f14e111]:
+          - link "Design & development" [ref=f14e112] [cursor=pointer]:
+            - /url: "#design-development"
+        - listitem [ref=f14e113]:
+          - link "Ordering & quality" [ref=f14e114] [cursor=pointer]:
+            - /url: "#order-quality"
+        - listitem [ref=f14e115]:
+          - link "Support & training" [ref=f14e116] [cursor=pointer]:
+            - /url: "#support-training"
+    - generic [ref=f14e117]:
+      - heading "Product details" [level=3] [ref=f14e120]
+      - generic [ref=f14e122]:
+        - generic [ref=f14e123]:
+          - generic [ref=f14e125]:
+            - tablist [ref=f14e127]:
+              - tab "Parameters" [selected] [ref=f14e128] [cursor=pointer]
+              - tab "Package | Pins | Size" [ref=f14e129] [cursor=pointer]
+              - tab "Features" [ref=f14e130] [cursor=pointer]
+              - tab "Description" [ref=f14e131] [cursor=pointer]
+            - tabpanel "Parameters" [ref=f14e133]:
+              - generic [ref=f14e138]:
+                - generic [ref=f14e142]:
+                  - generic:
+                    - generic [ref=f14e143]:
+                      - generic:
+                        - generic [ref=f14e144]: Rating
+                        - generic [ref=f14e145]: Catalog
+                    - generic [ref=f14e146]:
+                      - generic:
+                        - generic [ref=f14e147]: Topology
+                        - generic [ref=f14e148]: Buck
+                    - generic [ref=f14e149]:
+                      - generic:
+                        - generic [ref=f14e150]: Iout (max) (A)
+                        - generic [ref=f14e151]: "100"
+                    - generic [ref=f14e152]:
+                      - generic:
+                        - generic [ref=f14e153]: Vin (max) (V)
+                        - generic [ref=f14e154]: "65"
+                    - generic [ref=f14e155]:
+                      - generic:
+                        - generic [ref=f14e156]: Vin (min) (V)
+                        - generic [ref=f14e157]: "3.5"
+                    - generic [ref=f14e158]:
+                      - generic:
+                        - generic [ref=f14e159]: Vout (max) (V)
+                        - generic [ref=f14e160]: "55"
+                    - generic [ref=f14e161]:
+                      - generic:
+                        - generic [ref=f14e162]: Vout (min) (V)
+                        - generic [ref=f14e163]: "0.6"
+                    - generic [ref=f14e164]:
+                      - generic:
+                        - generic [ref=f14e165]: Control mode
+                        - generic [ref=f14e166]: current mode
+                    - generic [ref=f14e167]:
+                      - generic:
+                        - generic [ref=f14e168]: Features
+                        - generic [ref=f14e169]: Adjustable current limit, Enable, Frequency synchronization, Light Load Efficiency, Multiple Outputs, Phase Interleaving, Power good, Pre-Bias Start-Up, Spread Spectrum, Synchronous Rectification, UVLO adjustable
+                    - generic [ref=f14e170]:
+                      - generic:
+                        - generic [ref=f14e171]: EMI features
+                        - generic [ref=f14e172]: Spread Spectrum
+                    - generic [ref=f14e173]:
+                      - generic:
+                        - generic [ref=f14e174]: Duty cycle (max) (%)
+                        - generic [ref=f14e175]: "99"
+                    - generic [ref=f14e176]:
+                      - generic:
+                        - generic [ref=f14e177]: Iq (typ) (A)
+                        - generic [ref=f14e178]: "0.0000165"
+                    - generic [ref=f14e179]:
+                      - generic:
+                        - generic [ref=f14e180]: Number of phases
+                        - generic [ref=f14e181]: "2"
+                    - generic [ref=f14e182]:
+                      - generic:
+                        - generic [ref=f14e183]: TI functional safety category
+                        - generic [ref=f14e184]: Functional Safety-Capable
+                    - generic [ref=f14e185]:
+                      - generic:
+                        - generic [ref=f14e186]: Operating temperature range (°C)
+                        - generic [ref=f14e187]: "-40 to 150"
+                - button "Expand to view more content (visual only)" [ref=f14e189] [cursor=pointer]:
+                  - text: View all
+                  - generic [ref=f14e190]: chevron-down
+          - link "Find other DC/DC controllers" [ref=f14e194] [cursor=pointer]:
+            - /url: /product-category/power-management/dc-dc-switching-regulators/dc-dc-controllers/products.html
+            - generic [ref=f14e195]: filter
+        - generic [ref=f14e202]:
+          - figure "test" [ref=f14e203]:
+            - button "Navigate images with the arrow keys, or click to zoom the image" [ref=f14e204]
+            - generic [ref=f14e213]: Image 1 of 2
+          - generic [ref=f14e214]:
+            - img "LM5143 - SNVSC09" [ref=f14e218] [cursor=pointer]
+            - img "40-pin (RHA) package image" [ref=f14e222] [cursor=pointer]
+      - generic [ref=f14e227]:
+        - generic:
+          - generic [ref=f14e228]:
+            - heading "Similar products you might be interested in" [level=3] [ref=f14e229]
+            - generic [ref=f14e230]:
+              - generic [ref=f14e231]: open-in-new
+              - link "Compare alternates" [ref=f14e234] [cursor=pointer]:
+                - /url: /compare-products/?id=399853&type=GPT&mode=alternate-gpn&partList=LM5148,LM5149&sticky=true
+          - generic [ref=f14e241]:
+            - heading "Same functionality with different pin-out to the compared device." [level=5] [ref=f14e242]
+            - list [ref=f14e243]:
+              - listitem [ref=f14e244]:
+                - generic [ref=f14e248]:
+                  - generic [ref=f14e250]:
+                    - heading [level=4] [ref=f14e251]:
+                      - generic [ref=f14e252]:
+                        - link "LM5148" [ref=f14e253] [cursor=pointer]:
+                          - /url: /product/LM5148
+                        - link "ACTIVE" [ref=f14e256] [cursor=pointer]:
+                          - /url: /support-quality/quality-policies-procedures/product-life-cycle.html
+                    - generic [ref=f14e261]: 3.5-V to 80-V, current mode synchronous buck controller
+                  - generic: Single output stackable to two phases.
+              - listitem [ref=f14e264]:
+                - generic [ref=f14e268]:
+                  - generic [ref=f14e270]:
+                    - heading [level=4] [ref=f14e271]:
+                      - generic [ref=f14e272]:
+                        - link "LM5149" [ref=f14e273] [cursor=pointer]:
+                          - /url: /product/LM5149
+                        - link "ACTIVE" [ref=f14e276] [cursor=pointer]:
+                          - /url: /support-quality/quality-policies-procedures/product-life-cycle.html
+                    - generic [ref=f14e281]: 80-V synchronous buck DC/DC controller with ultra-low IQ and integrated active EMI filter
+                  - generic: Single output stackable to two phases with active EMI filter.
+    - generic [ref=f14e286]:
+      - heading "Technical documentation" [level=3] [ref=f14e287]
+      - table [ref=f14e292]:
+        - rowgroup [ref=f14e298]:
+          - row [ref=f14e299]:
+            - columnheader "Top documentation" [ref=f14e300]
+            - columnheader "Type" [ref=f14e302]
+            - columnheader "Title" [ref=f14e304]
+            - columnheader "Format options" [ref=f14e306]
+          - row "filter results" [ref=f14e308]:
+            - cell [ref=f14e309]
+            - cell [ref=f14e310]:
+              - combobox [ref=f14e312] [cursor=pointer]:
+                - option "All" [selected]
+                - option "Application note"
+                - option "Data sheet"
+                - option "E-book"
+                - option "Functional safety information"
+            - cell [ref=f14e313]:
+              - generic [ref=f14e315]:
+                - textbox "Filter title by keyword" [ref=f14e316]
+                - button "Search" [ref=f14e318] [cursor=pointer]:
+                  - generic [ref=f14e319]: search
+            - cell [ref=f14e322]
+        - rowgroup [ref=f14e323]:
+          - row [ref=f14e324]:
+            - cell "Yes" [ref=f14e325]:
+              - generic [ref=f14e327]: star
+            - cell "Data sheet" [ref=f14e330]
+            - cell [ref=f14e331]:
+              - link "LM5143 3.5-V to 65-V Dual Synchronous Buck DC/DC Controller With Ultra-Low IQ datasheet" [ref=f14e332] [cursor=pointer]:
+                - /url: https://www.ti.com/lit/gpn/LM5143
+            - cell [ref=f14e333]:
+              - link "PDF" [ref=f14e334] [cursor=pointer]:
+                - /url: https://www.ti.com/lit/gpn/lm5143
+              - text: "|"
+              - link "HTML" [ref=f14e335] [cursor=pointer]:
+                - /url: https://www.ti.com/document-viewer/lm5143/datasheet
+          - row [ref=f14e336]:
+            - cell "No" [ref=f14e337]
+            - cell "Application note" [ref=f14e339]
+            - cell [ref=f14e340]:
+              - link "Controller to Converter – Design Considerations for 24V and 48V Systems" [ref=f14e341] [cursor=pointer]:
+                - /url: https://www.ti.com/lit/pdf/SNVAAA7
+            - cell [ref=f14e342]:
+              - link "PDF" [ref=f14e343] [cursor=pointer]:
+                - /url: https://www.ti.com/lit/pdf/snvaaa7
+              - text: "|"
+              - link "HTML" [ref=f14e344] [cursor=pointer]:
+                - /url: https://www.ti.com/document-viewer/lit/html/snvaaa7
+          - row [ref=f14e345]:
+            - cell "No" [ref=f14e346]
+            - cell "Application note" [ref=f14e348]
+            - cell [ref=f14e349]:
+              - link "How to Implement a Simple Constant Current Regulation Scheme to a PCM Based Buck" [ref=f14e350] [cursor=pointer]:
+                - /url: https://www.ti.com/lit/pdf/SNVAA85
+            - cell [ref=f14e351]:
+              - link "PDF" [ref=f14e352] [cursor=pointer]:
+                - /url: https://www.ti.com/lit/pdf/snvaa85
+              - text: "|"
+              - link "HTML" [ref=f14e353] [cursor=pointer]:
+                - /url: https://www.ti.com/document-viewer/lit/html/snvaa85
+          - row [ref=f14e354]:
+            - cell "No" [ref=f14e355]
+            - cell "Functional safety information" [ref=f14e357]
+            - cell [ref=f14e358]:
+              - link "LM5143 Functional Safety, FIT Rate, Failure Mode Distribution and Pin FMA" [ref=f14e359] [cursor=pointer]:
+                - /url: https://www.ti.com/lit/pdf/SFFS245
+            - cell [ref=f14e360]:
+              - link "PDF" [ref=f14e361] [cursor=pointer]:
+                - /url: https://www.ti.com/lit/pdf/sffs245
+              - text: "|"
+              - link "HTML" [ref=f14e362] [cursor=pointer]:
+                - /url: https://www.ti.com/document-viewer/lit/html/sffs245
+          - row [ref=f14e363]:
+            - cell "No" [ref=f14e364]
+            - cell "E-book" [ref=f14e366]
+            - cell [ref=f14e367]:
+              - link "An Engineer’s Guide to Low EMI in DC/DC Regulators" [ref=f14e368] [cursor=pointer]:
+                - /url: https://www.ti.com/lit/pdf/SLYY208
+            - cell [ref=f14e369]
+          - row [ref=f14e370]:
+            - cell "No" [ref=f14e371]
+            - cell "Application note" [ref=f14e373]
+            - cell [ref=f14e374]:
+              - link "LM5143-Q1 4-phase Buck Regulator Design (Rev. A)" [ref=f14e375] [cursor=pointer]:
+                - /url: https://www.ti.com/lit/pdf/SNVA870
+            - cell [ref=f14e376]:
+              - link "PDF" [ref=f14e377] [cursor=pointer]:
+                - /url: https://www.ti.com/lit/pdf/snva870
+              - text: "|"
+              - link "HTML" [ref=f14e378] [cursor=pointer]:
+                - /url: https://www.ti.com/document-viewer/lit/html/snva870
+    - generic [ref=f14e380]:
+      - generic [ref=f14e382]:
+        - heading "Design & development" [level=3] [ref=f14e383]
+        - paragraph [ref=f14e384]: For additional terms or required resources, click any title below to view the detail page where available.
+      - generic [ref=f14e385]:
+        - generic [ref=f14e387]:
+          - generic [ref=f14e389]:
+            - tablist [ref=f14e391]:
+              - tab "All" [ref=f14e392] [cursor=pointer]
+              - tab "Hardware development" [selected] [ref=f14e393] [cursor=pointer]
+              - tab "Design tools & simulation" [ref=f14e394] [cursor=pointer]
+              - tab "Reference designs" [ref=f14e395] [cursor=pointer]
+              - tab "CAD symbols, footprints & 3D models" [ref=f14e396] [cursor=pointer]
+            - tabpanel "Hardware development" [ref=f14e398]:
+              - generic [ref=f14e404]:
+                - img "LM5143-Q1EVM-2100 angled" [ref=f14e409]
+                - generic [ref=f14e411]:
+                  - generic [ref=f14e412]: Evaluation board
+                  - heading [level=4] [ref=f14e413]:
+                    - link "LM5143-Q1EVM-2100" [ref=f14e414] [cursor=pointer]:
+                      - /url: /tool/LM5143-Q1EVM-2100
+                    - text: — Dual-channel automotive synchronous buck controller evaluation module
+                  - generic [ref=f14e415]: The LM5143-Q1-EVM2100 high density evaluation module (EVM) is designed to showcase the performance of the LM5143-Q1 high performance, dual-channel, automotive synchronous buck DC/DC buck controller. It operates over a wide input voltage range of 3.5 V to 36 V to deliver fixed 5-V and 3.3-V outputs (...)
+                  - generic [ref=f14e416]:
+                    - text: "User guide:"
+                    - link "PDF" [ref=f14e418] [cursor=pointer]:
+                      - /url: https://www.ti.com/lit/pdf/SNVU623
+                - generic [ref=f14e423]:
+                  - link "Log in to order" [ref=f14e425] [cursor=pointer]:
+                    - /url: /secure-link-forward/?gotoUrl=https%3A%2F%2Fwww.ti.com%2Fproduct%2FLM5143
+                  - generic [ref=f14e426]: $108.90 (USD)
+                  - link "Log in to view inventory" [ref=f14e428] [cursor=pointer]:
+                    - /url: /secure-link-forward/?gotoUrl=https%3A%2F%2Fwww.ti.com%2Fproduct%2FLM5143
+                    - generic [ref=f14e429]: lock
+          - link "TI's Standard Terms and Conditions for Evaluation Items apply." [ref=f14e435] [cursor=pointer]:
+            - /url: /legal/terms-of-sale.html
+        - generic [ref=f14e442]:
+          - generic [ref=f14e446]:
+            - text: WEBENCH
+            - superscript [ref=f14e447]: ®
+            - text: Designer LM5143
+          - generic [ref=f14e448]:
+            - generic:
+              - generic [ref=f14e451]:
+                - generic [ref=f14e452]: Product option
+                - combobox [ref=f14e458] [cursor=pointer]:
+                  - option "LM5143(Interleave)" [selected]
+                  - option "LM5143(Dual)"
+              - generic [ref=f14e460]:
+                - generic [ref=f14e461]:
+                  - generic [ref=f14e463]: Min
+                  - generic [ref=f14e465]: Max
+                  - generic [ref=f14e467]: Range
+                - generic [ref=f14e468]:
+                  - generic [ref=f14e469]: Vin
+                  - generic [ref=f14e474]:
+                    - textbox [ref=f14e476]: "8"
+                    - generic [ref=f14e477]: –
+                  - generic [ref=f14e481]:
+                    - textbox [ref=f14e483]: "18"
+                    - generic [ref=f14e484]: V
+                  - generic [ref=f14e485]: 3.5 to 65 V
+                - generic [ref=f14e486]:
+                  - generic [ref=f14e487]: Vout
+                  - generic [ref=f14e493]:
+                    - textbox [ref=f14e495]: "3.3"
+                    - generic [ref=f14e496]: V
+                  - generic [ref=f14e497]: 0.6 to 55 V
+                - generic [ref=f14e498]:
+                  - generic [ref=f14e499]: Iout
+                  - generic [ref=f14e505]:
+                    - textbox [ref=f14e507]: "7"
+                    - generic [ref=f14e508]: A
+                  - generic [ref=f14e509]: 0 to 40 A
+                - generic [ref=f14e510]:
+                  - generic [ref=f14e511]: Ambient Temp
+                  - generic [ref=f14e517]:
+                    - textbox [ref=f14e519]: "30"
+                    - generic [ref=f14e520]: °C
+                  - generic [ref=f14e521]: "-40 to 125 °C"
+                - generic [ref=f14e522]:
+                  - generic "Open design" [ref=f14e524]:
+                    - button "Open design" [ref=f14e525] [cursor=pointer]
+                  - link "What are TI design tools?" [ref=f14e527] [cursor=pointer]:
+                    - /url: http://www.ti.com/design-resources/design-tools-simulation.html
+    - generic [ref=f14e529]:
+      - heading "Ordering & quality" [level=3] [ref=f14e533]
+      - generic [ref=f14e535]:
+        - table [ref=f14e540]:
+          - rowgroup [ref=f14e541]:
+            - row [ref=f14e542]:
+              - columnheader [ref=f14e543]:
+                - button [ref=f14e545] [cursor=pointer]
+              - columnheader "Buy" [ref=f14e549]
+              - columnheader [ref=f14e550]:
+                - button [ref=f14e552] [cursor=pointer]
+              - columnheader [ref=f14e556]:
+                - button [ref=f14e558] [cursor=pointer]:
+                  - generic [ref=f14e559]:
+                    - generic:
+                      - text: Qty | Price (
+                      - generic [ref=f14e560]: USD
+                      - text: )
+              - columnheader [ref=f14e563]:
+                - button [ref=f14e565] [cursor=pointer]
+              - columnheader [ref=f14e569]:
+                - button [ref=f14e571] [cursor=pointer]
+              - columnheader [ref=f14e575]:
+                - button [ref=f14e577] [cursor=pointer]
+              - columnheader "Status" [ref=f14e581]
+              - columnheader "Operating temperature range (°C)" [ref=f14e582]
+              - columnheader [ref=f14e583]:
+                - button [ref=f14e585] [cursor=pointer]
+              - columnheader [ref=f14e589]:
+                - button [ref=f14e591] [cursor=pointer]
+              - columnheader [ref=f14e595]:
+                - button [ref=f14e597] [cursor=pointer]
+              - columnheader [ref=f14e601]:
+                - button [ref=f14e603] [cursor=pointer]
+              - columnheader [ref=f14e607]:
+                - generic [ref=f14e609]:
+                  - text: Quality, reliability & packaging information
+                  - generic [ref=f14e610]: info-circle
+              - columnheader [ref=f14e613]:
+                - generic [ref=f14e615]:
+                  - text: Additional manufacturing information
+                  - generic [ref=f14e616]: info-circle
+              - columnheader [ref=f14e619]:
+                - button [ref=f14e621] [cursor=pointer]
+            - row [ref=f14e625]:
+              - columnheader [ref=f14e626]
+              - columnheader [ref=f14e627]
+              - columnheader [ref=f14e628]
+              - columnheader [ref=f14e629]
+              - columnheader [ref=f14e630]:
+                - generic [ref=f14e632]:
+                  - button "Select; Click to toggle options" [ref=f14e634] [cursor=pointer]: Select
+                  - list [ref=f14e638]:
+                    - listitem [ref=f14e639]:
+                      - button "Close" [ref=f14e640] [cursor=pointer]
+                    - listitem [ref=f14e641]:
+                      - checkbox [ref=f14e642] [cursor=pointer]
+              - columnheader [ref=f14e644]:
+                - generic [ref=f14e646]:
+                  - button "Select; Click to toggle options" [ref=f14e648] [cursor=pointer]: Select
+                  - list [ref=f14e652]:
+                    - listitem [ref=f14e653]:
+                      - button "Close" [ref=f14e654] [cursor=pointer]
+                    - listitem [ref=f14e655]:
+                      - checkbox [ref=f14e656] [cursor=pointer]
+              - columnheader [ref=f14e658]
+              - columnheader [ref=f14e659]:
+                - generic [ref=f14e661]:
+                  - button "Select; Click to toggle options" [ref=f14e663] [cursor=pointer]: Select
+                  - list [ref=f14e667]:
+                    - listitem [ref=f14e668]:
+                      - button "Close" [ref=f14e669] [cursor=pointer]
+                    - listitem [ref=f14e670]:
+                      - checkbox [ref=f14e671] [cursor=pointer]
+              - columnheader [ref=f14e673]
+              - columnheader [ref=f14e674]
+              - columnheader [ref=f14e675]
+              - columnheader [ref=f14e676]
+              - columnheader [ref=f14e677]
+              - columnheader [ref=f14e678]
+              - columnheader [ref=f14e679]
+              - columnheader [ref=f14e680]
+        - table [ref=f14e685]:
+          - rowgroup [ref=f14e686]:
+            - row [ref=f14e687]:
+              - columnheader [ref=f14e688]:
+                - button [ref=f14e690] [cursor=pointer]
+              - columnheader "Buy" [ref=f14e694]
+              - columnheader [ref=f14e695]:
+                - button [ref=f14e697] [cursor=pointer]
+              - columnheader [ref=f14e701]:
+                - button [ref=f14e703] [cursor=pointer]:
+                  - generic [ref=f14e704]:
+                    - generic:
+                      - text: Qty | Price (
+                      - generic [ref=f14e705]: USD
+                      - text: )
+              - columnheader [ref=f14e708]:
+                - button [ref=f14e710] [cursor=pointer]
+              - columnheader [ref=f14e714]:
+                - button [ref=f14e716] [cursor=pointer]
+              - columnheader [ref=f14e720]:
+                - button [ref=f14e722] [cursor=pointer]
+              - columnheader "Status" [ref=f14e726]
+              - columnheader "Operating temperature range (°C)" [ref=f14e727]
+              - columnheader [ref=f14e728]:
+                - button [ref=f14e730] [cursor=pointer]
+              - columnheader [ref=f14e734]:
+                - button [ref=f14e736] [cursor=pointer]
+              - columnheader [ref=f14e740]:
+                - button [ref=f14e742] [cursor=pointer]
+              - columnheader [ref=f14e746]:
+                - button [ref=f14e748] [cursor=pointer]
+              - columnheader [ref=f14e752]:
+                - generic [ref=f14e754]:
+                  - text: Quality, reliability & packaging information
+                  - generic [ref=f14e755]: info-circle
+              - columnheader [ref=f14e758]:
+                - generic [ref=f14e760]:
+                  - text: Additional manufacturing information
+                  - generic [ref=f14e761]: info-circle
+              - columnheader [ref=f14e764]:
+                - button [ref=f14e766] [cursor=pointer]
+            - row [ref=f14e770]:
+              - columnheader [ref=f14e771]
+              - columnheader [ref=f14e772]
+              - columnheader [ref=f14e773]
+              - columnheader [ref=f14e774]
+              - columnheader [ref=f14e775]:
+                - generic [ref=f14e777]:
+                  - button "Select; Click to toggle options" [ref=f14e779] [cursor=pointer]: Select
+                  - list [ref=f14e783]:
+                    - listitem [ref=f14e784]:
+                      - button "Close" [ref=f14e785] [cursor=pointer]
+                    - listitem [ref=f14e786]:
+                      - checkbox [ref=f14e787] [cursor=pointer]
+              - columnheader [ref=f14e789]:
+                - generic [ref=f14e791]:
+                  - button "Select; Click to toggle options" [ref=f14e793] [cursor=pointer]: Select
+                  - list [ref=f14e797]:
+                    - listitem [ref=f14e798]:
+                      - button "Close" [ref=f14e799] [cursor=pointer]
+                    - listitem [ref=f14e800]:
+                      - checkbox [ref=f14e801] [cursor=pointer]
+              - columnheader [ref=f14e803]
+              - columnheader [ref=f14e804]:
+                - generic [ref=f14e806]:
+                  - button "Select; Click to toggle options" [ref=f14e808] [cursor=pointer]: Select
+                  - list [ref=f14e812]:
+                    - listitem [ref=f14e813]:
+                      - button "Close" [ref=f14e814] [cursor=pointer]
+                    - listitem [ref=f14e815]:
+                      - checkbox [ref=f14e816] [cursor=pointer]
+              - columnheader [ref=f14e818]
+              - columnheader [ref=f14e819]
+              - columnheader [ref=f14e820]
+              - columnheader [ref=f14e821]
+              - columnheader [ref=f14e822]
+              - columnheader [ref=f14e823]
+              - columnheader [ref=f14e824]
+              - columnheader [ref=f14e825]
+          - rowgroup [ref=f14e826]:
+            - row [ref=f14e827]:
+              - 'cell "LM5143RHAR Same as: LM5143RHAR.A" [ref=f14e828]':
+                - generic [ref=f14e829]:
+                  - link "LM5143RHAR" [ref=f14e836] [cursor=pointer]:
+                    - /url: /product/LM5143/part-details/LM5143RHAR
+                  - generic [ref=f14e837]: "Same as: LM5143RHAR.A"
+              - cell [ref=f14e839]:
+                - link "Log in to order" [ref=f14e844] [cursor=pointer]:
+                  - /url: /secure-link-forward/?gotoUrl=https%3A%2F%2Fwww.ti.com%2Fproduct%2FLM5143
+              - cell [ref=f14e845]:
+                - generic [ref=f14e846]:
+                  - link "Log in to view inventory" [ref=f14e850] [cursor=pointer]:
+                    - /url: /secure-link-forward/?gotoUrl=https%3A%2F%2Fwww.ti.com%2Fproduct%2FLM5143
+                  - button [ref=f14e856]:
+                    - generic:
+                      - generic [ref=f14e857]: alarm
+                      - text: Part notifications
+              - cell "1ku | $2.093 1-99 $3.851 100-249 $3.140 250-999 $2.468 1,000+ $2.093" [ref=f14e861]:
+                - generic [ref=f14e863]:
+                  - button "1ku | $2.093" [ref=f14e864]:
+                    - generic [ref=f14e865] [cursor=pointer]:
+                      - generic: 1ku | $2.093
+                      - generic [ref=f14e867]: chevron-down
+                  - generic [ref=f14e870]:
+                    - generic:
+                      - generic [ref=f14e871]:
+                        - generic:
+                          - generic [ref=f14e872]: 1-99
+                          - generic [ref=f14e873]: $3.851
+                      - generic [ref=f14e874]:
+                        - generic:
+                          - generic [ref=f14e875]: 100-249
+                          - generic [ref=f14e876]: $3.140
+                      - generic [ref=f14e877]:
+                        - generic:
+                          - generic [ref=f14e878]: 250-999
+                          - generic [ref=f14e879]: $2.468
+                      - generic [ref=f14e880]:
+                        - generic:
+                          - generic [ref=f14e881]: 1,000+
+                          - generic [ref=f14e882]: $2.093
+              - cell [ref=f14e883]:
+                - link "2,500 | LARGE T&R" [ref=f14e885] [cursor=pointer]:
+                  - /url: /packaging/docs/carriermaterial/carrierlookup?OPN=LM5143RHAR&state=details
+                - button "CUSTOM" [ref=f14e887]:
+                  - generic [ref=f14e888]: custom-reels
+                  - text: CUSTOM
+              - cell [ref=f14e891]:
+                - generic [ref=f14e892]:
+                  - link "VQFN (RHA)" [ref=f14e893] [cursor=pointer]:
+                    - /url: /lit/pdf/MPQF135D
+                  - text: "| 40"
+              - cell "Production" [ref=f14e894]
+              - cell [ref=f14e895]:
+                - link "ACTIVE" [ref=f14e899] [cursor=pointer]:
+                  - /url: ~/support-quality/quality-policies-procedures/product-life-cycle.html
+              - cell "-40 to 150" [ref=f14e904]
+              - cell "NiPdAu" [ref=f14e905]
+              - cell "Level-3-260C-168 HR" [ref=f14e906]
+              - cell "Yes" [ref=f14e907]
+              - cell "Yes" [ref=f14e908]
+              - cell [ref=f14e909]:
+                - link "View or download" [ref=f14e910] [cursor=pointer]:
+                  - /url: /quality-reliability-packaging-download/report?opn=LM5143RHAR
+              - cell [ref=f14e911]:
+                - link "View" [ref=f14e912] [cursor=pointer]:
+                  - /url: /material-attributes-search?material=LM5143RHAR
+              - cell [ref=f14e913]:
+                - link "Request sample" [ref=f14e914] [cursor=pointer]:
+                  - /url: /product/LM5143/part-details/LM5143RHAR
+    - generic [ref=f14e919]:
+      - heading "Products to complete your design" [level=2] [ref=f14e920]
+      - generic [ref=f14e922]:
+        - group "Carousel navigation":
+          - button "Previous slide" [disabled] [ref=f14e923]:
+            - generic [ref=f14e924]: chevron-left
+          - button "Next slide" [ref=f14e927] [cursor=pointer]:
+            - generic [ref=f14e928]: chevron-right
+        - generic [ref=f14e933]:
+          - generic:
+            - article [ref=f14e938]:
+              - generic [ref=f14e940]:
+                - link [ref=f14e943] [cursor=pointer]:
+                  - /url: /product/TPS548B23
+                - generic [ref=f14e945]:
+                  - link "DC/DC converters" [ref=f14e946] [cursor=pointer]:
+                    - /url: /product-category/power-management/dc-dc-switching-regulators/dc-dc-converters/overview.html
+                  - generic [ref=f14e948]:
+                    - heading [level=4] [ref=f14e949]:
+                      - generic [ref=f14e950]:
+                        - link "TPS548B23" [ref=f14e951] [cursor=pointer]:
+                          - /url: /product/TPS548B23
+                        - generic: ACTIVE
+                    - generic [ref=f14e956]: 4V to 16V, 20A synchronous step-down converter
+              - generic [ref=f14e959]: Approx. price (USD) 1ku | 1.714
+              - link "Data sheet (PDF)" [ref=f14e963] [cursor=pointer]:
+                - /url: https://www.ti.com/lit/gpn/TPS548B23
+              - link "Online data sheet" [ref=f14e965] [cursor=pointer]:
+                - /url: https://www.ti.com/document-viewer/TPS548B23/datasheet
+            - article [ref=f14e970]:
+              - generic [ref=f14e972]:
+                - link [ref=f14e975] [cursor=pointer]:
+                  - /url: /product/LM74930-Q1
+                - generic [ref=f14e977]:
+                  - link "Ideal diode & ORing controllers" [ref=f14e978] [cursor=pointer]:
+                    - /url: /product-category/power-management/power-protection-switches-controllers/ideal-diode-oring-controllers/overview.html
+                  - generic [ref=f14e980]:
+                    - heading [level=4] [ref=f14e981]:
+                      - generic [ref=f14e982]:
+                        - link "LM74930-Q1" [ref=f14e983] [cursor=pointer]:
+                          - /url: /product/LM74930-Q1
+                        - generic: ACTIVE
+                    - generic [ref=f14e988]: Automotive 3-V to 65-V surge stopper with circuit breaker and overvoltage protection
+              - generic [ref=f14e991]: Approx. price (USD) 1ku | 2.277
+              - link "Data sheet (PDF)" [ref=f14e995] [cursor=pointer]:
+                - /url: https://www.ti.com/lit/gpn/LM74930-Q1
+              - link "Online data sheet" [ref=f14e997] [cursor=pointer]:
+                - /url: https://www.ti.com/document-viewer/LM74930-Q1/datasheet
+            - article [ref=f14e1002]:
+              - generic [ref=f14e1004]:
+                - link [ref=f14e1007] [cursor=pointer]:
+                  - /url: /product/BQ25756
+                - generic [ref=f14e1009]:
+                  - link "Battery charger ICs" [ref=f14e1010] [cursor=pointer]:
+                    - /url: /product-category/battery-management-ics/battery-charger-ics/overview.html
+                  - generic [ref=f14e1012]:
+                    - heading [level=4] [ref=f14e1013]:
+                      - generic [ref=f14e1014]:
+                        - link "BQ25756" [ref=f14e1015] [cursor=pointer]:
+                          - /url: /product/BQ25756
+                        - generic: ACTIVE
+                    - generic [ref=f14e1020]: Stand-alone or I²C-controlled 70-V bidirectional buck-boost charge controller with MPPT
+              - generic [ref=f14e1023]: Approx. price (USD) 1ku | 2.990
+              - link "Data sheet (PDF)" [ref=f14e1027] [cursor=pointer]:
+                - /url: https://www.ti.com/lit/gpn/BQ25756
+              - link "Online data sheet" [ref=f14e1029] [cursor=pointer]:
+                - /url: https://www.ti.com/document-viewer/BQ25756/datasheet
+            - article [ref=f14e1034]:
+              - generic [ref=f14e1036]:
+                - link [ref=f14e1039] [cursor=pointer]:
+                  - /url: /product/SN74LVC1G08
+                - generic [ref=f14e1041]:
+                  - link "AND gates" [ref=f14e1042] [cursor=pointer]:
+                    - /url: /product-category/logic-voltage-translation/logic-gates/and-gates/overview.html
+                  - generic [ref=f14e1044]:
+                    - heading [level=4] [ref=f14e1045]:
+                      - generic [ref=f14e1046]:
+                        - link "SN74LVC1G08" [ref=f14e1047] [cursor=pointer]:
+                          - /url: /product/SN74LVC1G08
+                        - generic: ACTIVE
+                    - generic [ref=f14e1052]: 1-ch, 2-input 1.65-V to 5.5-V 32 mA drive strength AND gate
+              - generic [ref=f14e1055]: Approx. price (USD) 1ku | 0.024
+              - link "Data sheet (PDF)" [ref=f14e1059] [cursor=pointer]:
+                - /url: https://www.ti.com/lit/gpn/SN74LVC1G08
+              - link "Online data sheet" [ref=f14e1061] [cursor=pointer]:
+                - /url: https://www.ti.com/document-viewer/SN74LVC1G08/datasheet
+            - article [ref=f14e1066]:
+              - generic [ref=f14e1068]:
+                - link [ref=f14e1071] [cursor=pointer]:
+                  - /url: /product/TPS22997
+                - generic [ref=f14e1073]:
+                  - link "Load switches" [ref=f14e1074] [cursor=pointer]:
+                    - /url: /product-category/power-management/load-switches/overview.html
+                  - generic [ref=f14e1076]:
+                    - heading [level=4] [ref=f14e1077]:
+                      - generic [ref=f14e1078]:
+                        - link "TPS22997" [ref=f14e1079] [cursor=pointer]:
+                          - /url: /product/TPS22997
+                        - generic: ACTIVE
+                    - generic [ref=f14e1084]: 5.5-V 10-A 4-mΩ on-resistance load switch with power good
+              - generic [ref=f14e1087]: Approx. price (USD) 1ku | 0.276
+              - link "Data sheet (PDF)" [ref=f14e1091] [cursor=pointer]:
+                - /url: https://www.ti.com/lit/gpn/TPS22997
+              - link "Online data sheet" [ref=f14e1093] [cursor=pointer]:
+                - /url: https://www.ti.com/document-viewer/TPS22997/datasheet
+        - generic [ref=f14e1094]: Slides 1 to 2 of 5
+      - paragraph [ref=f14e1096]: Recommended products may have parameters, evaluation modules or reference designs related to this TI product.
+    - generic [ref=f14e1097]:
+      - heading "Support & training" [level=3] [ref=f14e1101]
+      - article [ref=f14e1102]:
+        - generic [ref=f14e1104]:
+          - heading "TI E2E™ forums with technical support from TI engineers" [level=4] [ref=f14e1105]
+          - progressbar "Progress... Please wait" [ref=f14e1111]
+          - link "View all forum topics" [ref=f14e1116] [cursor=pointer]:
+            - /url: https://e2e.ti.com/search?category=forum&q=LM5143
+          - paragraph [ref=f14e1117]:
+            - generic [ref=f14e1118]:
+              - text: Content is provided "as is" by TI and community contributors and does not constitute TI specifications. See
+              - link "terms of use" [ref=f14e1119] [cursor=pointer]:
+                - /url: /legal/terms-conditions/terms-of-use.html
+              - text: .
+          - paragraph [ref=f14e1120]:
+            - text: If you have questions about quality, packaging or ordering TI products, see
+            - link "TI support" [ref=f14e1121] [cursor=pointer]:
+              - /url: /info/customer-support.html
+            - text: .
+      - article [ref=f14e1122]:
+        - progressbar "Progress... Please wait" [ref=f14e1130]
+      - article [ref=f14e1133]:
+        - progressbar "Progress... Please wait" [ref=f14e1138]
+  - generic [ref=f14e1147]:
+    - generic [ref=f14e1150]:
+      - text: Los sitios web de TI utilizan cookies para optimizar la funcionalidad del sitio y mejorar su experiencia. Para obtener más información o cambiar sus preferencias, visite nuestra página acerca de la
+      - link "política de cookies" [ref=f14e1151] [cursor=pointer]:
+        - /url: https://www.ti.com/legal/terms-conditions/cookie-policy/north-america.html?dnt=1
+      - text: . Haga clic en Aceptar y continuar para aceptar las cookies y acceder al sitio.
+    - generic [ref=f14e1152]:
+      - link "Administrar preferencias" [ref=f14e1153] [cursor=pointer]:
+        - /url: javascript:void(0)
+      - link "Aceptar y continuar" [ref=f14e1154] [cursor=pointer]:
+        - /url: javascript:void(0)
