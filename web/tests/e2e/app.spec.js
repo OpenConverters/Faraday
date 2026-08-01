@@ -247,3 +247,50 @@ test('a candidate switch node is offered, promoted with provenance, demoted',
     await expect(page.getByTestId('meta-switchnodes')).toHaveCount(0)
     await expect(page.getByTestId('promote-SWX')).toBeVisible()
   })
+
+test('near field RUNS on a promoted candidate — the #410 loop closes',
+  async ({ page }) => {
+    // The original failure shape was "why is the near-field button not
+    // working?" on an unrecognized converter. Promotion must not just
+    // enable the button — the field map must actually compute, because the
+    // bench functions carry the session's promoted nets too.
+    const buck = `(kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SWX") (net 2 "GND") (net 3 "VIN") (net 4 "VOUT")
+      (segment (start 5 5) (end 12 5) (width 1.0) (layer "F.Cu") (net 1))
+      (zone (net 2) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 30))))
+      (footprint "buck" (layer "F.Cu") (at 5 5)
+        (property "Reference" "U1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 3 "VIN"))
+        (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net 1 "SWX"))
+        (pad "3" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net 2 "GND"))
+        (pad "4" smd rect (at 3 0) (size 1 1) (layers "F.Cu") (net 0 ""))
+        (pad "5" smd rect (at 4 0) (size 1 1) (layers "F.Cu") (net 0 "")))
+      (footprint "l" (layer "F.Cu") (at 12 5)
+        (property "Reference" "L1")
+        (pad "1" smd rect (at 0 0) (size 1.5 1.5) (layers "F.Cu") (net 1 "SWX"))
+        (pad "2" smd rect (at 2 0) (size 1.5 1.5) (layers "F.Cu") (net 4 "VOUT")))
+      (footprint "cin" (layer "F.Cu") (at 3 8)
+        (property "Reference" "C1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 3 "VIN"))
+        (pad "2" smd rect (at 1.5 0) (size 1 1) (layers "F.Cu") (net 2 "GND")))
+      (footprint "cout" (layer "F.Cu") (at 16 8)
+        (property "Reference" "C2")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 4 "VOUT"))
+        (pad "2" smd rect (at 1.5 0) (size 1 1) (layers "F.Cu") (net 2 "GND")))
+    )`
+    const consoleErrors = []
+    page.on('pageerror', e => consoleErrors.push(String(e)))
+    await page.goto('/')
+    await page.getByTestId('file-input').setInputFiles({
+      name: 'buck.kicad_pcb', mimeType: 'text/plain', buffer: Buffer.from(buck),
+    })
+    await expect(page.getByTestId('finding-count')).toBeVisible()
+    await page.getByTestId('promote-SWX').click()
+    const nf = page.getByTestId('nf-toggle')
+    await expect(nf).toBeEnabled()
+    await nf.click()
+    await expect(page.getByTestId('nf-bar')).toBeVisible()
+    expect(consoleErrors).toEqual([])
+  })
