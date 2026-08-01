@@ -1618,3 +1618,42 @@ TEST_CASE("mesh: the derived loop is invariant to pad order and exporter "
     // and the cap is the one closing the SMALLEST loop, not the first seen
     CHECK(ma->chain == std::vector<std::string>{"C9"});
 }
+
+TEST_CASE("screener: a T-junction is not a dangling stub — mid-segment "
+          "contact anchors",
+          "[screener][dangling]") {
+    // A stub whose end lands on the INTERIOR of a same-net track (the way
+    // Gerber draws and generated boards route) must not read as open
+    // copper; a stub that truly ends in air still must. Found by Faraday
+    // reviewing Hertz's first generated filter board, where every rail
+    // stub was flagged.
+    std::string t = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "RAIL") (net 2 "GND")
+      (segment (start 5 10) (end 45 10) (width 2.0) (layer "F.Cu") (net 1))
+      (segment (start 25 10) (end 25 20) (width 1.0) (layer "F.Cu") (net 1))
+      (segment (start 35 10) (end 35 3) (width 1.0) (layer "F.Cu") (net 1))
+      (zone (net 2) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 50 0) (xy 50 25) (xy 0 25))))
+      (footprint "a" (layer "F.Cu") (at 5 10)
+        (property "Reference" "J1")
+        (pad "1" thru_hole circle (at 0 0) (size 2 2) (drill 1) (layers "*.Cu") (net 1 "RAIL")))
+      (footprint "b" (layer "F.Cu") (at 25 20)
+        (property "Reference" "C1")
+        (pad "1" smd rect (at 0 0) (size 1.5 1.5) (layers "F.Cu") (net 1 "RAIL")))
+    ))";
+    BoardIR b = import_kicad(t, builtin_stackup("default-2layer"));
+    nlohmann::json report = analyze_board(b);
+    int dangling = 0;
+    std::string titles;
+    for (const auto& f : report["findings"])
+        if (f["rule"] == "dangling-stub") {
+            ++dangling;
+            titles += f["title"].get<std::string>() + "; ";
+        }
+    // the rail's right end (45,10) truly ends in air, and the second stub's
+    // far end (35,3) does too — but the T-ing stub at (25,10) and the
+    // stub-to-pad end (25,20) are CONNECTED copper
+    INFO(titles);
+    CHECK(dangling == 2);
+}

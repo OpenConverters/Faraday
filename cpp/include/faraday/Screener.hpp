@@ -1783,6 +1783,32 @@ class Screener {
                             std::hypot(v.x - ex, v.y - ey) <= v.size) {
                             anchored = true; break;
                         }
+                // T-junction: the endpoint lands on the BODY of another
+                // same-net track. Endpoint counting cannot see it, and
+                // Gerber-derived boards (and generated ones — caught by
+                // Faraday reviewing Hertz's first emitted filter) join
+                // mid-segment routinely; KiCad's router splits tracks at
+                // junctions, which is why the corpus never showed it.
+                if (!anchored)
+                    for (const auto& t : b_.segments) {
+                        if (t.net != s.net || t.cu != s.cu) continue;
+                        if (&t == &s) continue;
+                        const double tdx = t.x2 - t.x1, tdy = t.y2 - t.y1;
+                        const double L2 = tdx * tdx + tdy * tdy;
+                        double u = L2 > 0
+                                       ? ((ex - t.x1) * tdx + (ey - t.y1) * tdy) / L2
+                                       : 0.0;
+                        u = std::clamp(u, 0.0, 1.0);
+                        // interior contact only — endpoint-to-endpoint is
+                        // already what `touch` counts
+                        if (u <= 0.02 || u >= 0.98) continue;
+                        if (std::hypot(ex - (t.x1 + u * tdx),
+                                       ey - (t.y1 + u * tdy)) <=
+                            t.width / 2.0 + 0.01) {
+                            anchored = true;
+                            break;
+                        }
+                    }
                 if (anchored) continue;
                 double h = ref_height(s.cu);
                 Finding f;
