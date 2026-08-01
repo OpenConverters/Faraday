@@ -6,6 +6,8 @@ Faraday loads a PCB layout, screens the whole board with computational geometry 
 transmission-line physics, and returns a **ranked list of crosstalk and EMC risk findings** —
 each with the mechanism, the number, a stated confidence tier, and a remediation hint.
 
+![Faraday demo: the MPPT demo board loads, findings rank, the derived commutation loop opens, the near-field map renders](docs/faraday-demo.gif)
+
 ## Formats
 
 | Format | Reaches | Notes |
