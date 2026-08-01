@@ -39,6 +39,13 @@ resonance, computed from the PDN branch model, §5.5/§5.9.5) and `edge-radiatio
 (switch-node copper at the board edge). Pads carry their pin names through every importer,
 so conduction paths are derivable, not guessed.
 
+Monolithic converters (switcher IC + inductor, no discrete FET) surface as **candidate**
+switch nodes: the evidence is shown in the meta strip and one click screens the net
+(recorded as user-declared in the report). They are never screened automatically, because a
+linear regulator followed by an LC filter presents the identical external netlist — measured,
+not assumed. A net with a capacitor straight to the return is never a switch node at all:
+the cap would short the switch every cycle.
+
 Faraday is an automated **design review**, not compliance prediction. Screening-tier numbers are
 first-order estimates for *ranking* risk; a field-solver tier (OMFEM 2D cross-section RLGC +
 in-process ngspice via Kirchhoff) refines selected pairs.

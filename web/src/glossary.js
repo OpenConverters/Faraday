@@ -63,10 +63,18 @@ export const RULES = [
   {
     id: 'switch-node',
     name: 'Switch node',
-    what: 'A converter’s switching net, found by connectivity (FET + inductor pattern), with the copper area it exposes.',
+    what: 'A converter’s switching net, found by connectivity (FET + inductor pattern, with physics vetoes: a net with a capacitor straight to the return can never switch — the cap would short the switch every cycle), with the copper area it exposes.',
     physics: 'High dV/dt copper is an E-field source: every mm² couples displacement current into whatever lies near or under it.',
     fix: 'Minimise the exposed copper consistent with thermal needs; keep sensitive routing away and off adjacent layers.',
-    confidence: 'heuristic (connectivity pattern)',
+    confidence: 'heuristic (connectivity pattern), or user-declared for promoted candidates',
+  },
+  {
+    id: 'switch-node-candidate',
+    name: 'Candidate switch node',
+    what: 'A net that looks like a MONOLITHIC converter — switcher IC + inductor, no discrete FET: a wound part and active silicon on a compact net, no capacitor to the return, and two distinct filtered rails (energy moves between them). Offered in the meta strip, never screened automatically.',
+    physics: 'From layout data alone this shape is irreducibly ambiguous: a linear regulator followed by an LC filter presents the identical external netlist (measured on a real SDR board — feedback resistors, copper width and package size all fail to separate them). Faraday will not guess; it shows the evidence and lets you decide.',
+    fix: 'If the net IS a switcher’s output, click it in the meta strip — it screens fully (commutation loop, near field, coupled-run boosts) and the exported report records the provenance as user-declared.',
+    confidence: 'evidence shown, decision yours',
   },
   {
     id: 'commutation-loop',

@@ -68,7 +68,8 @@ int main(int argc, char** argv) {
         std::cerr << "usage: faraday_cli <board.kicad_pcb|board.hyp|board.xml> "
                      "[--stackup default-<N>layer|stackup.json] [-o report.json] "
                      "[--fail-on high|medium] [--baseline old.json "
-                     "[--fail-on-regression high|medium]]\n"
+                     "[--fail-on-regression high|medium]] "
+                     "[--switch-net NAME]...\n"
                      "       format is detected from the file's contents\n";
         return 2;
     }

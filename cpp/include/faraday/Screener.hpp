@@ -1190,19 +1190,29 @@ class Screener {
             f.rule = "switch-node";
             f.severity = std::clamp(0.25 + area / 500.0, 0.25, 0.6);
             f.severity_label = f.severity > 0.33 ? "medium" : "low";
-            f.confidence = "heuristic";
+            // provenance must not lie: a promoted candidate was DECLARED by
+            // the user, not identified by connectivity
+            const bool user_declared = sw_user_.count(net) > 0;
+            f.confidence = user_declared ? "user-declared" : "heuristic";
             f.net_a = net;
             f.coupled_len_mm = area;  // mm^2 — the extent metric for this rule
             char buf[200];
             std::snprintf(buf, sizeof buf,
-                          "Net %s joins an inductor pad and a switch/diode pad — "
-                          "identified as a converter switch node (dv/dt "
-                          "aggressor). Copper extent %.0f mm^2.",
+                          user_declared
+                              ? "Net %s is screened as a converter switch node "
+                                "(dv/dt aggressor) because YOU declared it one. "
+                                "Copper extent %.0f mm^2."
+                              : "Net %s joins an inductor pad and a switch/diode "
+                                "pad — identified as a converter switch node "
+                                "(dv/dt aggressor). Copper extent %.0f mm^2.",
                           b_.net_name(net).c_str(), area);
             f.title = "Switch node: " + b_.net_name(net) + " (extent " +
                       std::to_string((int)area) + " mm^2)";
             f.detail = std::string(buf) +
-                       " Verify the identification; every mm^2 of SW copper "
+                       (user_declared
+                            ? " Every mm^2 of SW copper "
+                            : " Verify the identification; every mm^2 of SW "
+                              "copper ") +
                        "radiates dv/dt — coupled runs involving this net are "
                        "severity-boosted in this report.";
             f.remediation = "Minimize SW copper area, keep it away from sense/"
