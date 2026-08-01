@@ -39,6 +39,11 @@ resonance, computed from the PDN branch model, §5.5/§5.9.5) and `edge-radiatio
 (switch-node copper at the board edge). Pads carry their pin names through every importer,
 so conduction paths are derivable, not guessed.
 
+The derived meshes are validated against a real-board corpus — vendor-documented EVM hot
+loops, human-reviewed member sets, format-determinism pins. The full ledger (stats,
+wrong-member cases found and fixed, format coverage) lives in
+[corpus/README.md](corpus/README.md).
+
 Monolithic converters (switcher IC + inductor, no discrete FET) surface as **candidate**
 switch nodes: the evidence is shown in the meta strip and one click screens the net
 (recorded as user-declared in the report). They are never screened automatically, because a
