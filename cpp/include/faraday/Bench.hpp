@@ -423,6 +423,30 @@ inline nlohmann::json emissions_json(const emc::Prediction& p, int max_points) {
                       : (p.worst_margin_db < 6 ? "watch" : "ok")}};
 }
 
+// Conducted (pre-hardware) estimate — the noise source a filter designer
+// needs, in the exact per-mode dBuV shape Hertz's Spectrum screen consumes.
+// Bands are stated IN the payload; they are seeding estimates, never data.
+inline nlohmann::json conducted_estimate(const nlohmann::json& j) {
+    auto est = emc::conducted_estimate(
+        trapezoid_from_json(j), j.value("cInF", 10e-6),
+        j.value("eslH", 10e-9), j.value("esrOhm", 0.01),
+        j.value("vBusV", 48.0), j.value("cStrayF", 50e-12));
+    nlohmann::json dm = nlohmann::json::array();
+    nlohmann::json cm = nlohmann::json::array();
+    for (size_t i = 0; i < est.f_hz.size(); ++i) {
+        dm.push_back({est.f_hz[i], est.dm_dbuv[i]});
+        cm.push_back({est.f_hz[i], est.cm_dbuv[i]});
+    }
+    return {{"spectra", {{"dm", dm}, {"cm", cm}}},
+            {"points", est.f_hz.size()},
+            {"bands", {{"dmDb", 10.0}, {"cmDb", 15.0}}},
+            {"note",
+             "pre-hardware SEEDING estimate: DM = trapezoid comb x input-cap "
+             "branch impedance (~+/-10 dB); CM = dV/dt through an ASSUMED "
+             "C_stray to earth (~+/-15 dB). Design with margin; verify with "
+             "a LISN."}};
+}
+
 inline nlohmann::json predict_emissions(const nlohmann::json& j) {
     if (!j.contains("areaMm2") || !j.at("areaMm2").is_number())
         throw std::invalid_argument(

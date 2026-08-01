@@ -434,3 +434,90 @@ inline Prediction predict_loop(double area_mm2, const Trapezoid& t,
 }
 
 }  // namespace faraday::emc
+
+// ---------------------------------------------------------------------------
+// Conducted estimate (pre-hardware) — the bridge to a filter design
+// ---------------------------------------------------------------------------
+// The SAME trapezoid, driven into the two conducted paths a LISN measures:
+//
+//   DM: the switch cell draws |I_n| from the input capacitor; what the LISN
+//       sees is the residual across the capacitor branch,
+//       V ~ |I_n| · |Z_cin|,  Z_cin = ESR + jwL_branch + 1/(jwC)
+//       (valid while |Z_cin| << the 100-ohm LISN path — true for any real
+//       input capacitor in the band).
+//   CM: the switch-node VOLTAGE trapezoid pumps the stray capacitance to
+//       chassis/earth, I_cm = V_n · wC_stray (|Z_stray| >> 25 ohm), and the
+//       LISN's 25-ohm common path converts it, V = I_cm · 25.
+//
+// These are SEEDING estimates for a filter design, not measurements: the DM
+// band is ~+/-10 dB (branch parasitics assumed), the CM band ~+/-15 dB
+// (C_stray is an assumption by construction). Both bands ride on top of the
+// +10 dB design margin the filter chain adds. Every value is dBuV.
+
+namespace faraday::emc {
+
+struct ConductedEstimate {
+    std::vector<double> f_hz;
+    std::vector<double> dm_dbuv;
+    std::vector<double> cm_dbuv;
+};
+
+inline ConductedEstimate conducted_estimate(const Trapezoid& t, double c_in_f,
+                                            double esl_h, double esr_ohm,
+                                            double v_bus_v, double c_stray_f,
+                                            double f1_hz = 150e3,
+                                            double f2_hz = 30e6) {
+    if (!(c_in_f > 0) || !(esl_h >= 0) || !(esr_ohm >= 0))
+        throw std::invalid_argument("conducted: input-cap branch must be physical");
+    if (!(v_bus_v > 0) || !(c_stray_f > 0))
+        throw std::invalid_argument("conducted: bus voltage and C_stray must be > 0");
+    if (!(f1_hz > 0) || !(f2_hz > f1_hz))
+        throw std::invalid_argument("conducted: bad band");
+    Trapezoid v = t;            // the voltage trapezoid: same timing, V_bus high
+    v.amplitude_a = v_bus_v;
+    ConductedEstimate out;
+    // dense comb up to harmonic 40, then max-hold per 1/12 decade — a URL-
+    // sized spectrum that still contains every envelope feature
+    const int n_max = (int)(f2_hz / t.f_sw_hz);
+    double bucket_top = 0.0;
+    double bucket_dm = -1e30, bucket_cm = -1e30, bucket_f = 0.0;
+    auto flush = [&]() {
+        if (bucket_f > 0.0) {
+            out.f_hz.push_back(bucket_f);
+            out.dm_dbuv.push_back(bucket_dm);
+            out.cm_dbuv.push_back(bucket_cm);
+        }
+        bucket_dm = bucket_cm = -1e30;
+        bucket_f = 0.0;
+    };
+    for (int n = 1; n <= n_max; ++n) {
+        const double f = n * t.f_sw_hz;
+        if (f < f1_hz || f > f2_hz) continue;
+        const double w = 2.0 * PI_E * f;
+        const double z_cin = std::hypot(esr_ohm, w * esl_h - 1.0 / (w * c_in_f));
+        const double v_dm = harmonic_a(t, n) * z_cin;
+        const double v_cm = harmonic_a(v, n) * w * c_stray_f * 25.0;
+        const double dm = 20.0 * std::log10(std::max(v_dm, 1e-12) / 1e-6);
+        const double cm = 20.0 * std::log10(std::max(v_cm, 1e-12) / 1e-6);
+        if (n <= 40) {
+            out.f_hz.push_back(f);
+            out.dm_dbuv.push_back(dm);
+            out.cm_dbuv.push_back(cm);
+            continue;
+        }
+        if (f > bucket_top) {   // new 1/12-decade bucket
+            flush();
+            bucket_top = f * std::pow(10.0, 1.0 / 12.0);
+        }
+        if (dm > bucket_dm) { bucket_dm = dm; bucket_f = f; }
+        if (cm > bucket_cm) bucket_cm = cm;
+    }
+    flush();
+    if (out.f_hz.empty())
+        throw std::invalid_argument(
+            "conducted: no switching harmonic falls inside the band — at this "
+            "f_sw the conducted story starts above 30 MHz");
+    return out;
+}
+
+}  // namespace faraday::emc

@@ -55,6 +55,33 @@ function run() {
   }
 }
 function onInput() { run(); runCm(); nextTick(draw) }
+
+// ── the bridge to Hertz: a pre-hardware CONDUCTED estimate from the same
+// trapezoid, handed to hertz.openconverters.com as a URL fragment — the data
+// travels in the #hash, which never reaches any server. Bands are stated in
+// the payload; this SEEDS a filter design, it does not replace a LISN.
+const vBus = ref(48)
+const cStrayPf = ref(50)
+const cInUf = ref(10)
+const hertzError = ref('')
+function designInHertz() {
+  hertzError.value = ''
+  try {
+    const est = JSON.parse(props.engine.conductedEstimate(JSON.stringify({
+      currentA: current.value, fSwKhz: fsw.value, duty: duty.value,
+      riseNs: rise.value, vBusV: vBus.value, cStrayF: cStrayPf.value * 1e-12,
+      cInF: cInUf.value * 1e-6,
+    })))
+    if (est.error) { hertzError.value = est.error; return }
+    const payload = {
+      v: 1, source: 'faraday', fSwHz: fsw.value * 1e3,
+      bands: est.bands, note: est.note, spectra: est.spectra,
+    }
+    const frag = btoa(unescape(encodeURIComponent(JSON.stringify(payload))))
+    window.open('https://hertz.openconverters.com/#handoff=' + frag, '_blank',
+                'noopener')
+  } catch (e) { hertzError.value = String(e.message || e) }
+}
 watch([limit, ground], onInput)
 
 // ---- the chart -----------------------------------------------------------
@@ -286,11 +313,45 @@ const where = computed(() => {
         <label class="chk"><input type="checkbox" v-model="ground" />
           <span>ground-plane reflection (+6 dB)</span></label>
       </div>
+
+      <div class="hertz-bridge" data-testid="hertz-bridge">
+        <p class="k line">conducted → filter design</p>
+        <p class="note">The same switching waveform, driven into the two paths a LISN
+          measures: DM through the input-capacitor branch, CM through an <em>assumed</em>
+          stray capacitance to earth. A seeding estimate (DM ±10 dB, CM ±15 dB) — enough
+          to design the line filter <b>before hardware exists</b>; verify with a LISN.</p>
+        <div class="controls">
+          <label class="sl"><span>bus voltage <b>{{ num(vBus, 0) }} V</b></span>
+            <input data-testid="bridge-vbus" type="range" min="5" max="800" step="1"
+                   v-model.number="vBus" /></label>
+          <label class="sl"><span>C_stray to earth <b>{{ num(cStrayPf, 0) }} pF</b> (assumed)</span>
+            <input data-testid="bridge-cstray" type="range" min="5" max="500" step="5"
+                   v-model.number="cStrayPf" /></label>
+          <label class="sl"><span>input capacitor <b>{{ num(cInUf, 0) }} µF</b></span>
+            <input data-testid="bridge-cin" type="range" min="0.1" max="200" step="0.1"
+                   v-model.number="cInUf" /></label>
+        </div>
+        <button class="hbtn" data-testid="design-in-hertz" @click="designInHertz">
+          design the input filter in Hertz →</button>
+        <span v-if="hertzError" class="warn" data-testid="hertz-bridge-error">{{ hertzError }}</span>
+        <p class="note">Opens hertz.openconverters.com with the predicted CM/DM spectra in the
+          URL <b>fragment</b> — the part of a URL that never leaves your browser. Hertz judges
+          them against the limit, designs the filter, and can generate the filter's own PCB.</p>
+      </div>
     </section>
   </div>
 </template>
 
 <style scoped>
+.hertz-bridge {
+  margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--resin-edge, #2a3a32);
+}
+.hertz-bridge .hbtn {
+  margin-top: 6px; padding: 7px 14px; cursor: pointer;
+  background: none; color: #58c79a; border: 1px solid #2a5a46; border-radius: 5px;
+  font: 600 13px/1 var(--mono, monospace); letter-spacing: .03em;
+}
+.hertz-bridge .hbtn:hover { border-color: #58c79a; }
 .scrim {
   position: fixed; inset: 0; z-index: 50;
   background: rgba(8, 12, 10, 0.72);

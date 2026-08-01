@@ -162,6 +162,16 @@ static std::string solve_pair(std::string request_json) {
     }
 }
 
+static std::string conducted_estimate_js(std::string request_json) {
+    try {
+        return faraday::bench::conducted_estimate(
+                   nlohmann::json::parse(request_json))
+            .dump();
+    } catch (const std::exception& e) {
+        return nlohmann::json{{"error", e.what()}}.dump();
+    }
+}
+
 static std::string predict_emissions(std::string request_json) {
     try {
         return faraday::bench::predict_emissions(
@@ -256,6 +266,7 @@ EMSCRIPTEN_BINDINGS(faraday) {
     emscripten::function("fixStitching", &fix_stitching);
     emscripten::function("solvePair", &solve_pair);
     emscripten::function("predictEmissions", &predict_emissions);
+    emscripten::function("conductedEstimate", &conducted_estimate_js);
     emscripten::function("cmBudget", &cm_budget);
     emscripten::function("returnPath", &return_path);
     emscripten::function("pdn", &pdn_map);

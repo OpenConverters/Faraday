@@ -311,3 +311,48 @@ test('revision diff: removing the plane is called a regression, with badges',
     await expect(page.getByTestId('diff-bar')).toHaveCount(0)
     await expect(page.getByTestId('finding-count')).toHaveText(String(total))
   })
+
+test('the Faraday→Hertz bridge: conducted estimate leaves as a URL fragment',
+  async ({ page, context }) => {
+    // The emissions panel gains a CONDUCTED estimate — the same trapezoid
+    // driven into the LISN's two paths — and hands it to Hertz for filter
+    // design. The payload rides in the #fragment (never reaches a server)
+    // and must decode to the per-mode dBuV spectra with stated bands.
+    await page.goto('/')
+    await page.getByTestId('file-input').setInputFiles(
+      new URL('../../../cpp/tests/fixtures/real/mppt-2420-hc.kicad_pcb',
+              import.meta.url).pathname)
+    await expect(page.getByTestId('finding-count')).toBeVisible()
+    const loop = page.locator('[data-testid^="finding-F-"]',
+                              { hasText: 'Commutation loop' }).first()
+    await loop.click()
+    const id = (await loop.getAttribute('data-testid')).replace('finding-', '')
+    await page.getByTestId(`emit-${id}`).click()
+    const bridge = page.getByTestId('hertz-bridge')
+    await expect(bridge).toBeVisible()
+    await expect(bridge).toContainText('assumed')      // C_stray honesty
+    await expect(bridge).toContainText('±15 dB')
+
+    const [popup] = await Promise.all([
+      context.waitForEvent('page'),
+      page.getByTestId('design-in-hertz').click(),
+    ])
+    const url = popup.url()
+    expect(url).toContain('hertz.openconverters.com/#handoff=')
+    const payload = JSON.parse(Buffer.from(
+      url.split('#handoff=')[1], 'base64').toString('utf8'))
+    expect(payload.v).toBe(1)
+    expect(payload.source).toBe('faraday')
+    expect(payload.spectra.dm.length).toBeGreaterThan(30)
+    expect(payload.spectra.cm.length).toBeGreaterThan(30)
+    expect(payload.bands.cmDb).toBe(15)
+    expect(payload.note).toContain('SEEDING')
+    // every point in band, dBuV plausible
+    for (const [f, v] of payload.spectra.dm) {
+      expect(f).toBeGreaterThanOrEqual(150e3)
+      expect(f).toBeLessThanOrEqual(30e6)
+      expect(v).toBeGreaterThan(-130)   // sinc NULLS of the comb are real
+      expect(v).toBeLessThan(180)
+    }
+    await popup.close()
+  })

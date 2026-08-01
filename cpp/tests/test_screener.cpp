@@ -1657,3 +1657,32 @@ TEST_CASE("screener: a T-junction is not a dangling stub — mid-segment "
     INFO(titles);
     CHECK(dangling == 2);
 }
+
+#include <faraday/Emissions.hpp>
+
+TEST_CASE("conducted estimate: comb physics, decimation, honest refusals",
+          "[emissions][conducted]") {
+    emc::Trapezoid t{10.0, 500e3, 0.4, 20e-9};
+    auto est = emc::conducted_estimate(t, 10e-6, 10e-9, 0.01, 48.0, 50e-12);
+    REQUIRE(!est.f_hz.empty());
+    // hand value at n=1 (500 kHz): |I1| = 2*10*0.4*sinc(pi*0.4)*sinc(pi*0.01)
+    //   = 8 * 0.756827 * 0.999984 = 6.0545 A
+    // Z_cin = |j*2pi*5e5*1e-8 - 1/(j*2pi*5e5*1e-5)| + ESR-quadrature
+    //   wL = 0.031416, 1/wC = 0.031831 -> reactance -4.15e-4, ESR 0.01
+    //   |Z| = 0.010009 -> V = 60.6 mV = 95.65 dBuV
+    CHECK(est.f_hz[0] == 500e3);
+    CHECK(std::abs(est.dm_dbuv[0] - 95.65) < 0.3);
+    // CM at n=1: |V1| = 2*48*0.4*0.756827*0.999984 = 29.06 V
+    //   I = V*w*C = 29.06*3.1416e6*5e-11 = 4.565 mA -> V_lisn = 114.1 mV
+    //   = 101.15 dBuV
+    CHECK(std::abs(est.cm_dbuv[0] - 101.15) < 0.3);
+    // band edges respected, decimated tail sparse but present
+    CHECK(est.f_hz.front() >= 150e3);
+    CHECK(est.f_hz.back() <= 30e6);
+    CHECK(est.f_hz.size() < 200);          // URL-sized
+    CHECK(est.f_hz.size() > 35);           // but not gutted
+    // a switching frequency whose first harmonic exceeds the band: refuse
+    emc::Trapezoid hf{1.0, 40e6, 0.5, 1e-9};
+    CHECK_THROWS_AS(emc::conducted_estimate(hf, 1e-6, 1e-9, 0.01, 12.0, 50e-12),
+                    std::invalid_argument);
+}
