@@ -14,6 +14,7 @@ const props = defineProps({
   // The near-field map is built around switching aggressors. Without one it
   // has nothing to say, and the chip should show that rather than erroring.
   hasSwitchNode: { type: Boolean, default: true },
+  swCandidateCount: { type: Number, default: 0 },
   // already filtered by the rule chips — the board shows exactly what the list shows
   findings: { type: Array, required: true },
   selectedId: { type: String, default: '' },
@@ -610,7 +611,9 @@ watch(() => props.drawingShield, on => {
               :disabled="!hasSwitchNode"
               :title="hasSwitchNode
                 ? 'quasi-static field at component scale — what couples ON the board'
-                : 'no switching node on this board, so there is no near-field aggressor to model'"
+                : swCandidateCount
+                  ? `no switch node identified \u2014 ${swCandidateCount} candidate(s) in the strip below the board; promoting one enables this`
+                  : 'no switching node on this board, so there is no near-field aggressor to model'"
               @click="emit('nearField')">near field</button>
       <button class="lchip rad off" data-testid="pdn-toggle"
               :style="{ '--c': '#8fb8ff' }"

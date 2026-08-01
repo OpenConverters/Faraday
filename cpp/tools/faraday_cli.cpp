@@ -31,9 +31,14 @@ int main(int argc, char** argv) {
     // NEW or WORSENED findings — the gate a brownfield board can adopt today
     std::string baseline_path, fail_on_regression;
     std::string fix_out;   // --fix-stitching <out.kicad_pcb>
+    // --switch-net NAME (repeatable): screen NAME as a switch node, recorded
+    // with switchNodeSource "user" — the CLI face of candidate promotion
+    std::vector<std::string> user_switch_nets;
     for (int i = 1; i < argc; ++i) {
         std::string a = argv[i];
         if (a == "--stackup" && i + 1 < argc) stackup_name = argv[++i];
+        else if (a == "--switch-net" && i + 1 < argc)
+            user_switch_nets.push_back(argv[++i]);
         else if (a == "-o" && i + 1 < argc) out_path = argv[++i];
         // CI gate: exit 3 when any finding reaches this severity. "high" or
         // "medium"; anything else is refused rather than silently ignored.
@@ -89,7 +94,9 @@ int main(int argc, char** argv) {
             faraday::import_board_set(files, std::move(user), &fmt);
         std::cout << "format: " << faraday::format_name(fmt) << "\n";
 
-        nlohmann::json report = faraday::analyze_board(board);
+        faraday::ScreenerParams sp;
+        sp.user_switch_nets = user_switch_nets;
+        nlohmann::json report = faraday::analyze_board(board, sp);
 
         if (!out_path.empty()) {
             std::ofstream out(out_path);

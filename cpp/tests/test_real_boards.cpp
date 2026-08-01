@@ -58,6 +58,17 @@ TEST_CASE("real: HackRF One (KiCad v6, 4-layer RF) imports and screens", "[real]
     }
     // HackRF is not a converter: no inductor+FET switch node expected
     CHECK(report["meta"]["switchNodes"].empty());
+    // Its dual-LDO + ferrite harness (L10/L11 on U21) is externally
+    // ISOMORPHIC to a fixed-output monolithic buck — feedback resistors,
+    // copper width and package size were each tested across the corpus and
+    // none separates them. The irreducible ambiguity must be REPORTED as
+    // candidates (ABT #410: a heuristic's negative as visible as its
+    // positive), never silently screened, never silently dropped.
+    const auto& cand = report["meta"]["switchNodeCandidates"];
+    REQUIRE(cand.size() == 2);
+    std::set<std::string> cnets;
+    for (const auto& c : cand) cnets.insert(c["net"].get<std::string>());
+    CHECK(cnets == std::set<std::string>{"Net-(L10-Pad1)", "Net-(L11-Pad2)"});
 }
 
 TEST_CASE("real: LibreSolar MPPT 2420 HC (KiCad v5, power converter) imports and screens",
@@ -103,11 +114,19 @@ TEST_CASE("real: LibreSolar MPPT 2420 HC (KiCad v5, power converter) imports and
     // switch-node identification: the literal /DC/DC/SW_NODE is found by
     // CONNECTIVITY (inductor pad + FET pad, compact net) — not by its name
     const auto& sw = report["meta"]["switchNodes"];
-    bool found_sw = false;
-    for (const auto& n : sw)
+    bool found_sw = false, supply_input = false;
+    for (const auto& n : sw) {
         if (n.get<std::string>().find("SW_NODE") != std::string::npos) found_sw = true;
+        if (n.get<std::string>().find("SUPPLY_INPUT") != std::string::npos)
+            supply_input = true;
+    }
     CHECK(found_sw);
     CHECK(sw.size() <= 3);  // a converter has a handful, not dozens
+    // SUPPLY_INPUT carries L2+Q4 and screened as a commutation loop for a
+    // day — but its two 1 uF caps to GND mark a supply-ORing rail (solar,
+    // battery and +12V ORed onto the internal supply). The shunt-cap veto
+    // must keep it out; this was finding F-0002 on the DEMO board.
+    CHECK(!supply_input);
     // CAN_H/CAN_L recognized as a differential pair, not a defect
     CHECK(report["meta"]["diffPairsRecognized"].get<int>() >= 1);
 }
@@ -170,4 +189,35 @@ TEST_CASE("corpus pin: mppt-1210-hus derives Q1+Q4+C4; LOAD_S falls back",
         auto ll = sc.commutation_loop(load);
         if (ll) CHECK(ll->members.empty());   // geometric fallback, not R+R
     }
+}
+
+TEST_CASE("corpus pin: ulx3s's three monolithic bucks are OFFERED as "
+          "candidates (ABT #408's headline miss, now self-reporting)",
+          "[real][corpus-pin]") {
+    std::ifstream f(corpus_path("ulx3s.kicad_pcb"));
+    if (!f) { SKIP("corpus not fetched"); }
+    std::stringstream ss;
+    ss << f.rdbuf();
+    BoardIR b = import_kicad(ss.str(), builtin_stackup("default-4layer"));
+    nlohmann::json report = analyze_board(b);
+    // no discrete FET anywhere near the regulators: the discrete shapes stay
+    // silent, and that silence is now accompanied by the evidence
+    CHECK(report["meta"]["switchNodes"].empty());
+    std::set<std::string> cnets;
+    for (const auto& c : report["meta"]["switchNodeCandidates"])
+        cnets.insert(c["net"].get<std::string>());
+    CHECK(cnets == std::set<std::string>{"/power/L1", "/power/L2", "/power/L3"});
+
+    // promoting one screens it: the commutation-loop rule now has a net to
+    // work on, and provenance says the USER declared it
+    ScreenerParams sp;
+    sp.user_switch_nets = {"/power/L1"};
+    nlohmann::json promoted = analyze_board(b, sp);
+    REQUIRE(promoted["meta"]["switchNodes"].size() == 1);
+    CHECK(promoted["meta"]["switchNodeSource"]["/power/L1"] == "user");
+    bool loop_found = false;
+    for (const auto& fi : promoted["findings"])
+        if (fi["rule"] == "switch-node" || fi["rule"] == "commutation-loop")
+            loop_found = true;
+    CHECK(loop_found);
 }

@@ -26,6 +26,17 @@
 // holding the IR makes it a few milliseconds. One board at a time is exactly
 // what the UI does, so the state is bounded and its lifetime is obvious.
 static std::optional<faraday::BoardIR> g_board;
+static faraday::BoardFormat g_fmt;
+// Session screening options: candidate switch nodes the user has promoted.
+// EVERY Screener built in this binding must carry them — the near-field map
+// and bench functions key on switch nodes, and a promoted node that reaches
+// the report but not the near-field button would recreate ABT #410.
+static std::vector<std::string> g_user_switch_nets;
+static faraday::ScreenerParams session_params() {
+    faraday::ScreenerParams sp;
+    sp.user_switch_nets = g_user_switch_nets;
+    return sp;
+}
 
 // "no stackup" is the one error the UI answers rather than reports, so it
 // travels with the copper count the importer already knows — the card then
@@ -45,6 +56,8 @@ static std::string analyze(std::string board_text, std::string stackup_name) {
         faraday::BoardFormat fmt;
         faraday::BoardIR board =
             faraday::import_board(board_text, std::move(user), &fmt);
+        g_user_switch_nets.clear();   // new board, new session
+        g_fmt = fmt;
         nlohmann::json out = faraday::analyze_board(board);
         out["format"] = faraday::format_name(fmt);
         g_board = std::move(board);
@@ -71,12 +84,33 @@ static std::string analyze_set(std::string request_json) {
         faraday::BoardFormat fmt;
         faraday::BoardIR board =
             faraday::import_board_set(files, std::move(user), &fmt);
+        g_user_switch_nets.clear();   // new board, new session
+        g_fmt = fmt;
         nlohmann::json out = faraday::analyze_board(board);
         out["format"] = faraday::format_name(fmt);
         g_board = std::move(board);
         return out.dump();
     } catch (const faraday::StackupNeeded& e) {
         return stackup_needed_json(e);
+    } catch (const std::exception& e) {
+        return nlohmann::json{{"error", e.what()}}.dump();
+    }
+}
+
+// Re-screen the LAST analyzed board with session options — the candidate-
+// promotion path. No re-import: g_board IS the board the report came from.
+// {"userSwitchNets":["NET", ...]} replaces the session's promoted set.
+static std::string reanalyze(std::string options_json) {
+    try {
+        if (!g_board)
+            return nlohmann::json{{"error", "no board loaded"}}.dump();
+        const nlohmann::json j = nlohmann::json::parse(options_json);
+        g_user_switch_nets.clear();
+        for (const auto& n : j.value("userSwitchNets", nlohmann::json::array()))
+            g_user_switch_nets.push_back(n.get<std::string>());
+        nlohmann::json out = faraday::analyze_board(*g_board, session_params());
+        out["format"] = faraday::format_name(g_fmt);
+        return out.dump();
     } catch (const std::exception& e) {
         return nlohmann::json{{"error", e.what()}}.dump();
     }
@@ -153,7 +187,7 @@ static std::string return_path(std::string request_json) {
                 "no board loaded — open a layout before asking where the "
                 "returns flow");
         const nlohmann::json j = nlohmann::json::parse(request_json);
-        faraday::Screener sc(*g_board);
+        faraday::Screener sc(*g_board, session_params());
         return faraday::bench::return_path_json(
                    *g_board, sc, faraday::bench::rp_params_from_json(j)).dump();
     } catch (const std::exception& e) {
@@ -168,7 +202,7 @@ static std::string near_field(std::string request_json) {
                 "no board loaded — open a layout before asking what the field "
                 "above it looks like");
         const nlohmann::json j = nlohmann::json::parse(request_json);
-        faraday::Screener sc(*g_board);
+        faraday::Screener sc(*g_board, session_params());
         return faraday::bench::near_field_json(
                    *g_board, sc, faraday::bench::nfmap_params_from_json(j)).dump();
     } catch (const std::exception& e) {
@@ -199,7 +233,7 @@ static std::string pdn_map(std::string request_json) {
             throw std::runtime_error(
                 "no board loaded — open a layout before asking about its PDN");
         const nlohmann::json j = nlohmann::json::parse(request_json);
-        faraday::Screener sc(*g_board);
+        faraday::Screener sc(*g_board, session_params());
         return faraday::bench::pdn_json(*g_board, sc, j).dump();
     } catch (const std::exception& e) {
         return nlohmann::json{{"error", e.what()}}.dump();
@@ -217,6 +251,7 @@ static std::string version() { return "0.2.0"; }
 EMSCRIPTEN_BINDINGS(faraday) {
     emscripten::function("analyze", &analyze);
     emscripten::function("analyzeSet", &analyze_set);
+    emscripten::function("reanalyze", &reanalyze);
     emscripten::function("diffReports", &diff_reports_js);
     emscripten::function("fixStitching", &fix_stitching);
     emscripten::function("solvePair", &solve_pair);

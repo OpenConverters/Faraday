@@ -186,3 +186,64 @@ test('the glossary is reachable from the empty state, before any board', async (
   await expect(panel).toContainText('Commutation loop')
   await expect(panel).toContainText('Franz')
 })
+
+test('a candidate switch node is offered, promoted with provenance, demoted',
+  async ({ page }) => {
+    // A monolithic buck: switcher IC + inductor, no discrete FET. The engine
+    // must NOT screen it on its own (an LDO + LC filter has the identical
+    // external shape) — it must offer it, and promotion must carry
+    // switchNodeSource "user" and enable the near-field toggle. ABT #408/#410.
+    const buck = `(kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SWX") (net 2 "GND") (net 3 "VIN") (net 4 "VOUT")
+      (segment (start 5 5) (end 12 5) (width 1.0) (layer "F.Cu") (net 1))
+      (zone (net 2) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 30))))
+      (footprint "buck" (layer "F.Cu") (at 5 5)
+        (property "Reference" "U1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 3 "VIN"))
+        (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net 1 "SWX"))
+        (pad "3" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net 2 "GND"))
+        (pad "4" smd rect (at 3 0) (size 1 1) (layers "F.Cu") (net 0 ""))
+        (pad "5" smd rect (at 4 0) (size 1 1) (layers "F.Cu") (net 0 "")))
+      (footprint "l" (layer "F.Cu") (at 12 5)
+        (property "Reference" "L1")
+        (pad "1" smd rect (at 0 0) (size 1.5 1.5) (layers "F.Cu") (net 1 "SWX"))
+        (pad "2" smd rect (at 2 0) (size 1.5 1.5) (layers "F.Cu") (net 4 "VOUT")))
+      (footprint "cin" (layer "F.Cu") (at 3 8)
+        (property "Reference" "C1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 3 "VIN"))
+        (pad "2" smd rect (at 1.5 0) (size 1 1) (layers "F.Cu") (net 2 "GND")))
+      (footprint "cout" (layer "F.Cu") (at 16 8)
+        (property "Reference" "C2")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 4 "VOUT"))
+        (pad "2" smd rect (at 1.5 0) (size 1 1) (layers "F.Cu") (net 2 "GND")))
+    )`
+    await page.goto('/')
+    await page.getByTestId('file-input').setInputFiles({
+      name: 'buck.kicad_pcb', mimeType: 'text/plain', buffer: Buffer.from(buck),
+    })
+    await expect(page.getByTestId('finding-count')).toBeVisible()
+
+    // offered, not screened; the near-field chip is disabled but says why
+    await expect(page.getByTestId('meta-switchnodes')).toHaveCount(0)
+    const cand = page.getByTestId('promote-SWX')
+    await expect(cand).toBeVisible()
+    await expect(cand).toHaveAttribute('title', /won't guess/)
+    const nf = page.getByTestId('nf-toggle')
+    await expect(nf).toBeDisabled()
+    await expect(nf).toHaveAttribute('title', /candidate/)
+
+    // promotion: screened, provenance "user", near field enabled
+    await cand.click()
+    const swMeta = page.getByTestId('meta-switchnodes')
+    await expect(swMeta).toContainText('SWX')
+    await expect(swMeta).toContainText('user')
+    await expect(page.getByTestId('meta-sw-candidates')).toHaveCount(0)
+    await expect(nf).toBeEnabled()
+
+    // demotion: back to a candidate
+    await page.getByTestId('demote-sw').click()
+    await expect(page.getByTestId('meta-switchnodes')).toHaveCount(0)
+    await expect(page.getByTestId('promote-SWX')).toBeVisible()
+  })

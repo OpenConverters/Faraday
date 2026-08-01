@@ -73,6 +73,10 @@ struct Graph {
     std::map<int, std::set<std::string>> net;
     // centroid per component, for compactness tie-breaks
     std::map<std::string, Point> pos;
+    // every pad position per component — loop-area scoring needs the pads'
+    // EXTENT (centroids degenerate: a far-away cap collinear with the two
+    // FETs scores a near-zero triangle while the real loop is huge)
+    std::map<std::string, std::vector<Point>> padpts;
 
     // net owning the pad NAMED "1" — the JEDEC control terminal of 3-lead
     // transistor packages (TO-220/TO-247/DPAK/SOT-223: gate or base is
@@ -93,6 +97,7 @@ struct Graph {
             sum[p.component].x += p.x;
             sum[p.component].y += p.y;
             cnt[p.component]++;
+            padpts[p.component].push_back({p.x, p.y});
         }
         for (auto& [r, s] : sum)
             pos[r] = {s.x / cnt[r], s.y / cnt[r]};
@@ -211,6 +216,70 @@ inline std::optional<std::vector<std::string>> cap_chain(
     return best;
 }
 
+// EVERY capacitor chain u <-> v (single caps and 2-cap chains), so a caller
+// can score the LOOPS they close instead of trusting one distance metric
+inline std::vector<std::vector<std::string>> cap_chains(const Graph& g, int u,
+                                                        int v) {
+    std::vector<std::vector<std::string>> out;
+    if (u == v) return out;
+    auto it = g.net.find(u);
+    if (it == g.net.end()) return out;
+    for (const auto& c1 : it->second) {
+        auto e1 = g.two_terminal(c1, "|C|");
+        if (!e1) continue;
+        const int w = e1->first == u ? e1->second : e1->first;
+        if (w == v) { out.push_back({c1}); continue; }
+        auto jt = g.net.find(w);
+        if (jt == g.net.end()) continue;
+        for (const auto& c2 : jt->second) {
+            if (c2 == c1) continue;
+            auto e2 = g.two_terminal(c2, "|C|");
+            if (!e2) continue;
+            const int x = e2->first == w ? e2->second : e2->first;
+            if (x == v) out.push_back({c1, c2});
+        }
+    }
+    return out;
+}
+
+// area of the convex hull of the members' PADS — a format-independent proxy
+// for the loop the members enclose (pure geometry, never iteration order).
+// Pads, not centroids: centroids degenerate when a far cap sits collinear
+// with the two switches (mppt-2420-lc's C2, 14 mm out but 0.25 mm off the
+// Q1-Q4 line, scored ~1 mm^2 while the real loop is the largest on the net).
+inline double member_hull_area(const Graph& g,
+                               const std::vector<std::string>& refs) {
+    std::vector<Point> pts;
+    for (const auto& r : refs) {
+        auto it = g.padpts.find(r);
+        if (it != g.padpts.end())
+            pts.insert(pts.end(), it->second.begin(), it->second.end());
+    }
+    if (pts.size() < 3) return 0.0;
+    std::sort(pts.begin(), pts.end(), [](const Point& a, const Point& b) {
+        return a.x < b.x || (a.x == b.x && a.y < b.y);
+    });
+    auto cross = [](const Point& o, const Point& a, const Point& b) {
+        return (a.x - o.x) * (b.y - o.y) - (a.y - o.y) * (b.x - o.x);
+    };
+    const int n = (int)pts.size();
+    std::vector<Point> h(2 * n);
+    int k = 0;
+    for (int i = 0; i < n; ++i) {                       // lower hull
+        while (k >= 2 && cross(h[k - 2], h[k - 1], pts[i]) <= 0) --k;
+        h[k++] = pts[i];
+    }
+    for (int i = n - 2, t = k + 1; i >= 0; --i) {       // upper hull
+        while (k >= t && cross(h[k - 2], h[k - 1], pts[i]) <= 0) --k;
+        h[k++] = pts[i];
+    }
+    h.resize(k);
+    double a = 0;
+    for (int i = 0; i + 1 < (int)h.size(); ++i)
+        a += h[i].x * h[i + 1].y - h[i + 1].x * h[i].y;
+    return std::abs(a) / 2.0;
+}
+
 }  // namespace detail
 
 // Derive the critical mesh around sw_net. sw_prefix is the board's switching
@@ -243,23 +312,37 @@ inline std::optional<DerivedMesh> derive(const BoardIR& b, int sw_net,
     // the vector: a sort after &devs[i] silently re-aims the pointer — on
     // the PoE board it turned the chosen switch into the clamp diode and
     // killed every derivation on the board.
-    std::stable_sort(devs.begin(), devs.end(),
-                     [](const Dev& a, const Dev& b) {
-                         return a.is_switch > b.is_switch;
-                     });
-    // the switch = the LARGEST switching device on the node (total pad
-    // area): the power FET, never a gate-drive small-signal that happened
-    // to infer. Map/set ordering must never decide a mesh.
-    const Dev* sw = nullptr;
     auto total_area = [&](const std::string& ref) {
         double a = 0;
         for (const auto& [n, v] : g.area.at(ref)) a += v;
         return a;
     };
+    // FULLY deterministic order: area ties break on the ref name, never on
+    // pad iteration order — VESC's H1 half-bridge has two equal-area FETs,
+    // and the KiCad and ODB++ exports of the SAME board delivered them in
+    // different pad order, anchoring the mesh on different devices.
+    // areas QUANTIZED to 0.1 mm^2 before comparing: different exporters of
+    // the same board render pad sizes with sub-0.1 mm^2 differences (ODB++
+    // surface vs KiCad rect), and those decimals must never out-vote the
+    // ref-name tie-break — "Q1 + Q2" and "Q2 + Q1" are spurious diffs to
+    // the revision-diff gate.
+    auto qarea = [&](const std::string& ref) {
+        return (long long)std::llround(total_area(ref) * 10.0);
+    };
+    std::stable_sort(devs.begin(), devs.end(),
+                     [&](const Dev& a, const Dev& b) {
+                         if (a.is_switch != b.is_switch)
+                             return a.is_switch > b.is_switch;
+                         const long long aa = qarea(a.ref), ab = qarea(b.ref);
+                         if (aa != ab) return aa > ab;
+                         return a.ref < b.ref;
+                     });
+    // the switch = the LARGEST switching device on the node (total pad
+    // area): the power FET, never a gate-drive small-signal that happened
+    // to infer. Map/set ordering must never decide a mesh.
+    const Dev* sw = nullptr;
     for (const auto& d : devs)
-        if (d.is_switch &&
-            (!sw || total_area(d.ref) > total_area(sw->ref)))
-            sw = &d;
+        if (d.is_switch) { sw = &d; break; }
     if (!sw) return std::nullopt;
     const Point at = g.pos.count(sw->ref) ? g.pos.at(sw->ref) : Point{0, 0};
 
@@ -295,7 +378,16 @@ inline std::optional<DerivedMesh> derive(const BoardIR& b, int sw_net,
         for (auto& [dest, rs] : by_dest) out.push_back({rs, dest});
         return out;
     };
+    // The commutation current takes the LEAST-INDUCTANCE loop, so among
+    // every closable candidate the SMALLEST enclosed area wins — scored on
+    // the hull of the member centroids, which is pure geometry. Scoring by
+    // distance-to-the-switch let pad ITERATION order decide instead: the
+    // KiCad and ODB++ exports of the SAME VESC picked different input caps
+    // (C8, 277 mm^2 vs C40, 221 mm^2) for the identical half-bridge.
     for (int pass = 0; pass < 2; ++pass) {
+        std::optional<DerivedMesh> best;
+        double best_area = 1e30;
+        std::string best_key;
         for (const auto& d : devs) {
             if (d.ref == sw->ref || d.far == sw->far) continue;
             const int far_a = sw->far, far_b = d.far;
@@ -311,20 +403,31 @@ inline std::optional<DerivedMesh> derive(const BoardIR& b, int sw_net,
                     cands.push_back({rs, dest, far_b});
             }
             for (auto& [ex, fa, fb] : cands) {
-                auto chain = detail::cap_chain(g, fa, fb, at);
-                if (!chain || chain->empty()) continue;
-                DerivedMesh m;
-                m.shape = "two-device";
-                m.sw_ref = sw->ref;
-                m.members = {sw->ref, d.ref};
-                m.members.insert(m.members.end(), ex.begin(), ex.end());
-                m.members.insert(m.members.end(), chain->begin(),
-                                 chain->end());
-                m.chain = *chain;
-                return m;
+                for (const auto& chain : detail::cap_chains(g, fa, fb)) {
+                    if (chain.empty()) continue;
+                    DerivedMesh m;
+                    m.shape = "two-device";
+                    m.sw_ref = sw->ref;
+                    m.members = {sw->ref, d.ref};
+                    m.members.insert(m.members.end(), ex.begin(), ex.end());
+                    m.members.insert(m.members.end(), chain.begin(),
+                                     chain.end());
+                    m.chain = chain;
+                    const double area =
+                        detail::member_hull_area(g, m.members);
+                    std::string key;
+                    for (const auto& r : m.members) key += r + "|";
+                    if (area < best_area - 1e-9 ||
+                        (std::abs(area - best_area) <= 1e-9 &&
+                         key < best_key)) {
+                        best_area = area;
+                        best_key = key;
+                        best = std::move(m);
+                    }
+                }
             }
-            continue;
         }
+        if (best) return best;
     }
 
     // ---- shape B: winding on the node + clamp path -----------------------

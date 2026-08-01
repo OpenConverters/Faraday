@@ -1409,3 +1409,212 @@ TEST_CASE("franz mesh: a Kelvin shunt is bridged into the half-bridge mesh",
     std::set<std::string> got(m->members.begin(), m->members.end());
     CHECK(got == std::set<std::string>{"Q1", "Q2", "R9", "C3"});
 }
+
+// ---------------------------------------------------------------------------
+// Monolithic converters + the physics vetoes (ABT #408/#409/#410).
+// ---------------------------------------------------------------------------
+
+TEST_CASE("screener: a monolithic buck is a CANDIDATE with evidence; "
+          "promotion screens it as user-declared",
+          "[screener][switchnode][candidate]") {
+    // U1 (5-pad switcher IC) + L1, no discrete FET: none of the three
+    // discrete shapes can see it. The topology test offers it — wound part,
+    // active silicon, no shunt cap, TWO filtered rails (VIN via the IC,
+    // VOUT via the inductor) — but never screens it on its own, because an
+    // LDO + LC filter is externally isomorphic (HackRF One, measured).
+    std::string t = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SWX") (net 2 "GND") (net 3 "VIN") (net 4 "VOUT")
+      (segment (start 5 5) (end 12 5) (width 1.0) (layer "F.Cu") (net 1))
+      (zone (net 2) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 30))))
+      (footprint "buck" (layer "F.Cu") (at 5 5)
+        (property "Reference" "U1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 3 "VIN"))
+        (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net 1 "SWX"))
+        (pad "3" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net 2 "GND"))
+        (pad "4" smd rect (at 3 0) (size 1 1) (layers "F.Cu") (net 0 ""))
+        (pad "5" smd rect (at 4 0) (size 1 1) (layers "F.Cu") (net 0 "")))
+      (footprint "l" (layer "F.Cu") (at 12 5)
+        (property "Reference" "L1")
+        (pad "1" smd rect (at 0 0) (size 1.5 1.5) (layers "F.Cu") (net 1 "SWX"))
+        (pad "2" smd rect (at 2 0) (size 1.5 1.5) (layers "F.Cu") (net 4 "VOUT")))
+      (footprint "cin" (layer "F.Cu") (at 3 8)
+        (property "Reference" "C1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 3 "VIN"))
+        (pad "2" smd rect (at 1.5 0) (size 1 1) (layers "F.Cu") (net 2 "GND")))
+      (footprint "cout" (layer "F.Cu") (at 16 8)
+        (property "Reference" "C2")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 4 "VOUT"))
+        (pad "2" smd rect (at 1.5 0) (size 1 1) (layers "F.Cu") (net 2 "GND")))
+    ))";
+    BoardIR b = import_kicad(t, builtin_stackup("default-2layer"));
+    nlohmann::json report = analyze_board(b);
+    CHECK(report["meta"]["switchNodes"].empty());
+    const auto& cand = report["meta"]["switchNodeCandidates"];
+    REQUIRE(cand.size() == 1);
+    CHECK(cand[0]["net"] == "SWX");
+    CHECK(cand[0]["wound"][0] == "L1");
+    CHECK(cand[0]["active"][0] == "U1");
+
+    // promotion: screened, provenance "user", no longer a candidate
+    ScreenerParams sp;
+    sp.user_switch_nets = {"SWX"};
+    nlohmann::json promoted = analyze_board(b, sp);
+    REQUIRE(promoted["meta"]["switchNodes"].size() == 1);
+    CHECK(promoted["meta"]["switchNodes"][0] == "SWX");
+    CHECK(promoted["meta"]["switchNodeSource"]["SWX"] == "user");
+    CHECK(promoted["meta"]["switchNodeCandidates"].empty());
+
+    // an unknown name THROWS — no silent skip
+    ScreenerParams bad;
+    bad.user_switch_nets = {"NOPE"};
+    CHECK_THROWS_AS(analyze_board(b, bad), BoardError);
+}
+
+TEST_CASE("screener: a shunt cap to the return vetoes a switch node — "
+          "supply-ORing rails stop masquerading as converters",
+          "[screener][switchnode][candidate]") {
+    // The mppt-2420-hc shape that screened as a commutation loop for a day:
+    // L + Q on one net (buck_like fires) — but two 1 uF caps straight to GND
+    // say the net is a DC supply rail. A cap there would short a real switch
+    // every cycle.
+    std::string t = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "ORNET") (net 2 "GND") (net 3 "HV") (net 4 "OUT")
+      (segment (start 5 5) (end 12 5) (width 1.0) (layer "F.Cu") (net 1))
+      (zone (net 2) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 30))))
+      (footprint "fet" (layer "F.Cu") (at 5 5)
+        (property "Reference" "Q4")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 3 "HV"))
+        (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net 1 "ORNET"))
+        (pad "3" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net 0 "")))
+      (footprint "l" (layer "F.Cu") (at 12 5)
+        (property "Reference" "L2")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "ORNET"))
+        (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net 4 "OUT")))
+      (footprint "c" (layer "F.Cu") (at 8 8)
+        (property "Reference" "C40")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "ORNET"))
+        (pad "2" smd rect (at 1.5 0) (size 1 1) (layers "F.Cu") (net 2 "GND")))
+      (footprint "c" (layer "F.Cu") (at 3 8)
+        (property "Reference" "C3")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 3 "HV"))
+        (pad "2" smd rect (at 1.5 0) (size 1 1) (layers "F.Cu") (net 2 "GND")))
+      (footprint "c" (layer "F.Cu") (at 16 8)
+        (property "Reference" "C5")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 4 "OUT"))
+        (pad "2" smd rect (at 1.5 0) (size 1 1) (layers "F.Cu") (net 2 "GND")))
+    ))";
+    BoardIR b = import_kicad(t, builtin_stackup("default-2layer"));
+    nlohmann::json report = analyze_board(b);
+    // neither screened (buck_like vetoed) nor offered (V1 vetoes candidates)
+    CHECK(report["meta"]["switchNodes"].empty());
+    CHECK(report["meta"]["switchNodeCandidates"].empty());
+}
+
+TEST_CASE("screener: a signal choke with both ends candidate-shaped is not "
+          "offered (V3)",
+          "[screener][switchnode][candidate]") {
+    // U9 with pins on BOTH sides of L5 (HackRF's RF chokes, PoE's USB
+    // common-mode chokes): a converter inductor's far side is always
+    // shunt-capped, so when both ends survive V1 the part is a choke.
+    std::string t = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "RF1") (net 2 "GND") (net 3 "VCC") (net 4 "RF2") (net 5 "VCC2")
+      (segment (start 5 5) (end 12 5) (width 0.5) (layer "F.Cu") (net 1))
+      (segment (start 14 5) (end 20 5) (width 0.5) (layer "F.Cu") (net 4))
+      (zone (net 2) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 30))))
+      (footprint "amp" (layer "F.Cu") (at 5 5)
+        (property "Reference" "U9")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "RF1"))
+        (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net 4 "RF2"))
+        (pad "3" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net 3 "VCC"))
+        (pad "4" smd rect (at 3 0) (size 1 1) (layers "F.Cu") (net 5 "VCC2"))
+        (pad "5" smd rect (at 4 0) (size 1 1) (layers "F.Cu") (net 2 "GND")))
+      (footprint "choke" (layer "F.Cu") (at 13 5)
+        (property "Reference" "L5")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "RF1"))
+        (pad "2" smd rect (at 1.5 0) (size 1 1) (layers "F.Cu") (net 4 "RF2")))
+      (footprint "c" (layer "F.Cu") (at 3 8)
+        (property "Reference" "C7")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 3 "VCC"))
+        (pad "2" smd rect (at 1.5 0) (size 1 1) (layers "F.Cu") (net 2 "GND")))
+      (footprint "c" (layer "F.Cu") (at 16 8)
+        (property "Reference" "C8")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 5 "VCC2"))
+        (pad "2" smd rect (at 1.5 0) (size 1 1) (layers "F.Cu") (net 2 "GND")))
+    ))";
+    BoardIR b = import_kicad(t, builtin_stackup("default-2layer"));
+    nlohmann::json report = analyze_board(b);
+    CHECK(report["meta"]["switchNodes"].empty());
+    CHECK(report["meta"]["switchNodeCandidates"].empty());
+}
+
+TEST_CASE("mesh: the derived loop is invariant to pad order and exporter "
+          "rounding — same board, same mesh, any format",
+          "[mesh][determinism]") {
+    // The SAME half-bridge emitted two ways: components in reverse order,
+    // pad sizes off by an exporter's rounding (0.02 mm). KiCad vs ODB++ of
+    // the identical VESC picked different input caps (C8/277 mm^2 vs
+    // C40/221 mm^2) and different anchor FETs before scoring became
+    // geometric and area ties became quantized.
+    auto board = [](bool reversed, double jitter) {
+        auto fp = [&](const std::string& ref, double x, double y,
+                      std::vector<std::pair<int, std::string>> pads) {
+            std::string s = "(footprint \"f\" (layer \"F.Cu\") (at " +
+                            std::to_string(x) + " " + std::to_string(y) +
+                            ") (property \"Reference\" \"" + ref + "\")";
+            double px = 0;
+            int pin = 1;
+            for (auto& [net, name] : pads) {
+                s += " (pad \"" + std::to_string(pin++) +
+                     "\" smd rect (at " + std::to_string(px) +
+                     " 0) (size " + std::to_string(2.0 + jitter) + " " +
+                     std::to_string(2.0 + jitter) + ") (layers \"F.Cu\")";
+                if (net) s += " (net " + std::to_string(net) + " \"" + name + "\")";
+                s += ")";
+                px += 3;
+            }
+            return s + ")";
+        };
+        std::vector<std::string> parts = {
+            // two equal-area FETs; gate = 1-pad net, path = 2-pad nets
+            fp("Q1", 10, 5, {{3, "VIN"}, {3, "VIN"}, {1, "SW"}, {1, "SW"},
+                             {5, "G1"}}),
+            fp("Q2", 10, 12, {{1, "SW"}, {1, "SW"}, {2, "GND"}, {2, "GND"},
+                              {6, "G2"}}),
+            // two equivalent input caps; C9 closes the smaller loop
+            fp("C9", 16, 8, {{3, "VIN"}, {2, "GND"}}),
+            fp("C120", 30, 8, {{3, "VIN"}, {2, "GND"}}),
+        };
+        std::string head = R"((kicad_pcb
+          (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+          (net 0 "") (net 1 "SW") (net 2 "GND") (net 3 "VIN") (net 5 "G1") (net 6 "G2")
+          (segment (start 10 5) (end 10 12) (width 1.0) (layer "F.Cu") (net 1))
+          (zone (net 2) (net_name "GND") (layer "B.Cu")
+            (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 40 0) (xy 40 20) (xy 0 20))))
+        )";
+        std::string body;
+        if (reversed)
+            for (auto it = parts.rbegin(); it != parts.rend(); ++it) body += *it;
+        else
+            for (const auto& s : parts) body += s;
+        return head + body + ")";
+    };
+    BoardIR a = import_kicad(board(false, 0.0), builtin_stackup("default-2layer"));
+    BoardIR c = import_kicad(board(true, 0.02), builtin_stackup("default-2layer"));
+    int sw_a = -1, sw_c = -1;
+    for (const auto& n : a.nets) if (n.name == "SW") sw_a = n.id;
+    for (const auto& n : c.nets) if (n.name == "SW") sw_c = n.id;
+    auto ma = mesh::derive(a, sw_a, "Q");
+    auto mc = mesh::derive(c, sw_c, "Q");
+    REQUIRE(ma.has_value());
+    REQUIRE(mc.has_value());
+    CHECK(ma->members == mc->members);        // same refs, same ORDER
+    CHECK(ma->sw_ref == mc->sw_ref);
+    // and the cap is the one closing the SMALLEST loop, not the first seen
+    CHECK(ma->chain == std::vector<std::string>{"C9"});
+}

@@ -76,6 +76,11 @@ struct ScreenerParams {
     int sw_flyback_min_switch_pads = 8;
     // A wound part (inductor or transformer), by pad count.
     int sw_magnetic_min_pads = 4;
+    // Nets the USER declares to be switch nodes (by exact name). Promoted
+    // candidates from the UI land here; provenance is recorded as
+    // switchNodeSource "user" so an exported report never claims the
+    // heuristic found them. An unknown name THROWS — no silent skip.
+    std::vector<std::string> user_switch_nets;
     double min_via_stub_mm = 0.3;    // ignore stubs shorter than this
     double min_dangling_mm = 1.0;    // ignore dangling ends shorter than this
     double decoupling_far_mm = 6.0;  // beyond this a decoupling cap is "reaching"
@@ -356,6 +361,20 @@ class Screener {
         for (const auto& n : unverifiable_planes_) unverifiable.push_back(n);
         nlohmann::json sw = nlohmann::json::array();
         for (int n : sw_nets_) sw.push_back(b_.net_name(n));
+        // provenance per node ("heuristic" | "user") — an exported report
+        // must never claim the heuristic found what the user declared
+        nlohmann::json sw_src = nlohmann::json::object();
+        for (int n : sw_nets_)
+            sw_src[b_.net_name(n)] = sw_user_.count(n) ? "user" : "heuristic";
+        // nets that LOOK like a converter (wound part + active silicon, no
+        // shunt cap, two filtered rails) but are externally isomorphic to a
+        // linear regulator's LC harness — offered for promotion, with the
+        // evidence, never silently screened or silently dropped
+        nlohmann::json sw_cand = nlohmann::json::array();
+        for (const auto& c : sw_candidates_)
+            sw_cand.push_back({{"net", b_.net_name(c.net)},
+                               {"wound", c.wound},
+                               {"active", c.active}});
         // nets routed ONLY as zones/polygons — now analysed at their pour
         // boundaries, but still listed so the reader knows which nets were
         // judged by outline rather than by track geometry
@@ -379,6 +398,8 @@ class Screener {
                 {"crossingCheckSkippedPlanes", unverifiable},
                 {"diffPairsRecognized", diff_pairs_recognized_},
                 {"switchNodes", sw},
+                {"switchNodeSource", sw_src},
+                {"switchNodeCandidates", sw_cand},
                 {"polygonOnlyNets", polyonly}};
     }
 
@@ -636,6 +657,37 @@ class Screener {
         std::map<int, std::set<std::string>> prefixes;
         std::map<int, std::set<std::string>> comps, sw_comps, cap_comps,
             mag_comps;
+        // every component's full net membership, INCLUDING plane nets — the
+        // shunt-cap veto asks "does this cap land on the return?", and the
+        // return is exactly what the per-net loop below filters out
+        std::map<std::string, std::set<int>> comp_all_nets;
+        for (const auto& p : b_.pads)
+            if (p.net > 0 && !p.component.empty())
+                comp_all_nets[p.component].insert(p.net);
+        auto is_return_net = [&](int n) {
+            std::string lo;
+            for (char ch : b_.net_name(n))
+                lo += (char)std::tolower((unsigned char)ch);
+            return lo.find("gnd") != std::string::npos ||
+                   lo.find("vss") != std::string::npos;
+        };
+        // a net is a FILTERED RAIL if a 2-pad capacitor ties it straight to a
+        // return — and by the same physics, such a net can never be a switch
+        // node (the cap would short the switch every cycle). mppt-2420-hc's
+        // SUPPLY_INPUT carried L2+Q4 and screened as a converter for a day;
+        // its two 1 uF caps to GND say it is a supply-ORing rail.
+        std::set<int> capped_rails;
+        for (const auto& [ref, ns] : comp_all_nets) {
+            if (ref_prefix(ref) != "C" || pad_count[ref] != 2 || ns.size() != 2)
+                continue;
+            auto it = ns.begin();
+            int a = *it++, c = *it;
+            if (is_return_net(a) && !is_return_net(c)) capped_rails.insert(c);
+            if (is_return_net(c) && !is_return_net(a)) capped_rails.insert(a);
+        };
+        auto has_shunt_cap = [&](int net) {
+            return capped_rails.count(net) > 0;
+        };
         for (const auto& p : b_.pads) {
             if (p.net <= 0 || p.component.empty() || is_plane_net(p.net)) continue;
             std::string pre = ref_prefix(p.component);
@@ -693,7 +745,80 @@ class Screener {
                     if (flyback_like) break;
                 }
             }
-            if (buck_like || bridge_like || flyback_like) sw_nets_.insert(net);
+            if ((buck_like || bridge_like || flyback_like) &&
+                !has_shunt_cap(net))
+                sw_nets_.insert(net);
+        }
+
+        // ---- MONOLITHIC converters: switcher IC + inductor, no discrete
+        // FET (ABT #408/#409). Topology test, convention-free:
+        //   a wound part AND a >=4-pad active device on a compact net,
+        //   no shunt cap to the return (V1 — it would short the switch),
+        //   >=2 distinct filtered rails reachable through the wound part, a
+        //   2-pad diode, or the device's own pins (V2 — energy conversion
+        //   moves charge between different filtered rails; a bias tee or a
+        //   ferrite-filtered rail sees only one), and
+        //   no wound part whose BOTH ends qualify (V3 — that is a signal
+        //   choke; a converter inductor's far side is always shunt-capped).
+        // What survives is still AMBIGUOUS: HackRF One's dual-LDO + ferrite
+        // harness is externally ISOMORPHIC to a fixed-output buck — feedback
+        // resistors, copper width and package size were each tested across
+        // the corpus and none separates them. So survivors are reported as
+        // CANDIDATES with their evidence, never silently screened: the UI
+        // offers them for one-click promotion (switchNodeSource "user").
+        std::map<int, SwCandidate> pass1;
+        for (auto& [net, pre] : prefixes) {
+            if (sw_nets_.count(net) || is_return_net(net)) continue;
+            if ((int)comps[net].size() > p_.sw_max_components) continue;
+            if ((int)cap_comps[net].size() > p_.sw_max_caps) continue;
+            if (has_shunt_cap(net)) continue;                       // V1
+            std::vector<std::string> wound, active;
+            for (const auto& ref : comps[net]) {
+                const std::string rp = ref_prefix(ref);
+                if ((rp == "L" && pad_count[ref] >= 2) ||
+                    ((rp == "T" || rp == "TR") &&
+                     pad_count[ref] >= p_.sw_magnetic_min_pads))
+                    wound.push_back(ref);
+                else if ((rp == "U" || rp == "IC") && pad_count[ref] >= 4)
+                    active.push_back(ref);
+            }
+            if (wound.empty() || active.empty()) continue;
+            std::set<int> rails;                                    // V2
+            auto add_rail = [&](int r) {
+                if (r != net && !is_return_net(r) && capped_rails.count(r))
+                    rails.insert(r);
+            };
+            for (const auto& w : wound)
+                for (int r : comp_all_nets[w]) add_rail(r);
+            for (const auto& ref : comps[net])
+                if (ref_prefix(ref) == "D" && pad_count[ref] == 2)
+                    for (int r : comp_all_nets[ref]) add_rail(r);
+            for (const auto& a : active)
+                for (int r : comp_all_nets[a]) add_rail(r);
+            if (rails.size() < 2) continue;
+            pass1[net] = {net, std::move(wound), std::move(active)};
+        }
+        for (auto& [net, cand] : pass1) {                           // V3
+            bool choke = false;
+            for (const auto& w : cand.wound)
+                for (int r : comp_all_nets[w])
+                    if (r != net && pass1.count(r)) choke = true;
+            if (!choke) sw_candidates_.push_back(cand);
+        }
+
+        // user-declared switch nodes, by exact net name — the UI's promotion
+        // path. Unknown name: THROW, never a silent skip.
+        for (const auto& name : p_.user_switch_nets) {
+            int id = -1;
+            for (const auto& n : b_.nets)
+                if (n.name == name) { id = n.id; break; }
+            if (id < 0)
+                throw BoardError("user switch net '" + name +
+                                 "' does not exist on this board");
+            sw_nets_.insert(id);
+            sw_user_.insert(id);
+            std::erase_if(sw_candidates_,
+                          [&](const SwCandidate& c) { return c.net == id; });
         }
     }
 
@@ -2298,7 +2423,13 @@ class Screener {
     size_t dropped_by_cap_ = 0;
     size_t diff_pairs_recognized_ = 0;
     std::set<std::string> unverifiable_planes_;
+    struct SwCandidate {
+        int net;
+        std::vector<std::string> wound, active;
+    };
     std::set<int> sw_nets_;
+    std::set<int> sw_user_;                    // subset of sw_nets_: user-declared
+    std::vector<SwCandidate> sw_candidates_;   // ambiguous, offered not screened
     std::string sw_prefix_ = "Q";   // see decide_sw_prefix()
     std::set<int> big_pour_nets_;
     std::vector<double> routed_mm_;

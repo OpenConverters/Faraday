@@ -123,6 +123,7 @@ async function analyze() {
   }
   report.value = out
   selectedId.value = ''
+  promotedNets.value = []   // the engine reset its session on (re)import
 }
 
 async function onFiles(list) {
@@ -268,6 +269,31 @@ watch(report, () => { nearField.value = null; nfError.value = ''; nfDetail.value
 // none it has nothing to say. Better to disable the chip with the reason than
 // to let it error on click.
 const hasSwitchNode = computed(() => (meta.value?.switchNodes?.length ?? 0) > 0)
+
+// Candidate switch nodes (ABT #408/#410): nets that LOOK like a monolithic
+// converter (wound part + active silicon, no shunt cap, two filtered rails)
+// but are externally isomorphic to a linear regulator's LC harness. The
+// engine will not guess; the user can promote one — screened with
+// switchNodeSource "user" so the exported report carries the provenance.
+const swCandidates = computed(() => meta.value?.switchNodeCandidates ?? [])
+const promotedNets = ref([])
+async function promoteNet(net) {
+  promotedNets.value = [...promotedNets.value, net]
+  await reanalyze()
+}
+async function demoteNet(net) {
+  promotedNets.value = promotedNets.value.filter(n => n !== net)
+  await reanalyze()
+}
+async function reanalyze() {
+  // re-screen the engine's cached board with the session's promotions —
+  // no re-import, so this is instant even on multi-MB boards
+  const out = JSON.parse(engine.value.reanalyze(
+    JSON.stringify({ userSwitchNets: promotedNets.value })))
+  if (out.error) { error.value = out.error; return }
+  report.value = out
+  selectedId.value = ''
+}
 const ruleCountMap = computed(() => Object.fromEntries(ruleCounts.value))
 
 const pdnOpen = ref(false)
@@ -520,6 +546,7 @@ function toggleRule(rule) {
                    :return-path="returnPath" :near-field="nearField"
                    :shields="shields" :drawing-shield="drawingShield"
                    :has-switch-node="hasSwitchNode"
+                   :sw-candidate-count="swCandidates.length"
                    @select="id => selectedId = id"
                    @toggle-return-path="toggleReturnPath"
                    @near-field="toggleNearField"
@@ -669,7 +696,26 @@ function toggleRule(rule) {
         <template v-if="p.zoneCoverage > 0"> · {{ Math.round(p.zoneCoverage * 100) }}% pour</template>
       </span>
       <span v-if="meta.switchNodes?.length" class="m sw" data-testid="meta-switchnodes">
-        switch nodes: <b>{{ meta.switchNodes.join(', ') }}</b></span>
+        switch nodes:
+        <template v-for="(n, i) in meta.switchNodes" :key="n">
+          <template v-if="i"> · </template><b>{{ n }}</b><template
+            v-if="meta.switchNodeSource?.[n] === 'user'"><i class="prov">user</i><button
+              class="demote" data-testid="demote-sw"
+              :title="`stop screening ${n} as a switch node`"
+              @click="demoteNet(n)">×</button></template>
+        </template></span>
+      <!-- ABT #410: a heuristic's NEGATIVE must be as visible as its positive.
+           These nets look like a converter but a linear regulator's LC filter
+           has the identical external shape — the engine will not guess. -->
+      <span v-if="swCandidates.length" class="m cand" data-testid="meta-sw-candidates">
+        candidate switch node(s):
+        <button v-for="c in swCandidates" :key="c.net" class="candbtn"
+                :data-testid="`promote-${c.net}`"
+                :title="`${c.wound.join('+')} with ${c.active.join('+')} looks like a `
+                  + `monolithic converter — but a linear regulator + LC filter has the `
+                  + `same shape, so Faraday won't guess. If this IS a switcher, click to `
+                  + `screen it (recorded as user-declared in the report).`"
+                @click="promoteNet(c.net)">⊕ {{ c.net }}</button></span>
       <span v-if="meta.diffPairsRecognized" class="m">{{ meta.diffPairsRecognized }} diff pair(s) recognized</span>
       <span v-if="meta.polygonOnlyNets?.length" class="m">
         {{ meta.polygonOnlyNets.length }} zone-routed net(s) judged by pour outline</span>
@@ -792,4 +838,19 @@ function toggleRule(rule) {
 .m b { color: var(--silk); font-weight: 500; }
 .m.warn { color: var(--heat-med); }
 .m.sw b { color: var(--copper); }
+.m.sw .prov {
+  font-style: normal; font-size: 10px; color: #9ecbff;
+  border: 1px solid #3a5a7a; border-radius: 3px; padding: 0 3px; margin-left: 4px;
+}
+.m.sw .demote {
+  background: none; border: none; color: var(--tin); cursor: pointer;
+  font-size: 12px; padding: 0 2px;
+}
+.m.sw .demote:hover { color: #ff8a8a; }
+.m.cand .candbtn {
+  background: none; cursor: pointer; font-size: 11.5px;
+  color: #58c79a; border: 1px solid #2a5a46; border-radius: 4px;
+  padding: 1px 6px; margin-left: 4px;
+}
+.m.cand .candbtn:hover { border-color: #58c79a; }
 </style>
