@@ -13,9 +13,16 @@ trust the tool.
 Faraday's premise is that your layout is analysed locally, and this server is an **additional**
 entry point, not a replacement:
 
-- it reads a board from a **path on the host it runs on** — nothing is uploaded,
-- it runs the same `faraday_cli` an engineer would run by hand,
-- reports are written under `~/.faraday/reviews/`, on that same host.
+- the analysis happens **here** — it runs the same `faraday_cli` an engineer would run by hand,
+  and reports are written under `~/.faraday/reviews/` on this host,
+- **this server never sends your board anywhere.** There is no upload path, no telemetry and no
+  outbound call in the review itself.
+
+One honest caveat, added when the artifact convention landed: a board can now be named by a
+remote reference (`artifact://…`, `https://…`), in which case the server FETCHES it from the
+place the caller named. That is an inbound fetch the caller asked for, not the board leaving —
+but if you want the property to be absolute, pass local paths only and leave
+`FARADAY_ARTIFACT_BASE` unset, and a remote reference is then refused rather than resolved.
 
 Run it on the engineer's machine and the property holds exactly as it does for the browser
 app. Run it centrally and the boards are on the central machine — that is a deployment
@@ -109,5 +116,27 @@ drives it with a real MCP client.
 
 ## Not here
 
-No auth (bind to loopback and put a reverse proxy in front if it is ever exposed), no upload
-path (by design — see above), and no board-editing tools: Faraday reviews, it does not route.
+No TLS (terminate it at a reverse proxy), no rate limiting, and no board-editing tools:
+Faraday reviews, it does not route.
+
+## Files and auth
+
+Anything this server reads from disk takes ONE reference argument, the shared convention across
+the OpenConverters MCP servers (`mcp/artifacts.py`, identical in Faraday, Hertz and Kirchhoff):
+
+```
+/path/to/file            a path on the machine running the server
+file:///path/to/file     the same, as a URI
+artifact://<id>          resolved against FARADAY_ARTIFACT_BASE, with FARADAY_ARTIFACT_TOKEN as a bearer token
+https://host/path        fetched as-is
+```
+
+One argument rather than a path field and a URI field, so the orchestrator implements the
+reference once. Large inputs therefore never travel through the tool arguments — which is to
+say, never through the model context.
+
+Auth is **off unless `FARADAY_AUTH_TOKEN` is set**. Set it and every request must carry
+`Authorization: Bearer <token>`, and one that does not gets a plain 401 rather than a redirect.
+It is a gate, not an identity: one shared token says the caller is allowed in, not who they
+are. Anything needing per-user identity, audit or revocation wants a real IdP in front, and
+TLS belongs on the proxy.
