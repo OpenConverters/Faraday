@@ -36,6 +36,8 @@ from mcp.server.fastmcp import FastMCP
 from mcp.server.transport_security import TransportSecuritySettings
 from mcp.types import CallToolResult, TextContent
 
+from artifacts import display_name, resolved
+
 _REPO = Path(__file__).resolve().parent.parent
 PORT = 8407     # Hertz 8400, Kirchhoff 8401, Kelvin 8402, Moebius 8404, Heaviside 8405, OMFEM 8406
 
@@ -237,31 +239,30 @@ def review_board(board: str, stackup: str | None = None,
     """Screen a layout.
 
     Args:
-        board: path to a .kicad_pcb / .hyp / IPC-2581 .xml, or an ODB++ / Gerber directory
-            or zip, on the machine running this server.
+        board: the layout — a .kicad_pcb / .hyp / IPC-2581 .xml, or an ODB++ / Gerber
+            directory or zip. Give a local path, file://, artifact://<id> (resolved against
+            FARADAY_ARTIFACT_BASE) or an https:// URL; the bytes never travel through the
+            tool arguments.
         stackup: 'default-2layer' / 'default-<N>layer' — required when the file carries no
             stackup of its own. Faraday refuses to assume one.
         switch_nets: nets to screen as switch nodes when the converter's switching node is
             not detected automatically.
         top: how many findings to name in the digest; the widget always gets all of them.
     """
-    source = Path(board).expanduser()
-    if not source.exists():
-        raise ValueError(f"no board at {source} — this server reads layouts from the machine "
-                         f"it runs on, so the path must be local to it")
-
     review = uuid.uuid4().hex[:12]
     out_dir = REVIEW_ROOT / review
     out_dir.mkdir(parents=True, exist_ok=True)
     report_path = out_dir / "report.json"
-    cmd = [str(_cli()), str(source), "-o", str(report_path)]
-    if stackup:
-        cmd += ["--stackup", stackup]
-    for net in switch_nets or []:
-        cmd += ["--switch-net", net]
 
-    started = time.time()
-    proc = subprocess.run(cmd, capture_output=True, text=True, timeout=REVIEW_TIMEOUT_S)
+    with resolved(board, "FARADAY", "board") as source:
+        cmd = [str(_cli()), str(source), "-o", str(report_path)]
+        if stackup:
+            cmd += ["--stackup", stackup]
+        for net in switch_nets or []:
+            cmd += ["--switch-net", net]
+        started = time.time()
+        proc = subprocess.run(cmd, capture_output=True, text=True, timeout=REVIEW_TIMEOUT_S)
+        board_name = display_name(board)
     if proc.returncode != 0 or not report_path.exists():
         shutil.rmtree(out_dir, ignore_errors=True)
         # The CLI's own refusals are good — "this board has 2 copper layers; choose
@@ -271,14 +272,14 @@ def review_board(board: str, stackup: str | None = None,
 
     report = json.loads(report_path.read_text(encoding="utf-8"))
     (out_dir / "meta.json").write_text(json.dumps({
-        "review": review, "board": str(source), "stackup": stackup,
+        "review": review, "board": str(board), "stackup": stackup,
         "switchNets": switch_nets or [], "elapsed_s": time.time() - started,
     }, indent=1), encoding="utf-8")
 
     findings = report.get("findings") or []
     counts = _counts(findings)
     board_meta = report.get("board") or {}
-    head = (f"{len(findings)} finding(s) on {source.name}: "
+    head = (f"{len(findings)} finding(s) on {board_name}: "
             + ", ".join(f"{n} {s}" for s, n in counts.items() if n)
             + f" — {len(board_meta.get('nets') or [])} nets, "
               f"{len(board_meta.get('segments') or [])} segments, stackup "
@@ -290,7 +291,7 @@ def review_board(board: str, stackup: str | None = None,
         listing += f"\n  … {len(findings) - top} more — list_findings(review='{review}') filters them."
     return _result(
         f"{head}\n{listing}\n(review {review} — pass it to list_findings / explain_finding)",
-        {"mode": "review", "review": review, "board": str(source),
+        {"mode": "review", "review": review, "board": str(board),
          "counts": counts, "total": len(findings),
          "report": report})
 
@@ -407,6 +408,48 @@ def board_widget() -> str:
     return bundle.read_text(encoding="utf-8")
 
 
+
+def _auth_middleware(app, prefix: str):
+    """Optional bearer-token auth in front of the transport.
+
+    OFF unless {PREFIX}_AUTH_TOKEN is set, because the default deployment is loopback and a
+    token nobody configured would be security theatre with a support cost. Set it and every
+    request must carry `Authorization: Bearer <token>`; the MCP endpoints are all that is
+    protected, and the failure is a plain 401 rather than a redirect, so a client sees what
+    happened instead of guessing at OAuth (ABT #656).
+
+    This is a gate, not an identity: one shared token says the caller is allowed in, not who
+    they are. Anything needing per-user identity wants a real IdP in front, and this is not a
+    substitute for one.
+    """
+    import os as _os
+
+    token = _os.environ.get(f"{prefix}_AUTH_TOKEN", "").strip()
+    if not token:
+        return app
+
+    from starlette.responses import PlainTextResponse
+
+    class _BearerGate:
+        def __init__(self, inner):
+            self.inner = inner
+
+        async def __call__(self, scope, receive, send):
+            if scope.get("type") != "http":
+                await self.inner(scope, receive, send)
+                return
+            headers = {k.decode().lower(): v.decode() for k, v in scope.get("headers") or []}
+            if headers.get("authorization", "") != f"Bearer {token}":
+                response = PlainTextResponse(
+                    f"401 Unauthorized: this server requires a bearer token "
+                    f"({prefix}_AUTH_TOKEN).", status_code=401)
+                await response(scope, receive, send)
+                return
+            await self.inner(scope, receive, send)
+
+    return _BearerGate(app)
+
+
 def build_app():
     """Starlette app with CORS for the streamable-HTTP transport."""
     from starlette.middleware.cors import CORSMiddleware
@@ -422,7 +465,7 @@ def build_app():
         allow_headers=["*"],
         expose_headers=["Mcp-Session-Id"],
     )
-    return app
+    return _auth_middleware(app, "FARADAY")
 
 
 if __name__ == "__main__":
