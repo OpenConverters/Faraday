@@ -1,0 +1,21 @@
+{
+  "name": "faraday-mcp-app",
+  "version": "0.1.0",
+  "description": "Faraday MCP App — the reviewed board, with findings pinned to the copper",
+  "scripts": {
+    "build": "rm -rf dist && vite build",
+    "dev": "vite"
+  },
+  "license": "ISC",
+  "type": "module",
+  "private": "true",
+  "dependencies": {
+    "@modelcontextprotocol/ext-apps": "^1.7.5",
+    "@vitejs/plugin-vue": "^6.0.1",
+    "vue": "^3.5.24"
+  },
+  "devDependencies": {
+    "vite": "^7.2.2",
+    "vite-plugin-singlefile": "^2.3.3"
+  }
+}
