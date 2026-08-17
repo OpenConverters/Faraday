@@ -25,37 +25,45 @@ const Widget = defineComponent({
     const error = ref("");
     const counts = ref({});
     const review = ref("");
+    const dropped = ref([]);
 
-    // BoardView wants the findings it should draw; the server has already applied whatever
-    // filter the tool call implied, so the board shows exactly what the answer listed.
-    const findings = computed(() => report.value?.findings ?? []);
+    // TWO VOCABULARIES, ONE SET. The payload is a `findings` result under the pipeline
+    // contract: `findings` is the contract projection — severity as a label, nets by NAME,
+    // numbers as {value, unit} — and `subject.document` is the engine's own report, which is
+    // what BoardView draws from. They are the same findings in the same order, built from one
+    // list server-side, so the drawing cannot disagree with the list beside it.
+    const findings = ref([]);                       // contract shape — the list, the selection
+    const drawn = computed(() => report.value?.findings ?? []);   // engine shape — the drawing
     const ordered = computed(() => [...findings.value].sort(
-      (a, b) => (SEVERITY_ORDER[a.severityLabel] ?? 9) - (SEVERITY_ORDER[b.severityLabel] ?? 9)
-      || (b.severity ?? 0) - (a.severity ?? 0)));
+      (a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9)));
+
+    /** The nets a finding is about, by name. The engine references them by index. */
+    const netsOf = (f) => (f.involves ?? []).filter((i) => i.kind === "net").map((i) => i.name);
 
     /** Report the engineer's choice to the model. */
     async function choose(id) {
       selectedId.value = id;
       const f = findings.value.find((x) => x.id === id);
       if (!f) return;
-      const where = [f.netA, f.netB].filter(Boolean).join(" <-> ");
+      const where = netsOf(f).join(" <-> ");
       // updateModelContext OVERWRITES, so the message restates what was being looked at —
       // otherwise the model gets a finding id with no board and no question behind it.
       await app.updateModelContext({
         content: [{
           type: "text",
           text: [
-            `[user selected] ${f.id} — ${f.rule}, severity ${f.severityLabel}.`,
-            `[what] ${f.title}`,
+            `[user selected] ${f.id} — ${f.rule}, severity ${f.severity}.`,
+            `[what] ${f.summary}`,
             where ? `[nets] ${where}` : null,
+            `[confidence] ${f.confidence}`,
             f.remediation ? `[remediation as given] ${f.remediation}` : null,
             `[review] ${review.value}`,
           ].filter(Boolean).join("\n"),
         }],
         structuredContent: JSON.parse(JSON.stringify({
           selected: {
-            id: f.id, rule: f.rule, severity: f.severityLabel, title: f.title,
-            netA: f.netA ?? null, netB: f.netB ?? null, confidence: f.confidence ?? null,
+            id: f.id, rule: f.rule, severity: f.severity, summary: f.summary,
+            nets: netsOf(f), confidence: f.confidence ?? null, metrics: f.metrics ?? {},
           },
           context: { review: review.value },
         })),
@@ -64,14 +72,18 @@ const Widget = defineComponent({
 
     app.ontoolresult = async (result) => {
       const sc = result?.structuredContent;
-      if (!sc?.report) {
+      const document = sc?.subject?.document;
+      if (sc?.mode !== "findings" || !document) {
         error.value = "The tool returned no board for this widget.";
         return;
       }
-      report.value = sc.report;
+      report.value = document;
+      findings.value = sc.findings ?? [];
       counts.value = sc.counts ?? {};
       review.value = sc.review ?? "";
-      selectedId.value = sc.finding?.id ?? "";
+      dropped.value = sc.dropped ?? [];
+      // explain_finding returns exactly one, and the point of that call is to look at it.
+      selectedId.value = findings.value.length === 1 ? findings.value[0].id : "";
     };
 
     return () => {
@@ -82,36 +94,42 @@ const Widget = defineComponent({
         .filter(([, n]) => n)
         .map(([s, n]) => h("span", { class: `chip ${s}` }, `${n} ${s}`));
 
+      // What the screen found and did NOT show. A widget that renders 200 of 428 findings
+      // without saying so describes less than half the board and looks complete doing it.
+      const omitted = dropped.value.reduce((n, d) => n + (d.count ?? 0), 0);
+
       return h("div", { class: "wrap" }, [
         h("div", { class: "head" }, [
           h("h1", {}, `${findings.value.length} finding${findings.value.length === 1 ? "" : "s"}`),
           h("div", { class: "chips" }, tally),
           h("div", { class: "sub" },
             "Click a finding on the board or in the list — your choice goes back to the assistant."),
+          omitted
+            ? h("div", { class: "sub omitted" },
+                `${omitted} more not shown: ${dropped.value.map((d) => `${d.count} ${d.reason}`).join("; ")}.`)
+            : null,
         ]),
         h("div", { class: "split" }, [
           h("div", { class: "boardpane" }, [
             h(BoardView, {
               report: report.value,
-              findings: ordered.value,
+              findings: drawn.value,
               selectedId: selectedId.value,
               onSelect: (id) => choose(id),
             }),
           ]),
           h("ul", { class: "list" }, ordered.value.slice(0, 60).map((f) =>
             h("li", {
-              class: `item ${f.severityLabel}${f.id === selectedId.value ? " chosen" : ""}`,
+              class: `item ${f.severity}${f.id === selectedId.value ? " chosen" : ""}`,
               onClick: () => choose(f.id),
             }, [
               h("div", { class: "itemhead" }, [
                 h("span", { class: "fid" }, f.id),
-                h("span", { class: `sev ${f.severityLabel}` }, f.severityLabel),
+                h("span", { class: `sev ${f.severity}` }, f.severity),
                 h("span", { class: "rule" }, f.rule),
               ]),
-              h("div", { class: "title" }, f.title),
-              [f.netA, f.netB].filter(Boolean).length
-                ? h("div", { class: "nets" }, [f.netA, f.netB].filter(Boolean).join(" ↔ "))
-                : null,
+              h("div", { class: "title" }, f.summary),
+              netsOf(f).length ? h("div", { class: "nets" }, netsOf(f).join(" ↔ ")) : null,
             ]))),
         ]),
       ]);

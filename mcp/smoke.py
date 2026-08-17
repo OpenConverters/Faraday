@@ -93,8 +93,9 @@ def check_http(port: int, review_dir: str) -> None:
         check("the widget is served over MCP", widget_len > 50_000, f"{widget_len:,} chars")
         sc = out.structuredContent or {}
         check("a review over HTTP returns the board and its findings",
-              sc.get("total", 0) > 0 and "board" in (sc.get("report") or {}),
-              f"{sc.get('total')} findings")
+              sc.get("reported", 0) > 0
+              and "board" in ((sc.get("subject") or {}).get("document") or {}),
+              f"{sc.get('reported')} findings")
     finally:
         proc.terminate()
         try:
@@ -116,8 +117,13 @@ def main() -> int:
 
         print("faraday_capabilities")
         r = S.faraday_capabilities()
-        check("the formats it reads are named", len(r.structuredContent["formats"]) >= 5,
-              ", ".join(r.structuredContent["formats"]))
+        families = r.structuredContent["families"]
+        kinds = {f["kind"] for f in families}
+        check("the formats it reads are named",
+              len([f for f in families if f["kind"] == "format"]) >= 5,
+              ", ".join(f["name"] for f in families if f["kind"] == "format"))
+        check("rules, formats, stackups and severities are each named as such",
+              kinds == {"rule", "format", "stackup", "severity"}, ", ".join(sorted(kinds)))
         check("the digest says the board stays local", "never leaves" in text(r))
 
         print("review_board without a stackup the file does not carry")
@@ -132,38 +138,73 @@ def main() -> int:
         r = S.review_board(str(BOARD), stackup="default-2layer")
         payload = r.structuredContent
         review = payload["review"]
-        report = payload["report"]
-        findings = report["findings"]
+        report = payload["subject"]["document"]      # the engine's own report, for the widget
+        findings = payload["findings"]               # the contract projection, for consumers
+        check("the payload is a `findings` result", payload["mode"] == "findings")
+        check("it says it is a screening estimate", payload["provisional"] is True)
         check("findings came back", len(findings) > 10, f"{len(findings)} findings")
-        check("every finding carries a rule, a severity and a mechanism",
-              all(f.get("rule") and f.get("severityLabel") and f.get("detail") for f in findings))
+        check("every finding carries a rule, a severity, a tier and a mechanism",
+              all(f.get("rule") and f.get("severity") and f.get("confidence") and f.get("detail")
+                  for f in findings))
         check("the board itself came back for the widget",
               len(report["board"].get("segments") or []) > 100
               and len(report["board"].get("nets") or []) > 10,
               f"{len(report['board']['segments'])} segments, {len(report['board']['nets'])} nets")
+        check("the drawing and the list hold the same findings, in the same order",
+              [f["id"] for f in report["findings"]] == [f["id"] for f in findings])
         check("the severity tally matches the findings",
               sum(payload["counts"].values()) == len(findings), json.dumps(payload["counts"]))
+        check("`reported` is what the payload actually carries",
+              payload["reported"] == len(findings))
+        # Units beside the values, not inside the names: `coupledLenMm` cannot be reported in
+        # mils without renaming the field, which is why the contract forbids it.
+        coupled = next((f["metrics"]["coupledLength"] for f in findings
+                        if "coupledLength" in (f.get("metrics") or {})), None)
+        check("numbers carry their unit beside them",
+              coupled is not None and coupled["unit"] == "mm" and isinstance(coupled["value"], float),
+              json.dumps(coupled))
+        # A finding that names its nets by INDEX names nothing to an engineer.
+        named = [n["name"] for f in findings for n in f.get("involves", []) if n["kind"] == "net"]
+        check("nets are named, never indexed",
+              any("SW_NODE" in n for n in named) and not any(n.lstrip("-").isdigit() for n in named),
+              ", ".join(sorted(set(named))[:3]))
+        check("findings are pinned to the copper",
+              sum(1 for f in findings if f.get("location")) > len(findings) // 2,
+              f"{sum(1 for f in findings if f.get('location'))} of {len(findings)} located")
         # A review that returns 200 findings while dropping 228 more reads as complete.
         dropped = (report.get("meta") or {}).get("droppedByFindingCap") or 0
         check("findings dropped by the cap are reported, not hidden",
               not dropped or "dropped by the per-report cap" in text(r),
               f"{dropped} dropped")
+        check("what was dropped is a FIELD, not only prose",
+              sum(d["count"] for d in payload["dropped"]) >= dropped
+              and all(d["reason"] for d in payload["dropped"]),
+              json.dumps(payload["dropped"]))
         check("a converter board finds its commutation loop or switch node",
               any(f["rule"] in ("commutation-loop", "switch-node") for f in findings),
               ", ".join(sorted({f["rule"] for f in findings})[:6]))
+        # RULES is hand-maintained from Screener.hpp and is what capabilities advertises, so
+        # it has to be caught drifting rather than quietly under-reporting what Faraday screens.
+        unlisted = sorted({f["rule"] for f in findings} - set(S.RULES))
+        check("every rule the engine fired is one capabilities advertises",
+              not unlisted, ", ".join(unlisted) or f"{len(S.RULES)} rules listed")
 
         print("list_findings")
         r = S.list_findings(review, severity="high", limit=5)
         high = r.structuredContent
         check("filtering by severity keeps only that severity",
-              all(f["severityLabel"] == "high" for f in high["report"]["findings"]),
-              f"{high['total']} high")
+              all(f["severity"] == "high" for f in high["findings"]),
+              f"{high['reported']} shown")
         check("the widget gets exactly the filtered set",
-              len(high["report"]["findings"]) == high["shown"] <= high["total"])
+              [f["id"] for f in high["subject"]["document"]["findings"]]
+              == [f["id"] for f in high["findings"]] and high["reported"] == 5)
+        check("what the limit cut off is reported as dropped",
+              any("limit" in d["reason"] for d in high["dropped"]),
+              json.dumps(high["dropped"]))
         rule = findings[0]["rule"]
         r = S.list_findings(review, rule=rule, limit=100)
-        check(f"filtering by rule '{rule}' works", r.structuredContent["total"] > 0,
-              f"{r.structuredContent['total']} findings")
+        check(f"filtering by rule '{rule}' works", r.structuredContent["reported"] > 0,
+              f"{r.structuredContent['reported']} findings")
         try:
             S.list_findings(review, rule="not-a-rule")
             check("an unknown rule is refused, with the real ones named", False)
@@ -176,13 +217,14 @@ def main() -> int:
             check("an unknown severity is refused", "unknown severity" in str(error))
 
         print("explain_finding")
-        target = next(f for f in findings if f["severityLabel"] == "high")
+        target = next(f for f in findings if f["severity"] == "high")
         r = S.explain_finding(review, target["id"])
         check("the finding is explained in full",
-              target["detail"][:40] in text(r) and target["title"] in text(r))
+              target["detail"][:40] in text(r) and target["summary"] in text(r))
         check("the remediation is carried", "Remediation:" in text(r))
         check("the widget gets the board with that one finding pinned",
-              [f["id"] for f in r.structuredContent["report"]["findings"]] == [target["id"]])
+              [f["id"] for f in r.structuredContent["subject"]["document"]["findings"]]
+              == [target["id"]] and r.structuredContent["reported"] == 1)
         try:
             S.explain_finding(review, "F-9999")
             check("an unknown finding id is refused", False)

@@ -93,6 +93,18 @@ mcp = FastMCP("Faraday", host=os.environ.get("FARADAY_MCP_HOST", "127.0.0.1"),
               port=_PORT, transport_security=_security)
 
 SEVERITIES = ("high", "medium", "low", "info")
+# Every rule the engine can fire — `f.rule = …` across cpp/include/faraday/ (Screener.hpp and
+# Report.hpp; pdn-antiresonance is set in the latter, which is exactly how the first version of
+# this list came out one rule short).
+#
+# Listed rather than derived because nothing in a report enumerates the rules that did NOT
+# fire, and "what do you screen for" is the question faraday_capabilities exists to answer.
+# smoke.py asserts every rule a corpus review produces is in here, so the list cannot drift
+# silently when the engine grows one — it caught pdn-antiresonance on its first run.
+RULES = ("3w", "cap-via-stub", "commutation-loop", "connector-ground-spread", "coupled-run",
+         "critical-mesh-ground", "dangling-stub", "decoupling-distance", "diff-pair",
+         "diff-skew", "edge-radiation", "no-reference-plane", "pdn-antiresonance",
+         "plane-cavity-mode", "plane-crossing", "sparse-reference", "switch-node", "via-stub")
 # A review is milliseconds, but its report is the object every other tool reads, so it is kept
 # rather than recomputed: a finding id must mean the same thing in explain_finding as it did in
 # the list the caller is reading from.
@@ -126,6 +138,18 @@ def _load(review: str) -> dict:
         raise ValueError(
             f"no review {review!r} -- it was never run here, or its directory was removed from "
             f"{REVIEW_ROOT}. Run review_board again; a review takes milliseconds.")
+    return json.loads(path.read_text(encoding="utf-8"))
+
+
+def _meta_of(review: str) -> dict:
+    """What review_board recorded about a run — the board it screened, the stackup, the time.
+
+    Kept beside the report so a follow-up call can say WHICH board it is talking about. The
+    payload names its subject, and a review id is not a name an engineer recognises.
+    """
+    path = REVIEW_ROOT / review / "meta.json"
+    if not path.exists():
+        return {}
     return json.loads(path.read_text(encoding="utf-8"))
 
 
@@ -168,6 +192,194 @@ def _counts(findings: list[dict]) -> dict:
         if label in out:
             out[label] += 1
     return out
+
+
+# --- the pipeline contract --------------------------------------------------
+# Every payload below is a `findings` result under Moebius's
+# contracts/pipeline_result.json. Written to the contract rather than to this
+# engine's own report shape, because the report is what FARADAY produces and the
+# payload is what a CONSUMER reads: a widget, an orchestrator, the next server.
+#
+# Three things the retrofit changes, and each one was a real defect:
+#
+#   * `mode` was "review", which is not a value in the contract's enum. Moebius
+#     validates at the boundary, so every call raised there.
+#   * numbers carried their unit in the field NAME (`minSepMm`, `coupledLenMm`,
+#     `nextDb`), which has to be renamed the day a board is reported in mils.
+#     They are now `{value, unit}` pairs.
+#   * nets were INDICES. `8 <-> 12` names nothing to an engineer, and a consumer
+#     could not resolve it without the board's net table.
+#
+# The engine's own report still travels, whole, as `subject.document` — that is
+# what BoardView draws, and it is the same object the CLI writes. `findings` is
+# the contract projection of the same set, in the same order.
+CONFIDENCE_TIERS = ("exact", "geometric-only", "screening-estimate", "heuristic", "user-declared")
+
+
+def _metric(value, unit: str | None = None, label: str | None = None) -> dict | None:
+    """One named scalar, unit BESIDE the value. None when the engine did not measure it —
+    an absent metric and a metric of zero are different facts."""
+    if value is None:
+        return None
+    out: dict = {"value": value}
+    if unit:
+        out["unit"] = unit
+    if label:
+        out["label"] = label
+    return out
+
+
+def _finding_metrics(f: dict) -> dict:
+    """The numbers behind a finding, named without their units.
+
+    `solve` is the closed-form's INPUTS — the geometry it was evaluated on. They are here
+    because a screening estimate whose inputs are invisible cannot be checked against a field
+    solve, which is the whole point of the confidence tier.
+    """
+    solve = f.get("solve") or {}
+    pairs = {
+        "coupledLength": _metric(f.get("coupledLenMm"), "mm", "coupled length"),
+        "minimumSeparation": _metric(f.get("minSepMm"), "mm", "minimum separation"),
+        "nearEndCrosstalk": _metric(f.get("nextDb"), "dB", "NEXT (saturated)"),
+        "severityScore": _metric(f.get("severity"), "1", "severity score"),
+        "gap": _metric(solve.get("gapMm"), "mm"),
+        "substrateHeight": _metric(solve.get("hMm"), "mm"),
+        "copperThickness": _metric(solve.get("tMm"), "mm"),
+        "trackWidthA": _metric(solve.get("w1Mm"), "mm"),
+        "trackWidthB": _metric(solve.get("w2Mm"), "mm"),
+        "relativePermittivity": _metric(solve.get("epsR"), "1"),
+        "transmissionLineMode": _metric(solve.get("mode")),
+    }
+    return {k: v for k, v in pairs.items() if v is not None}
+
+
+def _involves(f: dict, names: list[str], copper: list[str]) -> list[dict]:
+    """What the finding is ABOUT, by name — nets first, then the copper layers it spans.
+
+    netA/netB of -1 means 'not about a particular net' (a plane-crossing rollup is about the
+    plane), and that is an omission rather than a net called '-1'.
+    """
+    out = [{"kind": "net", "name": n} for n in _nets_of(f, names)]
+    for key in ("cuA", "cuB"):
+        idx = f.get(key)
+        if isinstance(idx, int) and 0 <= idx < len(copper):
+            layer = {"kind": "layer", "name": copper[idx]}
+            if layer not in out:
+                out.append(layer)
+    return out
+
+
+def _location(f: dict, copper: list[str]) -> dict | None:
+    """Where it is, in board millimetres, so a consumer can pin it rather than paraphrase it.
+
+    The engine's line segments are {x1, y1, x2, y2, cu, w}; the contract's are [x1, y1, x2, y2]
+    — the layer is on the location, and the width is copper geometry the drawing already holds.
+    """
+    geom = f.get("geom") or {}
+    points = [[p[0], p[1]] for p in (geom.get("markers") or []) if isinstance(p, list) and len(p) >= 2]
+    lines = [[ln["x1"], ln["y1"], ln["x2"], ln["y2"]] for ln in (geom.get("lines") or [])
+             if isinstance(ln, dict) and {"x1", "y1", "x2", "y2"} <= ln.keys()]
+    if not points and not lines:
+        return None
+    out: dict = {"unit": "mm"}
+    idx = f.get("cuA")
+    if isinstance(idx, int) and 0 <= idx < len(copper):
+        out["layer"] = copper[idx]
+    if points:
+        out["points"] = points
+    if lines:
+        out["lines"] = lines
+    return out
+
+
+def _contract_finding(f: dict, names: list[str], copper: list[str]) -> dict:
+    """One engine finding as the contract's `finding`.
+
+    Raises rather than substituting when the engine gives a confidence tier the contract does
+    not know: a consumer that must treat a heuristic differently from an exact geometric fact
+    cannot be handed an unrecognised tier quietly, and a new tier is a contract change.
+    """
+    confidence = f.get("confidence")
+    if confidence not in CONFIDENCE_TIERS:
+        raise ValueError(
+            f"finding {f.get('id')} carries confidence {confidence!r}, which the pipeline "
+            f"contract does not define — it knows {', '.join(CONFIDENCE_TIERS)}. Either the "
+            f"engine grew a tier or the report is from an older build; the contract has to "
+            f"learn it before this finding can cross a boundary.")
+    severity = f.get("severityLabel")
+    if severity not in SEVERITIES:
+        raise ValueError(f"finding {f.get('id')} has severity {severity!r}, not one of "
+                         f"{', '.join(SEVERITIES)}")
+    out = {
+        "id": f["id"],
+        "severity": severity,
+        "rule": f.get("rule") or "unnamed-rule",
+        "summary": f.get("title") or f.get("rule") or f["id"],
+        "confidence": confidence,
+    }
+    for key, field in (("detail", "detail"), ("remediation", "remediation")):
+        if f.get(key):
+            out[field] = f[key]
+    metrics = _finding_metrics(f)
+    if metrics:
+        out["metrics"] = metrics
+    involves = _involves(f, names, copper)
+    if involves:
+        out["involves"] = involves
+    location = _location(f, copper)
+    if location:
+        out["location"] = location
+    return out
+
+
+def _dropped(meta: dict) -> list[dict]:
+    """What the SCREEN found and did not report, by reason.
+
+    A number would not do: 'the per-report cap' and 'below the reporting floor' are different
+    facts about coverage, and a reader has to be able to tell which one happened. An empty
+    list means nothing was dropped, which is itself a fact.
+    """
+    out = []
+    if meta.get("droppedByFindingCap"):
+        out.append({"count": int(meta["droppedByFindingCap"]),
+                    "reason": "the per-report finding cap — this is the top of a longer list"})
+    if meta.get("droppedBelowFloorDb"):
+        out.append({"count": int(meta["droppedBelowFloorDb"]),
+                    "reason": f"below the {meta.get('reportFloorDb')} dB reporting floor"})
+    return out
+
+
+def _findings_payload(review: str, board: str, report: dict, findings: list[dict],
+                      dropped: list[dict] | None = None) -> dict:
+    """A `findings` result: the contract projection, plus the engine's report for the widget.
+
+    `findings` and `subject.document.findings` are the SAME set in the same order — one in the
+    contract's vocabulary for consumers, one in the engine's for the drawing. They are built
+    from one list here rather than in each tool, because two tools that filtered differently
+    would render a board that disagrees with the answer beside it.
+    """
+    names = _net_names(report)
+    copper = (report.get("board") or {}).get("copperNames") or []
+    return {
+        "mode": "findings",
+        "review": review,
+        "subject": {
+            "kind": "board",
+            "name": display_name(board),
+            "reference": str(board),
+            "schema": {"name": "faraday.report", "version": str(report.get("faraday") or "")},
+            # The engine's own report, whole. A widget that must DRAW the copper needs it in
+            # hand — the same reason documentResult carries `document` rather than a path.
+            "document": {**report, "findings": findings},
+        },
+        # Geometry screening, never a compliance statement. Explicit for the same reason the
+        # contract makes it explicit on a verdict: silence would read as 'established defect'.
+        "provisional": True,
+        "counts": _counts(findings),
+        "reported": len(findings),
+        "dropped": dropped or [],
+        "findings": [_contract_finding(f, names, copper) for f in findings],
+    }
 
 
 def _truncation_note(meta: dict) -> str:
@@ -219,9 +431,18 @@ def faraday_capabilities() -> CallToolResult:
         "or 'default-<N>layer' matching the board's copper count. Faraday never assumes one — "
         "the dielectric decides every impedance and coupling number in the report.\n"
         "The board is read from a path on THIS machine and never leaves it.",
-        {"formats": formats, "stackups": ["default-2layer", "default-4layer", "default-<N>layer"],
-         "severities": list(SEVERITIES),
-         "reviewDir": str(REVIEW_ROOT)})
+        # A `catalogue` result: what this pipeline can answer about. Rules, formats and
+        # stackups are three different KINDS of thing and each item says which it is —
+        # a reader picking a stackup must never mistake it for a rule that fired.
+        {"mode": "catalogue",
+         "families": (
+             [{"name": rule, "kind": "rule"} for rule in RULES]
+             + [{"name": name, "kind": "format", "detail": detail}
+                for name, detail in formats.items()]
+             + [{"name": s, "kind": "stackup"} for s in
+                ("default-2layer", "default-4layer", "default-<N>layer")]
+             + [{"name": s, "kind": "severity"} for s in SEVERITIES]),
+         "units": "mm for geometry, dB for coupling"})
 
 
 @mcp.tool(
@@ -291,9 +512,8 @@ def review_board(board: str, stackup: str | None = None,
         listing += f"\n  … {len(findings) - top} more — list_findings(review='{review}') filters them."
     return _result(
         f"{head}\n{listing}\n(review {review} — pass it to list_findings / explain_finding)",
-        {"mode": "review", "review": review, "board": str(board),
-         "counts": counts, "total": len(findings),
-         "report": report})
+        _findings_payload(review, board, report, findings,
+                          dropped=_dropped(report.get("meta") or {})))
 
 
 @mcp.tool(
@@ -341,10 +561,18 @@ def list_findings(review: str, severity: str | None = None, rule: str | None = N
         + f" in review {review}"
         + (f" (showing {len(shown)})" if len(shown) < len(findings) else "") + ":\n"
         + ("\n".join(_finding_brief(f, names) for f in shown) if shown else "  (none)"),
-        {"mode": "findings", "review": review, "counts": _counts(findings),
-         "total": len(findings), "shown": len(shown),
-         # The widget draws the board with exactly the findings this filter kept.
-         "report": {**report, "findings": shown}})
+        # The widget draws the board with exactly the findings this filter kept — the payload
+        # builder takes ONE list and produces both, so the drawing cannot disagree with the list.
+        #
+        # `dropped` carries what the caller did not get and did not ask to lose: the review's
+        # own cap and floor, plus this call's `limit` when it truncated. The filter itself is
+        # not a drop — a caller who asked for severity=high was not denied the low ones.
+        _findings_payload(
+            review, (_meta_of(review) or {}).get("board") or review, report, shown,
+            dropped=_dropped(report.get("meta") or {})
+            + ([{"count": len(findings) - len(shown),
+                 "reason": f"beyond limit={limit} for this call"}]
+               if len(shown) < len(findings) else [])))
 
 
 @mcp.tool(
@@ -381,8 +609,12 @@ def explain_finding(review: str, finding: str) -> CallToolResult:
         + (f"\nNets: {' <-> '.join(_nets_of(match, _net_names(report)))}"
            if _nets_of(match, _net_names(report)) else "")
         + (f"\nNumbers: " + ", ".join(f"{k} {v}" for k, v in numbers.items()) if numbers else ""),
-        {"mode": "finding", "review": review, "finding": match,
-         "report": {**report, "findings": [match]}})
+        # One finding is still a `findings` result with one in it, not a branch of its own:
+        # a consumer that renders a list should not need a second code path to render one.
+        # Nothing is dropped here beyond what the review itself dropped — the caller asked
+        # for exactly this finding and got it.
+        _findings_payload(review, (_meta_of(review) or {}).get("board") or review,
+                          report, [match], dropped=_dropped(report.get("meta") or {})))
 
 
 # --- the MCP Apps UI resource -----------------------------------------------

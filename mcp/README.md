@@ -60,6 +60,21 @@ says nothing about the port.
 | `list_findings` | filter a completed review by severity, rule or net | board |
 | `explain_finding` | one finding in full: mechanism, numbers, confidence, remediation | board |
 
+Every payload is a result under the **Moebius pipeline contract**
+(`contracts/pipeline_result.json`): `review_board`, `list_findings` and `explain_finding`
+return `mode: "findings"`, `faraday_capabilities` returns `mode: "catalogue"`. That means
+units travel beside their values (`{"value": 489.3, "unit": "mm"}`, not `coupledLenMm`), nets
+are named rather than indexed, the per-report cap is a `dropped` field rather than a sentence,
+and one finding is a list of one rather than a shape of its own. The engine's own report still
+travels whole, as `subject.document` — that is what the board widget draws.
+
+Check it against the contract from this repo:
+
+```bash
+python3 ~/wuerth/moebius-orchestrator/scripts/conformance.py \
+    http://127.0.0.1:8407/mcp --calls ~/wuerth/moebius-orchestrator/contracts/calls/faraday.json
+```
+
 A review takes **tens of milliseconds**, so these are ordinary blocking tools — no job queue.
 (OMFEM's async contract exists because an FEA solve takes minutes to hours; a geometry screen
 does not.) The report is still kept on disk per review, because a finding id has to mean the
