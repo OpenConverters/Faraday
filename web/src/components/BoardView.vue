@@ -175,8 +175,9 @@ function drawNearField(ctx, w, h, toScreen, invScreen) {
     x >= Math.min(c.x1, c.x2) && x <= Math.max(c.x1, c.x2) &&
     y >= Math.min(c.y1, c.y2) && y <= Math.max(c.y1, c.y2)
   const centroid = a => {
-    // hull-less aggressors contribute no field (hLoop returns 0), so their
-    // centroid is never consulted — but mapping over them must not throw
+    // an aggressor with no hull contributes no field (hLoop returns 0) — since
+    // ABT #798 every aggressor carries one, including inductors, so this is
+    // now a guard rather than a routine case
     if (!a.hull || a.hull.length < 3) return null
     let cx = 0, cy = 0
     for (const [hx, hy] of a.hull) { cx += hx; cy += hy }
@@ -190,7 +191,11 @@ function drawNearField(ctx, w, h, toScreen, invScreen) {
       const [mx, my] = invScreen(ix * step, iy * step)
       let p = 0
       for (let ai = 0; ai < nfd.aggressors.length; ai++) {
-        let v = hLoop(nfd.aggressors[ai].hull, mx, my, z, cur)
+        // per-aggressor current: a commutation loop carries the ring current,
+        // an inductor carries it derated by its construction. One current for
+        // everything drew the inductor as loud as the loop (ABT #798).
+        const acur = nfd.aggressors[ai].currentA ?? cur
+        let v = hLoop(nfd.aggressors[ai].hull, mx, my, z, acur)
         let se = 0
         if (aggC[ai])
           for (const c of cans)

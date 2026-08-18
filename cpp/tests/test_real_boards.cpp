@@ -281,3 +281,67 @@ TEST_CASE("inductance values are parsed, and bare numbers are refused",
     CHECK_FALSE(op::parse_inductance("").has_value());
     CHECK_FALSE(op::parse_inductance("DNP").has_value());
 }
+
+#include <faraday/Pdn.hpp>
+
+TEST_CASE("real: the MPPT's PDN rails carry their electrolytics (ABT #803)",
+          "[real][pdn]") {
+    // The micro-sign parse bug (fixed 2026-08-18) meant "390µF" was counted as
+    // unparseable, so the converter's INPUT rail was modelled with one 100 nF
+    // capacitor and none of its 780 µF of bulk. Nothing broke when it was
+    // fixed because nothing pinned a real board's PDN at all — which is what
+    // this test is: the missing regression guard, with the values checked
+    // against the board's own BOM fields rather than recorded from the code.
+    BoardIR b = import_kicad(read_real("mppt-2420-hc.kicad_pcb"),
+                             builtin_stackup("default-4layer"));
+    Screener sc(b);
+    const auto r = pdn::discover(b, sc, pdn::Params{});
+
+    const pdn::Rail* hv = nullptr;
+    const pdn::Rail* v33 = nullptr;
+    for (const auto& rail : r.rails) {
+        if (rail.name == "/DCDC_HV+") hv = &rail;
+        if (rail.name == "+3V3") v33 = &rail;
+    }
+    REQUIRE(hv != nullptr);
+    REQUIRE(v33 != nullptr);
+
+    // /DCDC_HV+: C1 and C2 are 390 µF radials (spelled with U+00B5), C3 is
+    // 1 µF, C4 is 100 nF. Nothing on this rail is unparseable.
+    CHECK(hv->caps.size() == 4);
+    CHECK(hv->skipped_unparsed == 0);
+    double c_total = 0;
+    int bulk = 0;
+    for (const auto& c : hv->caps) {
+        c_total += c.c_f;
+        if (c.c_f > 100e-6) ++bulk;
+    }
+    CHECK(bulk == 2);                                   // both radials present
+    CHECK(c_total == Approx(781.1e-6).epsilon(1e-6));   // 390 + 390 + 1 + 0.1 µF
+
+    // The bulk is in the CURVE, not just in the list: a 390 µF can with
+    // ~4.8 nH of package + measured mounting resonates near 116 kHz, and below
+    // that the rail is capacitor-dominated rather than VRM-dominated.
+    for (const auto& c : hv->caps)
+        if (c.c_f > 100e-6)
+            CHECK(c.f_res_hz == Approx(116e3).epsilon(0.05));
+    const pdn::Curve cv = pdn::curve(*hv, pdn::Params{});
+    auto z_at = [&](double f) {
+        double best = 1e30, z = 0;
+        for (size_t i = 0; i < cv.f_hz.size(); ++i)
+            if (std::abs(cv.f_hz[i] - f) < best) {
+                best = std::abs(cv.f_hz[i] - f);
+                z = cv.z_ohm[i];
+            }
+        return z;
+    };
+    // 780 µF against the model's 10 mΩ VRM: the rail is BELOW the VRM's own
+    // impedance at 10 kHz, which it could not be with only 100 nF on it.
+    CHECK(z_at(10e3) < 0.010);
+    CHECK(z_at(100e3) < z_at(1e6));      // still bulk-dominated at 100 kHz
+
+    // and the digital rail, which never had the bug, is unchanged: ten
+    // ceramics, nothing refused
+    CHECK(v33->caps.size() == 10);
+    CHECK(v33->skipped_unparsed == 0);
+}

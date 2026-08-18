@@ -676,6 +676,7 @@ inline nlohmann::json near_field_json(const BoardIR& board,
                       {"net", a.net}, {"xMm", a.x_mm}, {"yMm", a.y_mm},
                       {"areaMm2", a.area_mm2}, {"momentAm2", a.moment_am2},
                       {"aEffMm", a.a_eff_mm}, {"validFromMm", a.valid_from_mm},
+                      {"currentA", a.current_a},
                       {"hull", [&] {
                           nlohmann::json h = nlohmann::json::array();
                           for (const auto& pt : a.hull)

@@ -242,18 +242,44 @@ test('a drawn can dims the FIELD MAP outside it — colours agree with numbers',
     }, boardText)
     expect(hulls.length).toBeGreaterThan(1)
 
-    // wrap the SECOND aggressor's whole hull in the can, and probe 3.5 mm
-    // beyond its rightmost edge — off the white hull outline, outside the
-    // can (so no grey tint), where that aggressor's field dominates
-    const xs = hulls[1].map(p => p[0]), ys = hulls[1].map(p => p[1])
-    const can = { x1: Math.min(...xs) - 1, y1: Math.min(...ys) - 1,
-                  x2: Math.max(...xs) + 1, y2: Math.max(...ys) + 1 }
-    const probeMm = [can.x2 + 3.5, (can.y1 + can.y2) / 2]
-    // the point must owe its light to the encircled aggressor: every vertex
-    // of the OTHER hull stays at least twice as far away
-    const d2 = pts => Math.min(...pts.map(p => Math.hypot(p[0] - probeMm[0],
-                                                          p[1] - probeMm[1])))
-    expect(d2(hulls[0])).toBeGreaterThan(2 * d2(hulls[1]))
+    // Wrap ONE aggressor's whole hull in a can and probe just outside it, at a
+    // point that owes its light to the encircled aggressor: every vertex of
+    // every OTHER hull stays at least twice as far away.
+    //
+    // The site is SEARCHED, not hardcoded. It used to be "3.5 mm right of the
+    // second hull", which silently encoded which aggressors this board has —
+    // and when the near-field map learned to give inductors a hull (ABT #798)
+    // the second hull became L1, sitting right beside the commutation loop,
+    // where no such point exists. The invariant being tested is unchanged;
+    // only the choice of where to stand is now derived from the geometry the
+    // engine actually reports.
+    const dMin = (pts, pt) =>
+      Math.min(...pts.map(p => Math.hypot(p[0] - pt[0], p[1] - pt[1])))
+    let can = null, probeMm = null
+    for (let i = 0; i < hulls.length && !can; i++) {
+      const xs = hulls[i].map(p => p[0]), ys = hulls[i].map(p => p[1])
+      const box = { x1: Math.min(...xs) - 1, y1: Math.min(...ys) - 1,
+                    x2: Math.max(...xs) + 1, y2: Math.max(...ys) + 1 }
+      const mid = [(box.x1 + box.x2) / 2, (box.y1 + box.y2) / 2]
+      for (const gap of [3.5, 5, 7, 9]) {
+        const sites = [[box.x2 + gap, mid[1]], [box.x1 - gap, mid[1]],
+                       [mid[0], box.y2 + gap], [mid[0], box.y1 - gap]]
+        for (const pt of sites) {
+          const mine = dMin(hulls[i], pt)
+          const others = hulls.filter((_, j) => j !== i)
+          if (!others.length) continue
+          if (Math.min(...others.map(h => dMin(h, pt))) > 2 * mine) {
+            can = box; probeMm = pt
+            break
+          }
+        }
+        if (can) break
+      }
+    }
+    // If no such site exists the test cannot say anything about attenuation
+    // outside a can, and must say so rather than assert on a mixed field.
+    expect(can, 'no probe site is dominated by a single aggressor on this board')
+      .not.toBeNull()
 
     const view = JSON.parse(await canvas.getAttribute('data-view'))
     const toScreen = ([x, y]) =>

@@ -95,6 +95,13 @@ struct Aggressor {
     double a_eff_mm = 0;           // equivalent radius
     double valid_from_mm = 0;      // beyond this the point dipole is also valid
     std::vector<Point> hull;       // the loop itself, for the exact integral
+    // The current that flows in THIS loop. A commutation loop carries the ring
+    // current; an inductor carries it derated by its construction (a shielded
+    // part leaks a fraction of a drum's field). Before this was per-aggressor
+    // the map applied one current to everything, so an inductor's derating
+    // existed only in its moment — and its moment was only ever used outside
+    // the dipole-validity radius.
+    double current_a = 0;
 };
 
 struct VictimHit {
@@ -214,6 +221,7 @@ inline MapResult compute(const BoardIR& board, const Screener& screener,
         a.a_eff_mm = nf::effective_radius(area_m2) * 1e3;
         a.valid_from_mm = nf::dipole_valid_from_m(area_m2) * 1e3;
         a.hull = loop->hull;
+        a.current_a = p.ring_current_a;
         r.aggressors.push_back(std::move(a));
     }
     // ---- aggressors: inductors sitting on those switch nets ----
@@ -242,6 +250,17 @@ inline MapResult compute(const BoardIR& board, const Screener& screener,
                                                area_mm2 * 1e-6);
             a.a_eff_mm = nf::effective_radius(area_mm2 * 1e-6) * 1e3;
             a.valid_from_mm = nf::dipole_valid_from_m(area_mm2 * 1e-6) * 1e3;
+            a.current_a = p.inductor_k * p.ring_current_a;
+            // An inductor is a loop of finite size, so give it the loop: the
+            // rectangle its own footprint occupies, carrying the derated
+            // current. Same moment as the dipole in the far field, and — the
+            // point — a field that can be evaluated CLOSE UP, where a dipole
+            // cannot. Without a hull this aggressor contributed nothing to the
+            // rendered map and nothing to a victim inside its validity radius,
+            // so raising the probe could make the reported field GO UP as the
+            // source became computable (ABT #798).
+            a.hull = {Point{lo.x, lo.y}, Point{hi.x, lo.y},
+                      Point{hi.x, hi.y}, Point{lo.x, hi.y}};
             r.aggressors.push_back(std::move(a));
         }
     }
@@ -329,7 +348,7 @@ inline MapResult compute(const BoardIR& board, const Screener& screener,
                 poly.reserve(a.hull.size());
                 for (const auto& pt : a.hull)
                     poly.push_back({pt.x * 1e-3, pt.y * 1e-3, 0.0});
-                vec = nf::h_loop_vec(poly, probe, p.ring_current_a);
+                vec = nf::h_loop_vec(poly, probe, a.current_a);
                 h = std::sqrt(vec.x * vec.x + vec.y * vec.y + vec.z * vec.z);
             } else if (d >= a.valid_from_mm) {
                 h = nf::h_equatorial(a.moment_am2, d * 1e-3);
