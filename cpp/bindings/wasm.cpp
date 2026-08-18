@@ -162,6 +162,22 @@ static std::string solve_pair(std::string request_json) {
     }
 }
 
+// The input-capacitor branch derived from the LOADED board: the conducted
+// panel asks for it once and stops asking the user for a capacitance the
+// layout already contains.
+static std::string input_branch() {
+    try {
+        if (!g_board)
+            throw std::runtime_error(
+                "no board loaded — the input capacitor branch is derived from "
+                "the board's own parts");
+        faraday::Screener sc(*g_board, session_params());
+        return faraday::bench::input_branch_json(*g_board, sc).dump();
+    } catch (const std::exception& e) {
+        return nlohmann::json{{"error", e.what()}}.dump();
+    }
+}
+
 static std::string conducted_estimate_js(std::string request_json) {
     try {
         return faraday::bench::conducted_estimate(
@@ -273,6 +289,7 @@ EMSCRIPTEN_BINDINGS(faraday) {
     emscripten::function("solvePair", &solve_pair);
     emscripten::function("predictEmissions", &predict_emissions);
     emscripten::function("conductedEstimate", &conducted_estimate_js);
+    emscripten::function("inputBranch", &input_branch);
     emscripten::function("cmBudget", &cm_budget);
     emscripten::function("returnPath", &return_path);
     emscripten::function("pdn", &pdn_map);

@@ -9,6 +9,10 @@ const props = defineProps({
   // common-mode current into the chassis, and it is why the conducted estimate
   // no longer has to ask anyone to invent a stray capacitance.
   dvdtAreaMm2: { type: Number, default: 0 },
+  // An operating point handed over by whatever DESIGNED the converter
+  // (Kirchhoff/Heaviside), through the URL fragment — the same private route
+  // the Hertz bridge uses in the other direction. Null when nobody said.
+  operatingPoint: { type: Object, default: null },
 })
 const basic = inject('basic', computed(() => false))
 // The panel sits on a scrim, so the header toggle is unreachable while it is
@@ -24,10 +28,14 @@ const emit = defineEmits(['close'])
 // reason this is worth doing here rather than in a spreadsheet. Everything
 // else is the switching waveform, which only the designer knows.
 const base = props.finding.emit
-const current = ref(10)
-const fsw = ref(500)          // kHz
-const duty = ref(0.4)
-const rise = ref(20)          // ns
+// The waveform: from the design if a tool handed one over, otherwise the
+// guided preset's numbers. Either way the panel PRINTS what it is using —
+// an assumption you cannot see is what makes a tool feel generic.
+const op = props.operatingPoint
+const current = ref(op?.currentA ?? 10)
+const fsw = ref(op?.fSwKhz ?? 500)          // kHz
+const duty = ref(op?.duty ?? 0.4)
+const rise = ref(op?.riseNs ?? 20)          // ns
 const limit = ref('cispr32b')
 const ground = ref(true)
 
@@ -79,8 +87,22 @@ function onInput() { run(); runCm(); runConducted(); nextTick(() => { draw(); dr
 // The payload still goes to hertz.openconverters.com in the URL FRAGMENT — the
 // part of a URL that never reaches any server — for the actual filter
 // synthesis (choke, X and Y capacitors, real part numbers).
-const vBus = ref(48)
+const vBus = ref(op?.vBusV ?? 48)
 const cInUf = ref(10)
+// The input-capacitor branch, derived from the board's own parts (ABT #797).
+// The DM path of the conducted estimate IS this impedance, so as long as the
+// board can supply it the slider has no business being the source.
+const branch = ref(null)
+const useBoardCin = ref(true)
+function loadBranch() {
+  try {
+    const out = JSON.parse(props.engine.inputBranch())
+    branch.value = out.error || !out.derived ? null : out
+  } catch { branch.value = null }
+}
+const branchLh = computed(() => branch.value
+  ? branch.value.caps.map(c => ({ cF: c.cF, lH: c.eslH + c.lMountH })) : null)
+const derivedCin = computed(() => !!(branch.value && useBoardCin.value))
 // C_stray: DERIVED from the dv/dt copper this board actually has, at a stated
 // mounting distance. The area is measured; the gap is the one thing a layout
 // file cannot carry, so it is the only thing left to ask for. Boards with no
@@ -108,6 +130,7 @@ function conductedRequest() {
   } else {
     req.cStrayF = cStrayPf.value * 1e-12
   }
+  if (derivedCin.value) req.inputBranches = branchLh.value
   return req
 }
 
@@ -176,7 +199,7 @@ function applyPreset(p) {
 }
 
 watch([limit, ground], onInput)
-watch([vBus, cInUf, chassisGapMm, mounting, cStrayPf, conductedLimit],
+watch([vBus, cInUf, chassisGapMm, mounting, cStrayPf, conductedLimit, useBoardCin],
       () => { runConducted(); nextTick(drawConducted) })
 
 
@@ -356,6 +379,7 @@ const ro = new ResizeObserver(() => { draw(); drawConducted() })
 onMounted(() => {
   run()
   runCm()
+  loadBranch()
   runConducted()
   nextTick(() => {
     draw(); drawConducted()
@@ -584,7 +608,7 @@ const where = computed(() => {
             </template>
           </p>
 
-          <dl class="creq" data-testid="conducted-required">
+          <dl v-if="cv.designFCovered" class="creq" data-testid="conducted-required">
             <div><dt>CM stage needs</dt>
               <dd>{{ cv.requiredCmDb > 0 ? num(cv.requiredCmDb, 0) + ' dB' : 'nothing' }}</dd></div>
             <div><dt>DM stage needs</dt>
@@ -593,7 +617,55 @@ const where = computed(() => {
               ? num(cv.designFMhz * 1000, 0) + ' kHz' : num(cv.designFMhz, 2) + ' MHz' }}</dd></div>
             <div v-if="!basic"><dt>incl. margin</dt><dd>{{ num(cv.designMarginDb, 0) }} dB</dd></div>
           </dl>
+          <p v-else class="cwhich warn" data-testid="conducted-uncovered">
+            This standard only regulates protected broadcast bands, and
+            {{ cv.designFMhz < 1 ? num(cv.designFMhz * 1000, 0) + ' kHz'
+                                 : num(cv.designFMhz, 2) + ' MHz' }} — where this
+            converter's filter would be designed — is not inside one. No
+            attenuation figure is quoted here rather than one against a limit
+            that does not exist at that frequency. The bands that ARE measured
+            are still judged above.
+          </p>
+          <p v-if="cv.automotiveLisn" class="cwhich warn" data-testid="conducted-lisn">
+            <b>Read the DM curve with care against an automotive line.</b> The
+            differential-mode path here is modelled against the 50 µH / 100 Ω
+            mains artificial network; a CISPR 25 measurement uses a 5 µH LISN,
+            whose impedance below a few megahertz is much lower. The common-mode
+            path and the limit line are right; the DM level is the mains case.
+          </p>
         </template>
+
+        <!-- The differential-mode source term: the board's own capacitors.
+             The DM curve is this branch's impedance, so where the layout can
+             supply it, a slider asking for "input capacitor" is the tool
+             ignoring what it can already see. -->
+        <div class="cstray" data-testid="input-branch">
+          <p v-if="branch" class="note" data-testid="branch-derived">
+            <b>Input capacitors, off this board:</b>
+            {{ branch.caps.map(c => c.ref).join(' + ') }} on
+            <b>{{ branch.rail }}</b> —
+            <b>{{ branch.cF >= 1e-6 ? (branch.cF * 1e6).toFixed(1) + ' µF'
+                 : (branch.cF * 1e9).toFixed(0) + ' nF' }}</b> total, branch
+            inductance <b>{{ (branch.lH * 1e9).toFixed(2) }} nH</b> of which
+            {{ (branch.lMountShare * 100).toFixed(0) }}% is the MOUNTING, measured
+            pad-to-via on your copper. The commutation loop named
+            {{ branch.loopCapRef }}, which is what identified the rail.
+            <template v-if="branch.unparsed"> {{ branch.unparsed }} capacitor(s)
+              on this rail had a value this refuses to guess at, and are left
+              out rather than invented.</template>
+            <b>ESR is not on the board</b> — every branch carries the model's
+            stated 15 mΩ, and a large electrolytic's real ESR is several times
+            that, which makes the DM level here optimistic where the bulk
+            dominates.
+            <label class="inl"><input type="checkbox" v-model="useBoardCin"
+                     data-testid="use-board-cin" /> use it</label>
+          </p>
+          <p v-else class="note" data-testid="branch-stated">
+            No input-capacitor branch could be derived from this board (no switch
+            node with a derived commutation loop, or no parseable capacitor on its
+            rail), so the differential-mode path uses the value you state below.
+          </p>
+        </div>
 
         <!-- The common-mode source term. Derived where the board can supply it:
              the plate is the switching copper, measured; only the distance to
@@ -627,7 +699,7 @@ const where = computed(() => {
             <label class="sl"><span>bus voltage <b>{{ num(vBus, 0) }} V</b></span>
               <input data-testid="bridge-vbus" type="range" min="5" max="800" step="1"
                      v-model.number="vBus" /></label>
-            <label v-if="!basic" class="sl"><span>input capacitor <b>{{ num(cInUf, 0) }} µF</b></span>
+            <label v-if="!basic && !derivedCin" class="sl"><span>input capacitor <b>{{ num(cInUf, 0) }} µF</b></span>
               <input data-testid="bridge-cin" type="range" min="0.1" max="200" step="0.1"
                      v-model.number="cInUf" /></label>
           </div>
@@ -672,6 +744,8 @@ const where = computed(() => {
 .creq dt { color: var(--tin); }
 .creq dd { color: var(--silk); }
 .cstray { margin-top: 8px; }
+.inl { margin-left: 8px; font-family: var(--mono); font-size: 11px; }
+.cwhich.warn { color: var(--heat-med); }
 .conducted .hbtn {
   margin-top: 6px; padding: 7px 14px; cursor: pointer;
   background: none; color: #58c79a; border: 1px solid #2a5a46; border-radius: 5px;

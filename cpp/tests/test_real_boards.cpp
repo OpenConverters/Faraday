@@ -221,3 +221,63 @@ TEST_CASE("corpus pin: ulx3s's three monolithic bucks are OFFERED as "
             loop_found = true;
     CHECK(loop_found);
 }
+
+#include <faraday/Operating.hpp>
+
+TEST_CASE("real: the MPPT's input-capacitor branch is derived from its own parts",
+          "[real][operating]") {
+    // ABT #797: the conducted estimate used to ask for "input capacitor" with
+    // a slider while the parts sat on the board with their values in the file.
+    // The commutation loop already names the capacitor that supplies the
+    // current step; its rail is the branch, and the mounting inductance is
+    // measured off this board's copper.
+    BoardIR b = import_kicad(read_real("mppt-2420-hc.kicad_pcb"),
+                             builtin_stackup("default-4layer"));
+    Screener sc(b);
+    auto ib = op::input_branch(b, sc);
+    REQUIRE(ib.has_value());
+
+    CHECK(!ib->caps.empty());
+    CHECK(!ib->loop_cap_ref.empty());
+    CHECK(!ib->switch_net.empty());
+    // a real converter's input rail carries microfarads, not picofarads
+    CHECK(ib->c_f > 1e-6);
+    CHECK(ib->c_f < 1e-2);
+    // parallel capacitors: the branch inductance is BELOW the smallest single
+    // one, and the total capacitance is the sum
+    double c_sum = 0, l_min = 1e30;
+    for (const auto& c : ib->caps) {
+        c_sum += c.c_f;
+        l_min = std::min(l_min, c.esl_h + c.l_mount_h);
+    }
+    CHECK(ib->c_f == Approx(c_sum));
+    CHECK(ib->l_h <= l_min);
+    CHECK(ib->l_h > 0);
+    // the point of measuring rather than assuming: on a real board most of the
+    // branch inductance is the MOUNTING, not the part
+    CHECK(ib->l_mount_share > 0.3);
+    CHECK(ib->l_mount_share <= 1.0);
+    // and the branch resonates somewhere a converter actually switches
+    CHECK(ib->f_res_hz > 10e3);
+    CHECK(ib->f_res_hz < 100e6);
+
+    // A board with no converter answers "no", rather than picking a rail
+    BoardIR hack = import_kicad(read_real("hackrf-one.kicad_pcb"));
+    Screener hsc(hack);
+    if (hsc.switch_nets().empty())
+        CHECK_FALSE(op::input_branch(hack, hsc).has_value());
+}
+
+TEST_CASE("inductance values are parsed, and bare numbers are refused",
+          "[operating]") {
+    CHECK(*op::parse_inductance("4u7") == Approx(4.7e-6));
+    CHECK(*op::parse_inductance("10uH") == Approx(10e-6));
+    CHECK(*op::parse_inductance("100n") == Approx(100e-9));
+    CHECK(*op::parse_inductance("2.2mH") == Approx(2.2e-3));
+    CHECK(*op::parse_inductance("470p") == Approx(470e-12));
+    // no unit: a 10 that means 10 uH and a 10 that means 10 nH are four
+    // decades apart in every answer that uses it
+    CHECK_FALSE(op::parse_inductance("10").has_value());
+    CHECK_FALSE(op::parse_inductance("").has_value());
+    CHECK_FALSE(op::parse_inductance("DNP").has_value());
+}

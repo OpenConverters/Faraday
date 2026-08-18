@@ -159,6 +159,54 @@ export const RULES = [
     fix: 'A via pair directly beside each pad (checklist figure: within 0.3 mm), not at the end of a trace run.',
     confidence: 'geometric-only',
   },
+  {
+    id: 'esd-clamp-distance',
+    name: 'ESD clamp far from its pin',
+    what: 'The nearest clamp-shaped part (a diode-class part between the net and the return) sits millimetres of track away from the connector pin it would protect, with the resulting overshoot in volts.',
+    physics: 'V_at_the_pin = V_clamp + L·di/dt. An IEC 61000-4-2 contact discharge is ~30 A/ns, and track is ~0.8 nH/mm, so every millimetre between pin and clamp is ~24 V the clamp never sees — and anything tapped off in between sees all of it. The part\'s ROLE is inferred from shape: if it is not a clamp, the pin has no protection near the connector, which is the same gap read the other way.',
+    fix: 'Put the clamp at the connector pin, before any branch or stub, with the shortest possible track between them.',
+    confidence: 'heuristic (clamp role inferred; distance exact)',
+  },
+  {
+    id: 'esd-clamp-return',
+    name: 'ESD clamp return path',
+    what: 'The clamp\'s ground pad reaches the reference plane through millimetres of copper, in volts at the standard\'s di/dt.',
+    physics: 'The discharge current goes home through that inductance, so the voltage across it rides on the clamp\'s own reference and adds to everything the clamp is holding down. A clamp is only as good as its return.',
+    fix: 'A via at the ground pad (two halves the barrel inductance), into the same reference the protected part uses.',
+    confidence: 'geometric-only',
+  },
+  {
+    id: 'esd-unprotected-pin',
+    name: 'Unclamped connector pins',
+    what: 'Connector pins that reach an IC or transistor with no clamp part near the pin. A coverage statement, not a defect.',
+    physics: 'Nothing on the net limits a discharge. Whether a pin needs protection is a product decision — an internal board-to-board header usually does not, a user-accessible port does — so this is stated at info grade and never ranked as a fault.',
+    fix: 'For user-accessible ports, add a clamp at the pin and check its return via. For the rest, record the decision.',
+    confidence: 'heuristic',
+  },
+  {
+    id: 'filter-io-coupling',
+    name: 'Filter bypassed by its own routing',
+    what: 'The dirty side and the clean side of a recognised line filter run beside each other away from the part — a coupling path straight across the filter, in dB.',
+    physics: 'Insertion loss cannot beat the path that goes around it: a 60 dB choke behind a −30 dB bypass delivers about 30 dB. The filter block is recognised by shape (a four-pad wound part whose pads split two-and-two into four distinct non-return nets, with at least one X or Y capacitor on those nets), so a transformer is not mistaken for a filter.',
+    fix: 'Route the two sides apart at the choke — no parallel runs across the block, no shared layer above or below, and a grounded fence or plane gap between them.',
+    confidence: 'screening-estimate',
+  },
+  {
+    id: 'y-cap-return',
+    name: 'Y capacitor return path',
+    what: 'A Y capacitor reaching its reference through millimetres of copper, with the frequency where its own mounting inductance takes over.',
+    physics: 'Above f = 1/(2π√(LC)) the capacitor is an inductor and the common-mode path it was placed to provide stops existing — in the part of the band where common mode dominates. The value comes from the board (µ and Greek mu included); where it cannot be parsed the resonance is not computed rather than guessed.',
+    fix: 'Via directly at the Y capacitor\'s ground pad, into the same reference the choke and the connector shell use.',
+    confidence: 'geometric-only',
+  },
+  {
+    id: 'filter-bypass',
+    name: 'Switching copper beside the filter\'s clean side',
+    what: 'Dv/dt copper passing close to the connector side of a recognised filter — the side that leaves the board.',
+    physics: 'The choke and the capacitors act on what flows THROUGH them, not on what lands on the wire afterwards. Near-field coupling onto the clean side re-injects behind the filter, which is the commonest reason a filter measures worse in the product than on the bench.',
+    fix: 'Distance, or a barrier: keep the clean copper short and close to the connector, never route it back past the converter, and fence or can the switching stage where the board is too crowded for distance.',
+    confidence: 'geometric-only',
+  },
 ]
 
 // The deep tools — not findings, but part of the same vocabulary.
@@ -251,6 +299,30 @@ export const PLAIN = {
   'pdn-antiresonance': {
     says: 'The decoupling capacitors on this rail fight each other at one frequency instead of helping, and the supply impedance peaks there.',
     do: 'Use several capacitors of the SAME value rather than a mix of decades, or put a small resistor in one branch to damp it.',
+  },
+  'esd-clamp-distance': {
+    says: 'The protection part for this connector pin sits a long way from the pin, and a static shock gets past it before it can act.',
+    do: 'Move the protection diode right next to the connector pin, before the track goes anywhere else.',
+  },
+  'esd-clamp-return': {
+    says: 'The protection part is connected to ground through a long piece of copper, which throws away much of what it does.',
+    do: 'Put a via right at its ground pad — two if they fit.',
+  },
+  'esd-unprotected-pin': {
+    says: 'These connector pins go straight to a chip with nothing to protect them from a static shock. Whether they need protection is your call — an internal header usually does not, a socket someone can touch does.',
+    do: 'For the ports people can touch, add a protection diode at the pin.',
+  },
+  'filter-io-coupling': {
+    says: 'The wires going into your filter run alongside the wires coming out of it, so noise steps across and skips the filter entirely.',
+    do: 'Route the two sides of the filter away from each other — never side by side, and never one directly above the other.',
+  },
+  'y-cap-return': {
+    says: 'This safety capacitor reaches ground through a length of track, and above a certain frequency it stops working as a capacitor at all.',
+    do: 'Put a via right at its ground pad.',
+  },
+  'filter-bypass': {
+    says: 'The noisy switching part of the board sits right next to the clean side of the filter, so noise jumps across through the air and rejoins after the filter.',
+    do: 'Move them apart, keep the clean side short and near the connector, or put a shield between them.',
   },
   'cap-via-stub': {
     says: 'This decoupling capacitor reaches its plane along a length of track instead of through a via at its own pad, which throws away much of what it was placed for.',

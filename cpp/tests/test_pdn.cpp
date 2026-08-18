@@ -155,3 +155,18 @@ TEST_CASE("an unparseable value is counted, never guessed", "[pdn]") {
     CHECK(r.rails[0].caps.size() == 1);
     CHECK(r.rails[0].skipped_unparsed == 1);
 }
+
+TEST_CASE("the micro sign parses — real boards do not spell it 'u'",
+          "[pdn][values]") {
+    // KiCad writes U+00B5 (MICRO SIGN); some libraries write U+03BC (Greek
+    // small letter mu). A parser that knows only ASCII 'u' drops every
+    // electrolytic: on the LibreSolar MPPT that was 780 uF of input bulk,
+    // three of the five capacitors on the converter's own input rail.
+    CHECK_THAT(*pdn::parse_capacitance("390µF"), WithinRel(390e-6, 1e-9));
+    CHECK_THAT(*pdn::parse_capacitance("1µF"), WithinRel(1e-6, 1e-9));
+    CHECK_THAT(*pdn::parse_capacitance("4μ7"), WithinRel(4.7e-6, 1e-9));
+    CHECK_THAT(*pdn::parse_capacitance("100nF"), WithinRel(100e-9, 1e-9));
+    // and the refusals still refuse: a bare number has no unit
+    CHECK_FALSE(pdn::parse_capacitance("100").has_value());
+    CHECK_FALSE(pdn::parse_capacitance("DNP").has_value());
+}

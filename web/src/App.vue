@@ -63,6 +63,36 @@ const engineLoading = ref(true)
 // open board across (it serves the file from localhost with CORS), and how
 // the demo button works — the fetch happens in the browser, so the privacy
 // property is unchanged: nothing is uploaded anywhere.
+// #op=<base64 json>: an operating point handed over by whatever DESIGNED the
+// converter — Kirchhoff, Heaviside, or anything that can write a fragment.
+// The reverse direction of the Hertz bridge, and private for the same reason:
+// a URL fragment never reaches a server. Everything in it is a CIRCUIT
+// property no layout can carry, which is exactly why it is worth accepting.
+const operatingPoint = ref(null)
+function loadOperatingPoint() {
+  const m = location.hash.match(/[#&]op=([^&]+)/)
+  if (!m) return
+  try {
+    const p = JSON.parse(decodeURIComponent(escape(atob(m[1]))))
+    if (!p || typeof p !== 'object') return
+    const num = (v, lo, hi) =>
+      typeof v === 'number' && isFinite(v) && v >= lo && v <= hi ? v : undefined
+    // Range-checked on the way in: a handoff is data from another program, and
+    // a duty of 4 or a negative edge would throw inside the engine on the
+    // first slider move rather than at the door.
+    operatingPoint.value = {
+      source: typeof p.source === 'string' ? p.source.slice(0, 40) : 'a design tool',
+      label: typeof p.label === 'string' ? p.label.slice(0, 80) : '',
+      currentA: num(p.currentA, 0.001, 1000),
+      fSwKhz: num(p.fSwKhz, 1, 100000) ??
+              (num(p.fSwHz, 1e3, 1e11) !== undefined ? p.fSwHz / 1e3 : undefined),
+      duty: num(p.duty, 0.01, 0.99),
+      riseNs: num(p.riseNs, 0.05, 5000),
+      vBusV: num(p.vBusV, 0.1, 2000),
+    }
+  } catch { operatingPoint.value = null }
+}
+
 async function loadFromHash() {
   const m = location.hash.match(/^#load=(.+)$/)
   if (!m) return
@@ -90,8 +120,9 @@ onMounted(async () => {
   } finally {
     engineLoading.value = false
   }
+  loadOperatingPoint()
   await loadFromHash()
-  window.addEventListener('hashchange', loadFromHash)
+  window.addEventListener('hashchange', () => { loadOperatingPoint(); loadFromHash() })
 })
 
 async function analyze() {
@@ -714,7 +745,8 @@ function toggleRule(rule) {
 
     <EmissionsPanel v-if="emitFinding && engine" :engine="engine"
                     :finding="emitFinding"
-                    :dvdt-area-mm2="dvdtAreaMm2" @close="emitId = ''" />
+                    :dvdt-area-mm2="dvdtAreaMm2"
+                    :operating-point="operatingPoint" @close="emitId = ''" />
 
     <NearFieldPanel v-if="nfDetail && nearField && engine" :engine="engine"
                     :result="nearField" :params="nfParams"
@@ -747,6 +779,9 @@ function toggleRule(rule) {
           switching net(s) found</template><template
           v-if="dvdtAreaMm2 > 0"> · <b>{{ dvdtAreaMm2.toFixed(0) }} mm²</b> of switching copper</template>
       </span>
+      <span v-if="operatingPoint" class="m sw" data-testid="meta-op">
+        operating point: <b>{{ operatingPoint.source }}</b><template
+          v-if="operatingPoint.label"> · {{ operatingPoint.label }}</template></span>
       <span v-if="!basic" class="m">format: <b>{{ report.format }}</b></span>
       <span v-if="!basic" class="m">stackup: <b>{{ meta.stackupSource }}</b></span>
       <span v-for="p in meta.planes" :key="p.layer" v-show="!basic" class="m">

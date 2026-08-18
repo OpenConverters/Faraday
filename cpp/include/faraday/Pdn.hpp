@@ -22,6 +22,7 @@
 // interplane spreading beyond a lumped term, and load-die capacitance.
 
 #include "Screener.hpp"
+#include "Values.hpp"
 
 #include <algorithm>
 #include <cctype>
@@ -35,57 +36,14 @@
 
 namespace faraday::pdn {
 
-// ---------------------------------------------------------------------------
-// Component value parsing — "100n", "4u7", "0.1uF", "2200p"
-// ---------------------------------------------------------------------------
-
-inline std::optional<double> parse_capacitance(const std::string& raw) {
-    std::string v;
-    for (char c : raw)
-        if (!std::isspace((unsigned char)c)) v += (char)std::tolower((unsigned char)c);
-    if (v.empty()) return std::nullopt;
-    // strip a trailing farad marker
-    if (v.back() == 'f') v.pop_back();
-    if (v.empty()) return std::nullopt;
-    auto mult = [](char c) -> double {
-        switch (c) {
-            case 'p': return 1e-12;
-            case 'n': return 1e-9;
-            case 'u': return 1e-6;
-            case 'm': return 1e-3;
-            default: return 0;
-        }
-    };
-    // "4u7" style: digits, multiplier, digits
-    for (size_t i = 0; i < v.size(); ++i) {
-        const double m = mult(v[i]);
-        if (m == 0) continue;
-        const std::string a = v.substr(0, i), b = v.substr(i + 1);
-        try {
-            if (!a.empty() && b.empty()) return std::stod(a) * m;
-            if (!a.empty() && !b.empty() &&
-                b.find_first_not_of("0123456789") == std::string::npos)
-                return std::stod(a + "." + b) * m;
-        } catch (...) { return std::nullopt; }
-        return std::nullopt;
-    }
-    // bare number: refuse rather than guess a unit — a "100" could be pF or nF
-    // depending on the library's habits, and a wrong guess poisons the curve
-    return std::nullopt;
-}
-
-// ESL by package size, read from the footprint name. Order matters: "1210"
-// contains "121", so match longest first.
-inline double esl_from_footprint(const std::string& fp) {
-    static const std::vector<std::pair<const char*, double>> table = {
-        {"01005", 0.25e-9}, {"0201", 0.3e-9}, {"0402", 0.4e-9},
-        {"0603", 0.5e-9},   {"0805", 0.7e-9}, {"1206", 1.0e-9},
-        {"1210", 1.2e-9},   {"1812", 1.6e-9}, {"2220", 2.0e-9},
-    };
-    for (const auto& [k, v] : table)
-        if (fp.find(k) != std::string::npos) return v;
-    return 1.0e-9;   // unknown package: mid-of-road, stated in the output
-}
+// Component values and package ESL now live in Values.hpp — the screener
+// needs the same parser (Y-capacitor resonance) and cannot include this
+// header, since this one includes it. Re-exported here so every existing
+// pdn::parse_capacitance call site keeps working.
+using values::normalize_micro;
+using values::parse_capacitance;
+using values::parse_inductance;
+using values::esl_from_footprint;
 
 // ---------------------------------------------------------------------------
 // The model

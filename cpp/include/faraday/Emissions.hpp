@@ -462,6 +462,53 @@ struct ConductedEstimate {
     std::vector<double> cm_dbuv;
 };
 
+// The input capacitor is rarely one capacitor. A converter's input is a
+// NETWORK — bulk electrolytics, a few ceramics, each with its own package ESL
+// and its own measured mounting inductance — and what the differential-mode
+// residual appears across is that network's impedance, not a lumped 10 uF.
+// Collapsing it to one (C, L, ESR) triple gets the resonance wrong in both
+// directions: the bulk sets C, the ceramics set L, and their crossover is a
+// real feature of the curve.
+//
+// So the branch is carried as a LIST, and |Z| is the parallel combination at
+// each frequency. Faraday derives that list from the board's own parts
+// (op::input_branch); a caller who has only a datasheet still passes one.
+struct InputCapBranch {
+    double c_f = 0, l_h = 0, esr_ohm = 0;
+};
+
+inline double input_branch_z(const std::vector<InputCapBranch>& branches,
+                             double f_hz) {
+    if (branches.empty())
+        throw std::invalid_argument("conducted: the input branch has no capacitors");
+    if (!(f_hz > 0)) throw std::invalid_argument("conducted: frequency must be > 0");
+    const double w = 2.0 * PI_E * f_hz;
+    double gy = 0, by = 0;      // sum of admittances, real and imaginary
+    for (const auto& b : branches) {
+        if (!(b.c_f > 0) || !(b.l_h >= 0) || !(b.esr_ohm >= 0))
+            throw std::invalid_argument(
+                "conducted: every input-capacitor branch must be physical "
+                "(C > 0, L >= 0, ESR >= 0)");
+        const double x = w * b.l_h - 1.0 / (w * b.c_f);
+        const double den = b.esr_ohm * b.esr_ohm + x * x;
+        if (!(den > 0))
+            throw std::invalid_argument(
+                "conducted: a lossless branch at its exact resonance has zero "
+                "impedance — give it an ESR");
+        gy += b.esr_ohm / den;
+        by += -x / den;
+    }
+    const double mag_y = std::hypot(gy, by);
+    if (!(mag_y > 0)) throw std::invalid_argument("conducted: degenerate branch network");
+    return 1.0 / mag_y;
+}
+
+inline ConductedEstimate conducted_estimate(const Trapezoid& t,
+                                            const std::vector<InputCapBranch>& branches,
+                                            double v_bus_v, double c_stray_f,
+                                            double f1_hz = 150e3,
+                                            double f2_hz = 30e6);
+
 inline ConductedEstimate conducted_estimate(const Trapezoid& t, double c_in_f,
                                             double esl_h, double esr_ohm,
                                             double v_bus_v, double c_stray_f,
@@ -469,6 +516,22 @@ inline ConductedEstimate conducted_estimate(const Trapezoid& t, double c_in_f,
                                             double f2_hz = 30e6) {
     if (!(c_in_f > 0) || !(esl_h >= 0) || !(esr_ohm >= 0))
         throw std::invalid_argument("conducted: input-cap branch must be physical");
+    if (!(v_bus_v > 0) || !(c_stray_f > 0))
+        throw std::invalid_argument("conducted: bus voltage and C_stray must be > 0");
+    if (!(f1_hz > 0) || !(f2_hz > f1_hz))
+        throw std::invalid_argument("conducted: bad band");
+    return conducted_estimate(t, {{c_in_f, esl_h, esr_ohm}}, v_bus_v, c_stray_f,
+                              f1_hz, f2_hz);
+}
+
+inline ConductedEstimate conducted_estimate(const Trapezoid& t,
+                                            const std::vector<InputCapBranch>& branches,
+                                            double v_bus_v, double c_stray_f,
+                                            double f1_hz, double f2_hz) {
+    if (branches.empty())
+        throw std::invalid_argument(
+            "conducted: the differential-mode path needs at least one input "
+            "capacitor branch");
     if (!(v_bus_v > 0) || !(c_stray_f > 0))
         throw std::invalid_argument("conducted: bus voltage and C_stray must be > 0");
     if (!(f1_hz > 0) || !(f2_hz > f1_hz))
@@ -494,7 +557,7 @@ inline ConductedEstimate conducted_estimate(const Trapezoid& t, double c_in_f,
         const double f = n * t.f_sw_hz;
         if (f < f1_hz || f > f2_hz) continue;
         const double w = 2.0 * PI_E * f;
-        const double z_cin = std::hypot(esr_ohm, w * esl_h - 1.0 / (w * c_in_f));
+        const double z_cin = input_branch_z(branches, f);
         const double v_dm = harmonic_a(t, n) * z_cin;
         const double v_cm = harmonic_a(v, n) * w * c_stray_f * 25.0;
         const double dm = 20.0 * std::log10(std::max(v_dm, 1e-12) / 1e-6);
@@ -554,8 +617,62 @@ struct ConductedLimit {
     std::vector<ConductedSegment> segs;
 };
 
+// CISPR 25 conducted voltage (vehicle supply lines), Table 4. Two things make
+// it a different animal from CISPR 32, and both are information rather than
+// inconvenience:
+//
+//   * limits exist ONLY inside protected broadcast bands. Between them there
+//     is no limit at all, and conducted_limit_at returns nullopt there — the
+//     verdict skips those points rather than scoring them against a zero.
+//   * the class-to-class step is NOT a flat 10 dB: 10 dB in LW, 8 dB in MW,
+//     6 dB from SW upward. Deriving class 3 as class 5 + 20 dB is up to 8 dB
+//     too permissive, which is the wrong direction to be wrong in.
+//
+// Class 5 quasi-peak is the baseline; peak = QP + 13 dB, average = QP - 7 dB.
+// Same construction as Hertz's cispr25_conducted_voltage, and pinned to it.
+struct Cispr25Band {
+    double f_lo_hz, f_hi_hz, class5_qp_dbuv, class_step_db;
+};
+
+inline const std::vector<Cispr25Band>& cispr25_bands() {
+    static const std::vector<Cispr25Band> B = {
+        {150e3, 300e3, 57.0, 10.0},    // LW
+        {530e3, 1.8e6, 41.0, 8.0},     // MW
+        {5.9e6, 6.2e6, 40.0, 6.0},     // SW
+        {26e6, 28e6, 31.0, 6.0},       // CB
+        {30e6, 54e6, 31.0, 6.0},       // VHF
+        {68e6, 108e6, 25.0, 6.0},      // VHF / FM
+    };
+    return B;
+}
+
+inline ConductedLimit cispr25_conducted(int emission_class, const std::string& detector) {
+    if (emission_class < 1 || emission_class > 5)
+        throw std::invalid_argument("conducted: CISPR 25 class must be 1..5");
+    double offset;
+    if (detector == "peak") offset = 13.0;
+    else if (detector == "quasi-peak") offset = 0.0;
+    else if (detector == "average") offset = -7.0;
+    else throw std::invalid_argument(
+        "conducted: CISPR 25 detector must be peak, quasi-peak or average");
+    ConductedLimit l;
+    l.id = "cispr25c" + std::to_string(emission_class) +
+           (detector == "average" ? "-av" : detector == "peak" ? "-pk" : "-qp");
+    l.label = "CISPR 25 Class " + std::to_string(emission_class) +
+              " conducted (" + (detector == "average" ? "AV"
+                                : detector == "peak" ? "PK" : "QP") + ")";
+    l.detector = detector;
+    for (const auto& b : cispr25_bands()) {
+        const double v = b.class5_qp_dbuv + offset +
+                         b.class_step_db * (5 - emission_class);
+        l.segs.push_back({b.f_lo_hz, b.f_hi_hz, v, v});
+    }
+    return l;
+}
+
 inline const std::vector<ConductedLimit>& conducted_limits() {
-    static const std::vector<ConductedLimit> L = {
+    static const std::vector<ConductedLimit> L = [] {
+        std::vector<ConductedLimit> v = {
         {"cispr32b-qp", "CISPR 32 / EN 55032 Class B mains (QP)", "quasi-peak",
          {{150e3, 500e3, 66.0, 56.0}, {500e3, 5e6, 56.0, 56.0}, {5e6, 30e6, 60.0, 60.0}}},
         {"cispr32b-av", "CISPR 32 / EN 55032 Class B mains (AV)", "average",
@@ -564,8 +681,26 @@ inline const std::vector<ConductedLimit>& conducted_limits() {
          {{150e3, 500e3, 79.0, 79.0}, {500e3, 30e6, 73.0, 73.0}}},
         {"cispr32a-av", "CISPR 32 / EN 55032 Class A mains (AV)", "average",
          {{150e3, 500e3, 66.0, 66.0}, {500e3, 30e6, 60.0, 60.0}}},
-    };
+        };
+        // Automotive: every class, quasi-peak and average. Generated rather
+        // than tabulated, because the per-band class step is exactly the thing
+        // a hand-typed table gets wrong.
+        for (int cls = 1; cls <= 5; ++cls)
+            for (const char* det : {"quasi-peak", "average"})
+                v.push_back(cispr25_conducted(cls, det));
+        return v;
+    }();
     return L;
+}
+
+// Which LISN the DM path of the estimate assumes. The 50 uH/100 ohm mains
+// artificial network is what the DM model in conducted_estimate() is written
+// against; a CISPR 25 measurement uses a 5 uH LISN, whose impedance below a
+// few MHz is far lower, so the DM figure judged against an automotive line is
+// the mains case being read on the wrong network. That is a caveat the panel
+// must SAY, not a correction to apply silently.
+inline bool limit_expects_automotive_lisn(const std::string& limit_id) {
+    return limit_id.rfind("cispr25", 0) == 0;
 }
 
 inline const ConductedLimit& conducted_limit_by_id(const std::string& id) {
@@ -628,6 +763,13 @@ struct ConductedVerdict {
     // the band (there is then no such frequency).
     double cm_crossover_hz = 0;
     double design_f_hz = 0, design_margin_db = 0;
+    // A band-limited line (CISPR 25) may have NO limit at the design
+    // frequency — the switching fundamental can sit between two protected
+    // broadcast bands. That is a real answer, not a missing one, so the
+    // requirement is left unset and this says why rather than quoting an
+    // attenuation against a limit that does not exist there.
+    bool design_f_covered = false;
+    double design_f_used_hz = 0;    // the comb point the requirement was read at
     // ANP015 A_req = level - limit + margin, at the design frequency. Negative
     // means that mode already meets the limit and needs no stage.
     double required_dm_db = 0, required_cm_db = 0;
@@ -707,15 +849,25 @@ inline ConductedVerdict conducted_verdict(const ConductedEstimate& est,
         if (p.f_hz == v.worst_f_hz)
             v.worst_level_dbuv = v.worst_mode == "CM" ? p.cm_dbuv : p.dm_dbuv;
 
-    // A_req at the design frequency: the comb's point nearest it in log f
+    // A_req at the design frequency: the comb's point nearest it in log f.
+    // "Nearest" only means something inside a band — with CISPR 25's gaps the
+    // nearest COVERED point can be a decade away, and sizing a filter at a
+    // frequency the receiver does not look at is how a stage ends up 20 dB
+    // short. So the requirement is quoted only when the design frequency is
+    // itself inside a band, within a quarter decade of a comb point.
     const ConductedPoint* at = &v.points.front();
     double best = 1e30;
     for (const auto& p : v.points) {
         const double d = std::abs(std::log10(p.f_hz / v.design_f_hz));
         if (d < best) { best = d; at = &p; }
     }
-    v.required_dm_db = at->dm_dbuv - at->limit_dbuv + design_margin_db;
-    v.required_cm_db = at->cm_dbuv - at->limit_dbuv + design_margin_db;
+    v.design_f_covered = conducted_limit_at(lim, v.design_f_hz).has_value() &&
+                         best < 0.25;
+    if (v.design_f_covered) {
+        v.design_f_used_hz = at->f_hz;
+        v.required_dm_db = at->dm_dbuv - at->limit_dbuv + design_margin_db;
+        v.required_cm_db = at->cm_dbuv - at->limit_dbuv + design_margin_db;
+    }
     v.required_dm_band_db = design_margin_db - v.dm_worst_margin_db;
     v.required_cm_band_db = design_margin_db - v.cm_worst_margin_db;
     return v;

@@ -1723,3 +1723,258 @@ TEST_CASE("conducted estimate: comb physics, decimation, honest refusals",
     CHECK_THROWS_AS(emc::conducted_estimate(hf, 1e-6, 1e-9, 0.01, 12.0, 50e-12),
                     std::invalid_argument);
 }
+
+// ---------------------------------------------------------------------------
+// Immunity (ABT #796): the clamp, and the copper it does not cover
+// ---------------------------------------------------------------------------
+
+TEST_CASE("ESD: a clamp far from its pin is volts, and the number says how many",
+          "[screener][esd]") {
+    // J1 pin 1 on CANH at the board edge; D1 (TVS) clamps CANH to GND but sits
+    // 15 mm away. At 30 A/ns that copper is 12 nH -> ~360 V the clamp never
+    // sees. D1's ground pad reaches the plane 6 mm away -> another ~153 V.
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "GND") (net 2 "CANH")
+      (segment (start 2 10) (end 17 10) (width 0.3) (layer "F.Cu") (net 2))
+      (via (at 26 10) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
+      (zone (net 1) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 40 0) (xy 40 30) (xy 0 30))))
+      (footprint "J" (layer "F.Cu") (at 2 10)
+        (property "Reference" "J1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 2 "CANH"))
+        (pad "2" smd rect (at 0 2) (size 1 1) (layers "F.Cu") (net 1 "GND")))
+      (footprint "D" (layer "F.Cu") (at 17 10)
+        (property "Reference" "D1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 2 "CANH"))
+        (pad "2" smd rect (at 3 0) (size 1 1) (layers "F.Cu") (net 1 "GND")))
+      (footprint "U" (layer "F.Cu") (at 30 10)
+        (property "Reference" "U1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 2 "CANH"))
+        (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net 1 "GND")))
+    ))";
+    nlohmann::json report = analyze_board(
+        import_kicad(txt, builtin_stackup("default-2layer")));
+
+    const auto* d = find_rule(report["findings"], "esd-clamp-distance");
+    REQUIRE(d != nullptr);
+    CHECK((*d)["coupledLenMm"].get<double>() == Approx(15.0).margin(0.2));
+    // the distance is exact; the part's ROLE is an inference, and the
+    // finding says so rather than asserting D1 is a TVS
+    CHECK((*d)["confidence"].get<std::string>().find("inferred") != std::string::npos);
+    CHECK((*d)["detail"].get<std::string>().find("not actually a clamp") !=
+          std::string::npos);
+    // 15 mm x 0.8 nH/mm x 30 A/ns = 360 V, stated in the title
+    CHECK((*d)["title"].get<std::string>().find("360 V") != std::string::npos);
+    CHECK((*d)["detail"].get<std::string>().find("D1") != std::string::npos);
+
+    // and the clamp's own return: pad at (20,10), via at (26,10) -> 6 mm
+    const auto* r = find_rule(report["findings"], "esd-clamp-return");
+    REQUIRE(r != nullptr);
+    CHECK((*r)["coupledLenMm"].get<double>() == Approx(6.0).margin(0.2));
+    // (6 x 0.8 + 0.3) x 30 = 153 V
+    CHECK((*r)["title"].get<std::string>().find("153 V") != std::string::npos);
+
+    // CANH IS clamped, so it must not also be reported as unprotected
+    const auto* u = find_rule(report["findings"], "esd-unprotected-pin");
+    CHECK(u == nullptr);
+}
+
+TEST_CASE("ESD: a clamp AT the pin with a via under it is not a finding",
+          "[screener][esd]") {
+    // Same board, D1 moved to 1.5 mm from the pin and its ground via beside
+    // its own pad. Nothing to report — the rule must not fire on good layout.
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "GND") (net 2 "CANH")
+      (segment (start 2 10) (end 30 10) (width 0.3) (layer "F.Cu") (net 2))
+      (via (at 5.8 10) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
+      (zone (net 1) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 40 0) (xy 40 30) (xy 0 30))))
+      (footprint "J" (layer "F.Cu") (at 2 10)
+        (property "Reference" "J1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 2 "CANH"))
+        (pad "2" smd rect (at 0 2) (size 1 1) (layers "F.Cu") (net 1 "GND")))
+      (footprint "D" (layer "F.Cu") (at 3.5 10)
+        (property "Reference" "D1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 2 "CANH"))
+        (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net 1 "GND")))
+      (footprint "U" (layer "F.Cu") (at 30 10)
+        (property "Reference" "U1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 2 "CANH"))
+        (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net 1 "GND")))
+    ))";
+    nlohmann::json report = analyze_board(
+        import_kicad(txt, builtin_stackup("default-2layer")));
+    CHECK(find_rule(report["findings"], "esd-clamp-distance") == nullptr);
+    CHECK(find_rule(report["findings"], "esd-clamp-return") == nullptr);
+}
+
+TEST_CASE("ESD: an unclamped pin that reaches silicon is stated as coverage",
+          "[screener][esd]") {
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "GND") (net 2 "CANH")
+      (segment (start 2 10) (end 30 10) (width 0.3) (layer "F.Cu") (net 2))
+      (zone (net 1) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 40 0) (xy 40 30) (xy 0 30))))
+      (footprint "J" (layer "F.Cu") (at 2 10)
+        (property "Reference" "J1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 2 "CANH"))
+        (pad "2" smd rect (at 0 2) (size 1 1) (layers "F.Cu") (net 1 "GND")))
+      (footprint "U" (layer "F.Cu") (at 30 10)
+        (property "Reference" "U1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 2 "CANH"))
+        (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net 1 "GND")))
+    ))";
+    nlohmann::json report = analyze_board(
+        import_kicad(txt, builtin_stackup("default-2layer")));
+    const auto* u = find_rule(report["findings"], "esd-unprotected-pin");
+    REQUIRE(u != nullptr);
+    CHECK((*u)["severityLabel"] == "info");     // coverage, never a verdict
+    CHECK((*u)["detail"].get<std::string>().find("product decision") !=
+          std::string::npos);
+    CHECK((*u)["title"].get<std::string>().find("1") != std::string::npos);
+}
+
+// ---------------------------------------------------------------------------
+// The filter block (ABT #795): placement, not part choice
+// ---------------------------------------------------------------------------
+
+namespace {
+// A line filter: 4-pad choke FL1 (LIN1/LIN2 -> LOUT1/LOUT2), an X cap across
+// the output pair, a Y cap from LOUT1 to GND, and connector J1 on the input
+// side. `coupled` routes the input and output sides side by side down the
+// board; otherwise they leave in opposite directions.
+std::string filter_board(bool coupled, bool y_far_via, bool with_switcher) {
+    std::string b = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "GND") (net 2 "LIN1") (net 3 "LIN2")
+      (net 4 "LOUT1") (net 5 "LOUT2") (net 6 "SW")
+      (zone (net 1) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 60 0) (xy 60 40) (xy 0 40))))
+      (footprint "J" (layer "F.Cu") (at 2 10)
+        (property "Reference" "J1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 2 "LIN1"))
+        (pad "2" smd rect (at 0 2) (size 1 1) (layers "F.Cu") (net 3 "LIN2"))
+        (pad "3" smd rect (at 0 4) (size 1 1) (layers "F.Cu") (net 1 "GND")))
+      (footprint "FL" (layer "F.Cu") (at 20 10)
+        (property "Reference" "FL1")
+        (pad "1" smd rect (at -2 0) (size 1 1) (layers "F.Cu") (net 2 "LIN1"))
+        (pad "2" smd rect (at -2 2) (size 1 1) (layers "F.Cu") (net 3 "LIN2"))
+        (pad "3" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net 4 "LOUT1"))
+        (pad "4" smd rect (at 2 2) (size 1 1) (layers "F.Cu") (net 5 "LOUT2")))
+      (footprint "C" (layer "F.Cu") (at 26 11)
+        (property "Reference" "CX1") (property "Value" "470nF")
+        (pad "1" smd rect (at 0 -1) (size 1 1) (layers "F.Cu") (net 4 "LOUT1"))
+        (pad "2" smd rect (at 0 1) (size 1 1) (layers "F.Cu") (net 5 "LOUT2")))
+      (footprint "C" (layer "F.Cu") (at 30 14)
+        (property "Reference" "CY1") (property "Value" "2n2")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 4 "LOUT1"))
+        (pad "2" smd rect (at 0 2) (size 1 1) (layers "F.Cu") (net 1 "GND")))
+    )";
+    // the Y capacitor's ground via: beside its pad, or 8 mm away
+    b += y_far_via ? R"((via (at 38 16) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1)))"
+                   : R"((via (at 30.6 16) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1)))";
+    // the two sides' copper, well clear of the choke's own body
+    if (coupled) {
+        // input and output sides run parallel down the board, 0.3 mm apart
+        b += R"((segment (start 3 25) (end 45 25) (width 0.3) (layer "F.Cu") (net 2)))";
+        b += R"((segment (start 3 25.6) (end 45 25.6) (width 0.3) (layer "F.Cu") (net 4)))";
+    } else {
+        b += R"((segment (start 3 25) (end 12 25) (width 0.3) (layer "F.Cu") (net 2)))";
+        b += R"((segment (start 40 34) (end 52 34) (width 0.3) (layer "F.Cu") (net 4)))";
+    }
+    if (with_switcher) {
+        // a switch node (L+Q) right beside the connector-side copper
+        // switching copper 3 mm from the connector-side track at (3..12, 25)
+        b += R"((segment (start 6 22) (end 14 22) (width 1.0) (layer "F.Cu") (net 6)))";
+        b += R"((footprint "L" (layer "F.Cu") (at 6 22) (property "Reference" "L9")
+                 (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 6 "SW"))))";
+        b += R"((footprint "Q" (layer "F.Cu") (at 14 22) (property "Reference" "Q9")
+                 (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 6 "SW"))))";
+    }
+    return b + ")";
+}
+}  // namespace
+
+TEST_CASE("filter: routing that runs the two sides together caps the filter",
+          "[screener][filter]") {
+    nlohmann::json report = analyze_board(
+        import_kicad(filter_board(true, false, false),
+                     builtin_stackup("default-2layer")));
+    const auto* f = find_rule(report["findings"], "filter-io-coupling");
+    REQUIRE(f != nullptr);
+    CHECK((*f)["coupledLenMm"].get<double>() == Approx(42.0).margin(1.0));
+    CHECK((*f)["minSepMm"].get<double>() == Approx(0.6).margin(0.05));
+    CHECK((*f)["nextDb"].get<double>() > -45.0);
+    CHECK((*f)["title"].get<std::string>().find("FL1") != std::string::npos);
+    CHECK((*f)["detail"].get<std::string>().find("goes around") != std::string::npos);
+
+    // routed apart, the same filter is not a finding
+    nlohmann::json clean = analyze_board(
+        import_kicad(filter_board(false, false, false),
+                     builtin_stackup("default-2layer")));
+    CHECK(find_rule(clean["findings"], "filter-io-coupling") == nullptr);
+}
+
+TEST_CASE("filter: a Y capacitor's return decides where it stops being one",
+          "[screener][filter]") {
+    nlohmann::json report = analyze_board(
+        import_kicad(filter_board(false, true, false),
+                     builtin_stackup("default-2layer")));
+    const auto* y = find_rule(report["findings"], "y-cap-return");
+    REQUIRE(y != nullptr);
+    // CY1's ground pad is at (30,16); the via sits at (38,16) -> 8 mm
+    CHECK((*y)["coupledLenMm"].get<double>() == Approx(8.0).margin(0.2));
+    // 8 mm x 0.8 + 0.3 = 6.7 nH with 2.2 nF -> f = 1/(2 pi sqrt(LC)) = 41 MHz
+    CHECK((*y)["detail"].get<std::string>().find("41.") != std::string::npos);
+    CHECK((*y)["title"].get<std::string>().find("CY1") != std::string::npos);
+
+    // with the via beside the pad there is nothing to report
+    nlohmann::json ok = analyze_board(
+        import_kicad(filter_board(false, false, false),
+                     builtin_stackup("default-2layer")));
+    CHECK(find_rule(ok["findings"], "y-cap-return") == nullptr);
+}
+
+TEST_CASE("filter: switching copper beside the clean side walks around the filter",
+          "[screener][filter]") {
+    nlohmann::json report = analyze_board(
+        import_kicad(filter_board(false, false, true),
+                     builtin_stackup("default-2layer")));
+    const auto* f = find_rule(report["findings"], "filter-bypass");
+    REQUIRE(f != nullptr);
+    CHECK((*f)["coupledLenMm"].get<double>() < 10.0);
+    CHECK((*f)["detail"].get<std::string>().find("already passed the filter") !=
+          std::string::npos);
+}
+
+TEST_CASE("filter: a 4-pad wound part with no X or Y capacitor is not a filter",
+          "[screener][filter]") {
+    // Same shape, no capacitors: a transformer or a coupled inductor. Calling
+    // it a line filter would invent a whole rule family's worth of findings on
+    // every flyback in the corpus.
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "GND") (net 2 "P1") (net 3 "P2") (net 4 "S1") (net 5 "S2")
+      (zone (net 1) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 60 0) (xy 60 40) (xy 0 40))))
+      (segment (start 3 25) (end 45 25) (width 0.3) (layer "F.Cu") (net 2))
+      (segment (start 3 25.6) (end 45 25.6) (width 0.3) (layer "F.Cu") (net 4))
+      (footprint "T" (layer "F.Cu") (at 20 10)
+        (property "Reference" "T1")
+        (pad "1" smd rect (at -2 0) (size 1 1) (layers "F.Cu") (net 2 "P1"))
+        (pad "2" smd rect (at -2 2) (size 1 1) (layers "F.Cu") (net 3 "P2"))
+        (pad "3" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net 4 "S1"))
+        (pad "4" smd rect (at 2 2) (size 1 1) (layers "F.Cu") (net 5 "S2")))
+    ))";
+    nlohmann::json report = analyze_board(
+        import_kicad(txt, builtin_stackup("default-2layer")));
+    CHECK(find_rule(report["findings"], "filter-io-coupling") == nullptr);
+    CHECK(find_rule(report["findings"], "y-cap-return") == nullptr);
+    CHECK(find_rule(report["findings"], "filter-bypass") == nullptr);
+    // but the ordinary coupled-run rule still sees the two tracks — the
+    // filter family adds a reading, it does not remove one
+    CHECK(find_rule(report["findings"], "coupled-run") != nullptr);
+}

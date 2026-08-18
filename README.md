@@ -52,7 +52,23 @@ Six rules implement Franz (*EMV: Störungssicherer Aufbau elektronischer Schaltu
 commutation loop crossing a ground-domain boundary, §8.17.1 — via his Stromumschaltanalyse on
 the netlist derived from the layout), `pdn-antiresonance` (mixed-value decoupling's parallel
 resonance, computed from the PDN branch model, §5.5/§5.9.5) and `edge-radiation`
-(switch-node copper at the board edge). Pads carry their pin names through every importer,
+(switch-node copper at the board edge).
+
+A recognised **line filter** gets its own three: `filter-io-coupling` (the dirty and
+clean sides routed together — a path *around* the filter that caps its insertion loss no
+matter what the parts do), `y-cap-return` (the Y capacitor's own mounting inductance, and
+the frequency above which it stops being a capacitor) and `filter-bypass` (switching
+copper beside the connector side, re-injecting behind the filter). The block is found by
+shape — a four-pad wound part whose pads split two-and-two into four distinct non-return
+nets, with at least one X or Y capacitor on them — so a flyback transformer is never
+mistaken for a filter.
+
+**Immunity** is one mechanism, and it is pure layout: `esd-clamp-distance` and
+`esd-clamp-return` turn the copper between a connector pin and its clamp — and the clamp's
+own path to the plane — into the volts they actually are (`V = L·di/dt`, ~30 A/ns for an
+IEC 61000-4-2 contact discharge, ~0.8 nH/mm), and `esd-unprotected-pin` states, at info
+grade, which connector pins reach silicon with no clamp near them. Whether a pin needs one
+is a product decision, so that last one is coverage, never a verdict. Pads carry their pin names through every importer,
 so conduction paths are derivable, not guessed.
 
 The derived meshes are validated against a real-board corpus — vendor-documented EVM hot
@@ -143,6 +159,24 @@ stays common mode, and the attenuation each stage has to find at the design freq
 problem are fixed by different parts, so which one you have is the first question, not a
 footnote.
 
+**The input capacitors are the board's own.** The differential-mode path *is* the input
+branch's impedance, and that branch is on the layout: the commutation loop already names
+the capacitor that supplies the current step, so its rail is the branch, and every
+capacitor across it joins in — with the **mounting inductance measured pad-to-via** on
+your copper, not a datasheet ESL. It is carried as a network rather than a lumped value,
+because the bulk sets C, the ceramics set L, and their crossover is a real feature of the
+curve. (Fixing this found a parser bug worth its own line: `390µF` was being silently
+skipped, because the micro sign is not ASCII — three of the five capacitors on the MPPT's
+own input rail.)
+
+**Limit lines**: CISPR 32 / EN 55032 mains, Class A and B, quasi-peak and average — and
+**CISPR 25** conducted, classes 1–5, for automotive. CISPR 25 only regulates protected
+broadcast bands, so between them there is no limit and the verdict says exactly that
+instead of scoring against a zero; when the switching fundamental lands in a gap, no
+attenuation figure is quoted at all. The DM model is written against the 50 µH/100 Ω mains
+network, and against an automotive line the panel says so rather than quietly reading the
+wrong LISN.
+
 **C_stray is derived, not invented.** The plate that turns dV/dt into common-mode current
 is the switching copper, and Faraday measures it off the layout the same way it measures
 the commutation loop — tracks, pads and pours on every switch net, summed. What a layout
@@ -151,6 +185,13 @@ a gap in millimetres, and whether the board is spaced off the chassis (air) or b
 against it (through the laminate, 4.5×). Fringing only adds, so the figure is a stated
 floor on the geometry's contribution — a heatsink on the device tab, a transformer's
 inter-winding capacitance and the harness add paths no layout can see.
+
+**The operating point can come from the design.** Switched current, switching frequency,
+edge rate and bus voltage are circuit properties no layout carries — so Faraday takes them
+from whatever designed the converter: `#op=<base64 json>` in the URL fragment (the reverse
+direction of the Hertz bridge, private for the same reason), range-checked at the door and
+credited in the meta strip. Without one, guided mode offers four converter presets and
+prints the numbers behind the choice.
 
 Then **design the filter that fixes this →** hands the two mode spectra to
 [Hertz](https://hertz.openconverters.com) in the URL *fragment* — the part of a URL that

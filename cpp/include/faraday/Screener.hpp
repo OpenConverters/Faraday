@@ -34,6 +34,7 @@
 //                      (no silent caps: everything not analysed is reported)
 
 #include "BoardIR.hpp"
+#include "Values.hpp"
 #include "CriticalMesh.hpp"
 #include "Tline.hpp"
 
@@ -87,6 +88,39 @@ struct ScreenerParams {
     size_t max_individual_breaks = 8;  // more hard breaks on one plane -> roll up
     double return_pour_fraction = 0.2; // pour >= this share of the board = a return net
     size_t max_findings = 200;       // hard cap on emitted findings (dropped count reported)
+
+    // ---- immunity (ABT #796) ----
+    // IEC 61000-4-2 contact discharge: ~30 A first peak in under a nanosecond
+    // at 8 kV. 30 A/ns is the figure the standard's waveform gives and the one
+    // TVS application notes quote; it is a PARAMETER here because it is the
+    // multiplier on every voltage this rule family reports.
+    double esd_di_dt_a_per_ns = 30.0;
+    double esd_nh_per_mm = 0.8;      // same escape-inductance rule of thumb as the PDN
+    double esd_via_nh = 0.3;         // per barrel
+    // Above this, the copper between the connector pin and its clamp is worth
+    // reporting: at 30 A/ns, 4 mm of it is ~96 V the clamp never sees.
+    double esd_clamp_far_mm = 4.0;
+    // The clamp's OWN return: pad to the nearest return via.
+    double esd_return_far_mm = 2.5;
+    // How far a diode-class part may sit from a connector pin and still be
+    // called that pin's clamp. Beyond this the association is fiction: the
+    // MPPT has a power diode 66 mm from a connector pin on the same net, and
+    // calling that a badly-placed TVS invents both a part role and a defect.
+    // Past this distance the pin is simply not protected NEAR the connector,
+    // which is what the coverage finding then says.
+    double esd_clamp_assoc_max_mm = 25.0;
+    size_t esd_max_pins_listed = 6;  // roll-up width for unprotected pins
+
+    // ---- the filter block (ABT #795) ----
+    // Copper within this radius of the choke's own body is the FOOTPRINT, not
+    // a bypass path: the two sides necessarily meet at the part.
+    double filter_local_mm = 3.0;
+    // A coupling path across the filter worse than this caps what the filter
+    // can achieve, and is worth saying out loud.
+    double filter_couple_floor_db = -45.0;
+    // Switching copper closer than this to the filter's CONNECTOR side walks
+    // around the filter through the air rather than through it.
+    double filter_bypass_mm = 10.0;
 };
 
 struct FindingGeom {
@@ -302,6 +336,11 @@ class Screener {
         find_cap_via_stubs(out);
         find_edge_radiation(out);
         find_diff_skew(out);
+        find_esd_clamp_paths(out);
+        find_unprotected_connector_pins(out);
+        find_filter_coupling(out);
+        find_y_cap_return(out);
+        find_filter_bypass(out);
         // rank: severity desc, then coupled length desc
         std::sort(out.begin(), out.end(), [](const Finding& x, const Finding& y) {
             if (x.severity != y.severity) return x.severity > y.severity;
@@ -392,6 +431,25 @@ class Screener {
         return {{"totalMm2", total}, {"perNet", nets}};
     }
 
+    // The line filter(s) the screener recognised, by shape: the choke, its two
+    // sides, and the X/Y capacitors that make it a filter rather than a
+    // transformer. Stated in the meta strip so that a board where NO filter
+    // was recognised says so — the negative of a heuristic has to be as
+    // visible as its positive (ABT #410, again).
+    nlohmann::json filter_blocks_json() const {
+        nlohmann::json out = nlohmann::json::array();
+        for (const auto& fb : find_filter_blocks()) {
+            nlohmann::json in = nlohmann::json::array(), o = nlohmann::json::array();
+            for (int n : fb.in_nets) in.push_back(b_.net_name(n));
+            for (int n : fb.out_nets) o.push_back(b_.net_name(n));
+            out.push_back({{"choke", fb.choke_ref},
+                           {"inNets", in}, {"outNets", o},
+                           {"xCaps", fb.x_caps}, {"yCaps", fb.y_caps},
+                           {"sideKnown", fb.side_known}});
+        }
+        return out;
+    }
+
     // Coverage/meta for the report — everything not analysed, stated.
     nlohmann::json meta() const {
         nlohmann::json planes = nlohmann::json::array();
@@ -445,6 +503,7 @@ class Screener {
                 {"switchNodeSource", sw_src},
                 {"switchNodeCandidates", sw_cand},
                 {"dvdtCopper", dvdt_copper()},
+                {"filterBlocks", filter_blocks_json()},
                 {"polygonOnlyNets", polyonly}};
     }
 
@@ -1981,6 +2040,717 @@ class Screener {
             f.geom.lines.push_back({rail, 0, cap_pt.x, cap_pt.y, ic_pt.x, ic_pt.y, 0.2});
             out.push_back(std::move(f));
         }
+    }
+
+    // ---- the input filter, as a BLOCK (ABT #795) ----
+    // Until now nothing in the screener knew that a filter IS a filter. Type
+    // and values are Hertz's job; PLACEMENT is a layout question and therefore
+    // this one. Three things decide whether a filter delivers the attenuation
+    // it was designed for, and all three are geometry:
+    //
+    //   1. copper on the dirty side running beside copper on the clean side —
+    //      a path AROUND the filter, which caps its insertion loss at whatever
+    //      that coupling is, no matter what the parts do;
+    //   2. the Y capacitors' return: above the resonance of the cap with its
+    //      own mounting inductance it stops being a capacitor, and that
+    //      frequency is set by the copper, not by the part;
+    //   3. switching copper sitting next to the clean side, which re-injects
+    //      after the filter through the near field.
+    //
+    // The block itself is found by SHAPE, not by refdes: a four-pad wound part
+    // whose pads split two-and-two into four distinct non-return nets, with at
+    // least one X or Y capacitor on those nets. The capacitor requirement is
+    // what separates a common-mode choke from an ordinary transformer.
+    struct FilterBlock {
+        std::string choke_ref;
+        std::set<int> side_a, side_b;      // the two winding sides
+        std::set<int> in_nets, out_nets;   // in = the connector/outside side
+        std::vector<std::string> x_caps, y_caps;
+        std::vector<int> y_nets;
+        double cx = 0, cy = 0, radius_mm = 0;
+        bool side_known = false;           // was a connector actually found?
+    };
+
+    std::vector<FilterBlock> find_filter_blocks() const {
+        std::map<std::string, std::vector<const Pad*>> by_comp;
+        for (const auto& p : b_.pads) by_comp[p.component].push_back(&p);
+
+        std::vector<FilterBlock> blocks;
+        for (const auto& [ref, pads] : by_comp) {
+            if (pads.size() != 4) continue;
+            std::set<int> nets;
+            bool bad = false;
+            for (const Pad* p : pads) {
+                if (p->net <= 0 || is_pour_net(p->net)) { bad = true; break; }
+                nets.insert(p->net);
+            }
+            if (bad || nets.size() != 4) continue;
+
+            // split the four pads two-and-two along the part's long axis
+            double cx = 0, cy = 0;
+            for (const Pad* p : pads) { cx += p->x; cy += p->y; }
+            cx /= 4; cy /= 4;
+            double sxx = 0, syy = 0;
+            for (const Pad* p : pads) {
+                sxx += (p->x - cx) * (p->x - cx);
+                syy += (p->y - cy) * (p->y - cy);
+            }
+            const bool along_x = sxx >= syy;
+            std::vector<const Pad*> sorted(pads.begin(), pads.end());
+            std::sort(sorted.begin(), sorted.end(),
+                      [&](const Pad* a, const Pad* b) {
+                          return along_x ? a->x < b->x : a->y < b->y;
+                      });
+            FilterBlock fb;
+            fb.choke_ref = ref;
+            fb.cx = cx; fb.cy = cy;
+            for (int i = 0; i < 2; ++i) fb.side_a.insert(sorted[i]->net);
+            for (int i = 2; i < 4; ++i) fb.side_b.insert(sorted[i]->net);
+            if (fb.side_a.size() != 2 || fb.side_b.size() != 2) continue;
+            for (const Pad* p : pads)
+                fb.radius_mm = std::max(fb.radius_mm,
+                                        std::hypot(p->x - cx, p->y - cy) +
+                                            0.5 * std::hypot(p->w, p->h));
+
+            // X and Y capacitors on the block's own nets. The refdes of a
+            // safety capacitor is very often CX1/CY2 rather than C1 — that IS
+            // the convention on line filters — so any C-initial prefix counts,
+            // minus the connector families that also start with a C.
+            for (const auto& [cref, cpads] : by_comp) {
+                const std::string cpre = ref_prefix(cref);
+                if (cpre.empty() || cpre[0] != 'C' || cpre == "CN" ||
+                    cpre == "CON" || cpads.size() != 2)
+                    continue;
+                const int n1 = cpads[0]->net, n2 = cpads[1]->net;
+                if (n1 <= 0 || n2 <= 0) continue;
+                auto in_side = [&](const std::set<int>& s) {
+                    return s.count(n1) && s.count(n2);
+                };
+                if (in_side(fb.side_a) || in_side(fb.side_b)) {
+                    fb.x_caps.push_back(cref);
+                    continue;
+                }
+                const bool p1 = is_pour_net(n1), p2 = is_pour_net(n2);
+                const int line = p1 ? n2 : n1;
+                if (p1 == p2) continue;                       // both or neither
+                if (!fb.side_a.count(line) && !fb.side_b.count(line)) continue;
+                fb.y_caps.push_back(cref);
+                fb.y_nets.push_back(line);
+            }
+            // No X and no Y capacitor: this is a transformer or a coupled
+            // inductor, not a line filter. Refusing here is what keeps every
+            // flyback on the corpus out of this rule family.
+            if (fb.x_caps.empty() && fb.y_caps.empty()) continue;
+
+            // Which side faces the outside world: a connector pad decides it;
+            // otherwise the side whose copper sits nearer the board outline.
+            const auto cpads = connector_pads();
+            bool a_conn = false, b_conn = false;
+            for (const Pad* cp : cpads) {
+                if (fb.side_a.count(cp->net)) a_conn = true;
+                if (fb.side_b.count(cp->net)) b_conn = true;
+            }
+            if (a_conn != b_conn) {
+                fb.side_known = true;
+                fb.in_nets = a_conn ? fb.side_a : fb.side_b;
+                fb.out_nets = a_conn ? fb.side_b : fb.side_a;
+            } else {
+                fb.in_nets = fb.side_a;
+                fb.out_nets = fb.side_b;
+            }
+            blocks.push_back(std::move(fb));
+        }
+        return blocks;
+    }
+
+    void find_filter_coupling(std::vector<Finding>& out) {
+        const auto blocks = find_filter_blocks();
+        if (blocks.empty()) return;
+        const double cos_tol = std::cos(p_.angle_tol_deg * M_PI / 180.0);
+        for (const auto& fb : blocks) {
+            // segments of each side, excluding the choke's own footprint
+            struct Seg { detail::SegRef r; int cu; };
+            std::vector<Seg> in, outs;
+            for (size_t i = 0; i < b_.segments.size(); ++i) {
+                const Segment& sg = b_.segments[i];
+                const double mx = 0.5 * (sg.x1 + sg.x2), my = 0.5 * (sg.y1 + sg.y2);
+                if (std::hypot(mx - fb.cx, my - fb.cy) <
+                    fb.radius_mm + p_.filter_local_mm)
+                    continue;
+                const double dx = sg.x2 - sg.x1, dy = sg.y2 - sg.y1;
+                const double len = std::hypot(dx, dy);
+                if (len < p_.min_run_mm) continue;
+                detail::SegRef r{sg.net, sg.cu, sg.x1, sg.y1, sg.x2, sg.y2,
+                                 sg.width, len, dx / len, dy / len, false, i};
+                if (fb.in_nets.count(sg.net)) in.push_back({r, sg.cu});
+                else if (fb.out_nets.count(sg.net)) outs.push_back({r, sg.cu});
+            }
+            if (in.empty() || outs.empty()) continue;
+
+            double worst_k = 0, worst_len = 0, worst_d = 1e30;
+            int cu_a = -1, cu_b = -1;
+            Segment ga{}, gb{};
+            for (const auto& a : in)
+                for (const auto& b : outs) {
+                    auto ov = detail::parallel_overlap(a.r, b.r, p_.min_run_mm,
+                                                       cos_tol);
+                    if (!ov) continue;
+                    double k = 0, h = 0;
+                    if (a.cu == b.cu) {
+                        h = ref_height(a.cu);
+                        if (!(h > 0)) continue;
+                        k = tline::next_sat_edge(ov->center_d, h);
+                    } else {
+                        double eps;
+                        b_.stackup.dielectric_between(std::min(a.cu, b.cu),
+                                                      std::max(a.cu, b.cu), h, eps);
+                        k = tline::next_sat_broadside(ov->center_d, h);
+                    }
+                    if (k > worst_k) {
+                        worst_k = k;
+                        worst_len = ov->length;
+                        worst_d = ov->center_d;
+                        cu_a = a.cu; cu_b = b.cu;
+                        ga = ov->span_a; gb = ov->span_b;
+                    }
+                }
+            if (!(worst_k > 0)) continue;
+            const double db = tline::to_db(worst_k);
+            if (db < p_.filter_couple_floor_db) continue;
+
+            Finding f;
+            f.rule = "filter-io-coupling";
+            f.severity = std::clamp((db + 45.0) / 35.0, 0.25, 0.85);
+            f.severity_label = f.severity > 0.55 ? "high"
+                               : f.severity > 0.33 ? "medium" : "low";
+            f.confidence = "screening-estimate";
+            f.coupled_len_mm = worst_len;
+            f.min_sep_mm = worst_d;
+            f.next_db = db;
+            f.cu_a = cu_a; f.cu_b = cu_b;
+            char buf[560];
+            std::snprintf(
+                buf, sizeof buf,
+                "The two sides of the filter around %s run beside each other "
+                "for %.1f mm at %.2f mm separation, well away from the part "
+                "itself: a coupling path of about %.1f dB straight ACROSS the "
+                "filter. Insertion loss cannot beat the path that goes around "
+                "it — a 60 dB choke behind a %.0f dB bypass delivers about "
+                "%.0f dB. This is a layout ceiling, and no change of component "
+                "moves it.",
+                fb.choke_ref.c_str(), worst_len, worst_d, db, db, db);
+            f.title = "Filter bypassed by its own routing: " + fb.choke_ref +
+                      " in/out coupled at " +
+                      std::to_string((int)std::lround(db)) + " dB";
+            f.detail = buf;
+            f.remediation =
+                "Keep the dirty side and the clean side of the filter apart: "
+                "no parallel runs across the block, no shared layer above or "
+                "below, and a return-plane gap or a grounded fence between "
+                "them. Route the two sides away from each other at the choke, "
+                "not alongside it.";
+            ga.net = *fb.in_nets.begin(); ga.cu = cu_a;
+            gb.net = *fb.out_nets.begin(); gb.cu = cu_b;
+            f.geom.lines.push_back(ga);
+            f.geom.lines.push_back(gb);
+            out.push_back(std::move(f));
+        }
+    }
+
+    void find_y_cap_return(std::vector<Finding>& out) {
+        const auto blocks = find_filter_blocks();
+        if (blocks.empty()) return;
+        std::map<std::string, const Component*> comps;
+        for (const auto& c : b_.components) comps[c.reference] = &c;
+        std::map<std::string, std::vector<const Pad*>> by_comp;
+        for (const auto& p : b_.pads) by_comp[p.component].push_back(&p);
+
+        struct Y { std::string ref; double d_mm = 0, l_nh = 0, f_res = 0;
+                   double px = 0, py = 0, vx = 0, vy = 0; bool have_c = false; };
+        std::vector<Y> ys;
+        for (const auto& fb : blocks)
+            for (const auto& ref : fb.y_caps) {
+                auto it = by_comp.find(ref);
+                if (it == by_comp.end()) continue;
+                const Pad* gnd = nullptr;
+                for (const Pad* p : it->second)
+                    if (p->net > 0 && is_pour_net(p->net)) gnd = p;
+                if (!gnd) continue;
+                double vx = 0, vy = 0;
+                double d = nearest_via_mm(gnd->net, gnd->x, gnd->y, &vx, &vy);
+                if (d > 1e29) continue;      // pours on its own layer
+                Y y;
+                y.ref = ref;
+                y.d_mm = d;
+                y.l_nh = d * 0.8 + 0.3;      // escape + one barrel
+                y.px = gnd->x; y.py = gnd->y; y.vx = vx; y.vy = vy;
+                auto ci = comps.find(ref);
+                if (ci != comps.end()) {
+                    auto c = values::parse_capacitance(ci->second->value);
+                    if (c && *c > 0) {
+                        y.have_c = true;
+                        y.f_res = 1.0 / (2.0 * M_PI *
+                                         std::sqrt(y.l_nh * 1e-9 * *c));
+                    }
+                }
+                ys.push_back(std::move(y));
+            }
+        if (ys.empty()) return;
+        std::sort(ys.begin(), ys.end(),
+                  [](const Y& a, const Y& b) { return a.d_mm > b.d_mm; });
+        if (ys.front().d_mm < 2.0) return;   // all of them land on their via
+
+        const Y& w = ys.front();
+        Finding f;
+        f.rule = "y-cap-return";
+        f.severity = std::clamp(0.25 + w.d_mm / 25.0, 0.25, 0.7);
+        f.severity_label = f.severity > 0.5 ? "high"
+                           : f.severity > 0.33 ? "medium" : "low";
+        f.confidence = "geometric-only";
+        f.coupled_len_mm = w.d_mm;
+        char buf[560];
+        if (w.have_c)
+            std::snprintf(
+                buf, sizeof buf,
+                "Y capacitor %s reaches the reference plane %.1f mm from its "
+                "own pad — about %.1f nH in series with it. With its own value "
+                "that branch self-resonates at %.1f MHz, and ABOVE that "
+                "frequency the capacitor is an inductor: the common-mode path "
+                "it was placed to provide simply stops existing, in the part "
+                "of the band where common mode dominates.",
+                w.ref.c_str(), w.d_mm, w.l_nh, w.f_res * 1e-6);
+        else
+            std::snprintf(
+                buf, sizeof buf,
+                "Y capacitor %s reaches the reference plane %.1f mm from its "
+                "own pad — about %.1f nH in series with it, which sets the "
+                "frequency where the capacitor stops acting as one. Its value "
+                "field could not be parsed, so the resonance is not computed "
+                "here rather than guessed.",
+                w.ref.c_str(), w.d_mm, w.l_nh);
+        f.title = "Y capacitor " + w.ref + " returns through " +
+                  std::to_string((int)std::lround(w.d_mm)) + " mm of copper";
+        f.detail = buf;
+        f.remediation =
+            "Via directly at the Y capacitor's ground pad, into the same "
+            "reference the choke and the connector shell use. The Y "
+            "capacitor's job is the common-mode return; a return through "
+            "millimetres of track is the loop it was supposed to close.";
+        for (size_t i = 0; i < ys.size() && i < 6; ++i)
+            f.geom.lines.push_back(
+                {-1, 0, ys[i].px, ys[i].py, ys[i].vx, ys[i].vy, 0.25});
+        out.push_back(std::move(f));
+    }
+
+    void find_filter_bypass(std::vector<Finding>& out) {
+        const auto blocks = find_filter_blocks();
+        if (blocks.empty() || sw_nets_.empty()) return;
+        for (const auto& fb : blocks) {
+            if (!fb.side_known) continue;   // which side is clean is a guess here
+            // True segment-to-segment distance, not centre-to-centre: two
+            // long tracks running 2 mm apart have centres 30 mm apart, and a
+            // centroid test would call that far.
+            auto seg_dist = [](const Segment& a, const Segment& b,
+                               double& px, double& py, double& qx, double& qy) {
+                auto pt_seg = [](double x, double y, const Segment& s,
+                                 double& cx, double& cy) {
+                    const double dx = s.x2 - s.x1, dy = s.y2 - s.y1;
+                    const double L2 = dx * dx + dy * dy;
+                    double t = L2 > 0 ? ((x - s.x1) * dx + (y - s.y1) * dy) / L2 : 0.0;
+                    t = std::clamp(t, 0.0, 1.0);
+                    cx = s.x1 + t * dx;
+                    cy = s.y1 + t * dy;
+                    return std::hypot(x - cx, y - cy);
+                };
+                double best = 1e30, cx = 0, cy = 0;
+                const std::pair<double, double> ends_a[] = {{a.x1, a.y1}, {a.x2, a.y2}};
+                const std::pair<double, double> ends_b[] = {{b.x1, b.y1}, {b.x2, b.y2}};
+                for (const auto& [x, y] : ends_a) {
+                    const double d = pt_seg(x, y, b, cx, cy);
+                    if (d < best) { best = d; px = x; py = y; qx = cx; qy = cy; }
+                }
+                for (const auto& [x, y] : ends_b) {
+                    const double d = pt_seg(x, y, a, cx, cy);
+                    if (d < best) { best = d; px = cx; py = cy; qx = x; qy = y; }
+                }
+                return best;
+            };
+            double best = 1e30, ax = 0, ay = 0, bx = 0, by = 0;
+            std::string sw_name;
+            for (const auto& sg : b_.segments) {
+                if (!sw_nets_.count(sg.net)) continue;
+                for (const auto& cl : b_.segments) {
+                    if (!fb.in_nets.count(cl.net)) continue;
+                    double px = 0, py = 0, qx = 0, qy = 0;
+                    const double d = seg_dist(sg, cl, px, py, qx, qy);
+                    if (d < best) {
+                        best = d;
+                        ax = px; ay = py; bx = qx; by = qy;
+                        sw_name = b_.net_name(sg.net);
+                    }
+                }
+            }
+            if (best > p_.filter_bypass_mm) continue;
+            Finding f;
+            f.rule = "filter-bypass";
+            f.severity = std::clamp(0.7 - best / 20.0, 0.3, 0.7);
+            f.severity_label = f.severity > 0.5 ? "high" : "medium";
+            f.confidence = "geometric-only";
+            f.coupled_len_mm = best;
+            char buf[520];
+            std::snprintf(
+                buf, sizeof buf,
+                "Switching copper (%s) passes within %.1f mm of the CLEAN side "
+                "of the filter around %s — the side that leaves the board. "
+                "Noise that couples in there has already passed the filter: "
+                "the choke and the capacitors act on what flows THROUGH them, "
+                "not on what lands on the wire afterwards. This is the "
+                "commonest reason a filter measures worse in the product than "
+                "on the bench.",
+                sw_name.c_str(), best, fb.choke_ref.c_str());
+            f.title = "Filter bypassed through the air: switching copper " +
+                      std::to_string((int)std::lround(best)) + " mm from " +
+                      fb.choke_ref + "'s clean side";
+            f.detail = buf;
+            f.remediation =
+                "Put distance, or a barrier, between the switching stage and "
+                "the filter's connector side: keep the clean copper short and "
+                "close to the connector, and never route it back past the "
+                "converter. On a crowded board, a grounded fence or a can over "
+                "the switching stage does what distance cannot.";
+            f.geom.lines.push_back({-1, 0, ax, ay, bx, by, 0.3});
+            out.push_back(std::move(f));
+        }
+    }
+
+    // ---- immunity: the ESD clamp, and the copper it does not cover ----
+    // ABT #796. Faraday is an emissions tool everywhere else; this is the one
+    // immunity mechanism that is PURE LAYOUT, and it is the one a schematic
+    // review cannot catch. A TVS is chosen for its clamping voltage, and then
+    // the board decides what the protected silicon actually sees:
+    //
+    //     V_at_the_pin = V_clamp + L_path * di/dt
+    //
+    // with di/dt ~30 A/ns for an 8 kV IEC 61000-4-2 contact discharge. Four
+    // millimetres of track between the connector pin and the clamp is ~3.2 nH
+    // and ~96 V that the clamp never sees; the same again in the clamp's own
+    // return to the reference plane doubles it. That is why a 5 V TVS on a
+    // 3.3 V line still lets a strike kill the part it protects.
+    //
+    // What this does NOT do, and says so in the finding: judge the TVS itself
+    // (that is a part question, and it belongs where parts live), or model
+    // surge (61000-4-5) and burst (61000-4-4), whose energy paths leave the
+    // board entirely.
+    struct ClampPart {
+        std::string ref;
+        int signal_net = -1;
+        double sx = 0, sy = 0;      // the signal-side pad
+        double gx = 0, gy = 0;      // the return-side pad
+        bool has_return_pad = false;
+    };
+
+    // A clamp: a diode-class part with one pad on a signal net and one on the
+    // return copper. Refdes prefixes are not a contract (the D/TVS/ESD/VR/Z
+    // families all appear in the wild), so the SHAPE decides — the prefix only
+    // narrows the search.
+    std::vector<ClampPart> find_clamp_parts() const {
+        std::map<std::string, std::vector<const Pad*>> by_comp;
+        for (const auto& p : b_.pads) by_comp[p.component].push_back(&p);
+        std::vector<ClampPart> out;
+        for (const auto& [ref, pads] : by_comp) {
+            const std::string pre = ref_prefix(ref);
+            if (pre != "D" && pre != "TVS" && pre != "ESD" && pre != "VR" &&
+                pre != "Z" && pre != "SP")
+                continue;
+            if (pads.size() < 2) continue;
+            const Pad* gnd = nullptr;
+            const Pad* sig = nullptr;
+            for (const Pad* p : pads) {
+                if (p->net <= 0) continue;
+                if (is_pour_net(p->net)) { if (!gnd) gnd = p; }
+                else if (!sig) sig = p;
+            }
+            if (!gnd || !sig) continue;
+            ClampPart c;
+            c.ref = ref;
+            c.signal_net = sig->net;
+            c.sx = sig->x; c.sy = sig->y;
+            c.gx = gnd->x; c.gy = gnd->y;
+            c.has_return_pad = true;
+            out.push_back(std::move(c));
+        }
+        return out;
+    }
+
+    // Connector pads near the board outline — where a cable, and therefore a
+    // discharge, actually arrives. Same edge test the ground-spread rule uses:
+    // a refdes prefix alone would sweep in mid-board headers and test points.
+    std::vector<const Pad*> connector_pads() const {
+        std::vector<const Pad*> out;
+        const double bw = b_.bbox_x2 - b_.bbox_x1, bh = b_.bbox_y2 - b_.bbox_y1;
+        if (!(bw > 0) || !(bh > 0)) return out;
+        const double edge_band = 0.15 * std::min(bw, bh);
+        for (const auto& p : b_.pads) {
+            const std::string pre = ref_prefix(p.component);
+            if (pre != "J" && pre != "X" && pre != "P" && pre != "CN" &&
+                pre != "CON")
+                continue;
+            const double de = std::min(
+                std::min(p.x - b_.bbox_x1, b_.bbox_x2 - p.x),
+                std::min(p.y - b_.bbox_y1, b_.bbox_y2 - p.y));
+            if (de <= edge_band) out.push_back(&p);
+        }
+        return out;
+    }
+
+    double nearest_via_mm(int net, double x, double y, double* vx = nullptr,
+                          double* vy = nullptr) const {
+        double best = 1e30;
+        for (const auto& v : b_.vias) {
+            if (v.net != net) continue;
+            const double d = std::hypot(v.x - x, v.y - y);
+            if (d < best) {
+                best = d;
+                if (vx) *vx = v.x;
+                if (vy) *vy = v.y;
+            }
+        }
+        return best;
+    }
+
+    void find_esd_clamp_paths(std::vector<Finding>& out) {
+        const auto clamps = find_clamp_parts();
+        if (clamps.empty()) return;
+        const auto cpads = connector_pads();
+        if (cpads.empty()) return;
+        const double di_dt = p_.esd_di_dt_a_per_ns;   // A/ns == V per nH
+
+        // --- the copper between the pin and its clamp ---
+        struct Far {
+            std::string pin_comp, clamp_ref, net;
+            double d_mm = 0, v = 0, px = 0, py = 0, cx = 0, cy = 0;
+        };
+        std::vector<Far> far;
+        std::set<std::string> protected_nets;
+        for (const Pad* pin : cpads) {
+            if (pin->net <= 0 || is_pour_net(pin->net)) continue;
+            const ClampPart* best = nullptr;
+            double bd = 1e30;
+            for (const auto& c : clamps) {
+                if (c.signal_net != pin->net) continue;
+                const double d = std::hypot(c.sx - pin->x, c.sy - pin->y);
+                if (d < bd) { bd = d; best = &c; }
+            }
+            if (!best || bd > p_.esd_clamp_assoc_max_mm) continue;
+            protected_nets.insert(b_.net_name(pin->net));
+            if (bd <= p_.esd_clamp_far_mm) continue;
+            Far f;
+            f.pin_comp = pin->component;
+            f.clamp_ref = best->ref;
+            f.net = b_.net_name(pin->net);
+            f.d_mm = bd;
+            f.v = bd * p_.esd_nh_per_mm * di_dt;   // nH * (A/ns) = volts
+            f.px = pin->x; f.py = pin->y; f.cx = best->sx; f.cy = best->sy;
+            far.push_back(std::move(f));
+        }
+        std::sort(far.begin(), far.end(),
+                  [](const Far& a, const Far& b) { return a.v > b.v; });
+        if (!far.empty()) {
+            const Far& w = far.front();
+            Finding f;
+            f.rule = "esd-clamp-distance";
+            f.severity = std::clamp(0.25 + w.v / 800.0, 0.25, 0.7);
+            f.severity_label = f.severity > 0.5 ? "high"
+                               : f.severity > 0.33 ? "medium" : "low";
+            // The DISTANCE is geometry; the part's ROLE is inferred (a
+            // diode-class part between this net and the return). Both readings
+            // are a gap, which is why the finding states the inference instead
+            // of hiding it: either the clamp is 22 mm from the pin, or there
+            // is no clamp at the pin at all.
+            f.confidence = "heuristic (clamp role inferred; distance exact)";
+            f.coupled_len_mm = w.d_mm;
+            f.net_a = -1;
+            char buf[640];
+            std::snprintf(
+                buf, sizeof buf,
+                "The nearest clamp-shaped part on %s (%s) is %s, %.1f mm of "
+                "track from the connector pin. A contact discharge is ~%.0f "
+                "A/ns and that copper is ~%.1f nH, so about %.0f V appears "
+                "across it BEFORE the clamp acts — on top of the TVS's own "
+                "clamping voltage, and everything tapped off in between sees "
+                "all of it. If %s is not actually a clamp (a power or steering "
+                "diode has the same two-terminal shape), then this pin has no "
+                "protection near the connector at all — which is the same gap "
+                "read the other way. %d protected pin(s) here are further than "
+                "%.1f mm from their nearest clamp.",
+                w.net.c_str(), w.pin_comp.c_str(), w.clamp_ref.c_str(), w.d_mm,
+                di_dt, w.d_mm * p_.esd_nh_per_mm, w.v, w.clamp_ref.c_str(),
+                (int)far.size(), p_.esd_clamp_far_mm);
+            f.title = "ESD: nearest clamp to " + w.pin_comp + "'s " + w.net +
+                      " pin is " + std::to_string((int)std::lround(w.d_mm)) +
+                      " mm away (" + w.clamp_ref + ", ~" +
+                      std::to_string((int)std::lround(w.v)) + " V of overshoot)";
+            f.detail = buf;
+            f.remediation =
+                "Put the clamp AT the connector pin — the first thing the pin's "
+                "copper meets, before any branch, stub or series part. Keep the "
+                "track from pin to clamp as short and wide as the footprint "
+                "allows; length is inductance and inductance is volts at these "
+                "edge rates.";
+            for (size_t i = 0; i < far.size() && i < 8; ++i)
+                f.geom.lines.push_back(
+                    {-1, 0, far[i].px, far[i].py, far[i].cx, far[i].cy, 0.3});
+            out.push_back(std::move(f));
+        }
+
+        // --- the clamp's own return ---
+        struct Ret { std::string ref, net; double d_mm = 0, v = 0,
+                     gx = 0, gy = 0, vx = 0, vy = 0; };
+        std::vector<Ret> rets;
+        for (const auto& c : clamps) {
+            bool at_connector = false;
+            for (const Pad* pin : cpads)
+                if (pin->net == c.signal_net) at_connector = true;
+            if (!at_connector) continue;      // only the clamps on cable pins
+            double vx = 0, vy = 0;
+            int gnet = -1;
+            for (const auto& pad : b_.pads)
+                if (pad.component == c.ref && pad.net > 0 && is_pour_net(pad.net))
+                    gnet = pad.net;
+            if (gnet < 0) continue;
+            const double d = nearest_via_mm(gnet, c.gx, c.gy, &vx, &vy);
+            if (d > 1e29) continue;           // pours on its own layer: no via needed
+            if (d <= p_.esd_return_far_mm) continue;
+            Ret r;
+            r.ref = c.ref;
+            r.net = b_.net_name(c.signal_net);
+            r.d_mm = d;
+            r.v = (d * p_.esd_nh_per_mm + p_.esd_via_nh) * di_dt;
+            r.gx = c.gx; r.gy = c.gy; r.vx = vx; r.vy = vy;
+            rets.push_back(std::move(r));
+        }
+        std::sort(rets.begin(), rets.end(),
+                  [](const Ret& a, const Ret& b) { return a.v > b.v; });
+        if (!rets.empty()) {
+            const Ret& w = rets.front();
+            Finding f;
+            f.rule = "esd-clamp-return";
+            f.severity = std::clamp(0.25 + w.v / 800.0, 0.25, 0.65);
+            f.severity_label = f.severity > 0.5 ? "high"
+                               : f.severity > 0.33 ? "medium" : "low";
+            f.confidence = "geometric-only";
+            f.coupled_len_mm = w.d_mm;
+            char buf[520];
+            std::snprintf(
+                buf, sizeof buf,
+                "%s (on %s) reaches the return plane %.1f mm from its own pad — "
+                "~%.1f nH including the barrel. The discharge current has to "
+                "flow through that on its way home, so ~%.0f V rides on the "
+                "clamp's reference and appears on top of everything it is "
+                "supposed to hold down. A clamp is only as good as its return; "
+                "%d clamp(s) here are further than %.1f mm from a return via.",
+                w.ref.c_str(), w.net.c_str(), w.d_mm,
+                w.d_mm * p_.esd_nh_per_mm + p_.esd_via_nh, w.v,
+                (int)rets.size(), p_.esd_return_far_mm);
+            f.title = "ESD clamp " + w.ref + " returns through " +
+                      std::to_string((int)std::lround(w.d_mm)) +
+                      " mm of copper (~" +
+                      std::to_string((int)std::lround(w.v)) + " V)";
+            f.detail = buf;
+            f.remediation =
+                "Via straight down from the clamp's ground pad into the return "
+                "plane — beside the pad, not at the end of a trace. Two vias "
+                "halve the barrel inductance, and the plane must be the SAME "
+                "reference the protected part uses, or the strike simply moves "
+                "the difference between them.";
+            for (size_t i = 0; i < rets.size() && i < 8; ++i)
+                f.geom.lines.push_back(
+                    {-1, 0, rets[i].gx, rets[i].gy, rets[i].vx, rets[i].vy, 0.25});
+            out.push_back(std::move(f));
+        }
+    }
+
+    // Coverage, not a verdict: connector pins that reach silicon with nothing
+    // to clamp them. Whether a pin NEEDS protection is a product decision
+    // (an internal board-to-board header usually does not), so this is stated
+    // at info grade and rolled up per connector — never one finding per pin.
+    void find_unprotected_connector_pins(std::vector<Finding>& out) {
+        const auto cpads = connector_pads();
+        if (cpads.empty()) return;
+        const auto clamps = find_clamp_parts();
+        // "Clamped" means a clamp part NEAR this connector, not merely one
+        // somewhere on the net — a diode at the other end of the board is not
+        // protecting this pin, and pretending otherwise would hide the gap.
+        std::set<int> clamped;
+        for (const Pad* pin : cpads)
+            for (const auto& c : clamps)
+                if (c.signal_net == pin->net &&
+                    std::hypot(c.sx - pin->x, c.sy - pin->y) <=
+                        p_.esd_clamp_assoc_max_mm)
+                    clamped.insert(pin->net);
+
+        // nets that reach an active part: an IC or a transistor, by pad count
+        // and prefix — the things a discharge destroys
+        std::map<std::string, std::vector<const Pad*>> by_comp;
+        for (const auto& p : b_.pads) by_comp[p.component].push_back(&p);
+        std::set<int> active_nets;
+        for (const auto& [ref, pads] : by_comp) {
+            const std::string pre = ref_prefix(ref);
+            const bool active = pre == "U" || pre == "IC" || pre == "Q" ||
+                                pre == "T" || pre == "N";
+            if (!active) continue;
+            for (const Pad* p : pads)
+                if (p->net > 0 && !is_pour_net(p->net)) active_nets.insert(p->net);
+        }
+        if (active_nets.empty()) return;
+
+        std::map<std::string, std::set<std::string>> by_conn;   // conn -> nets
+        size_t total = 0;
+        for (const Pad* pin : cpads) {
+            if (pin->net <= 0 || is_pour_net(pin->net)) continue;
+            if (clamped.count(pin->net)) continue;
+            if (!active_nets.count(pin->net)) continue;
+            by_conn[pin->component].insert(b_.net_name(pin->net));
+            ++total;
+        }
+        if (by_conn.empty()) return;
+        std::string list;
+        size_t shown = 0;
+        for (const auto& [conn, nets] : by_conn) {
+            for (const auto& n : nets) {
+                if (shown >= p_.esd_max_pins_listed) break;
+                list += (shown ? ", " : "") + conn + ":" + n;
+                ++shown;
+            }
+            if (shown >= p_.esd_max_pins_listed) break;
+        }
+        Finding f;
+        f.rule = "esd-unprotected-pin";
+        f.severity = 0.2;
+        f.severity_label = "info";
+        f.confidence = "heuristic";
+        char buf[520];
+        std::snprintf(
+            buf, sizeof buf,
+            "%d pin(s) on %d edge connector(s) run from the outside world "
+            "straight to an IC or transistor with no clamp part within %.0f mm "
+            "of the pin: "
+            "%s%s. Whether they need one is a product decision — an internal "
+            "board-to-board header usually does not, a user-accessible port "
+            "does — so this is a coverage statement, not a defect. What the "
+            "layout can say is that nothing on these nets would limit a "
+            "discharge.",
+            (int)total, (int)by_conn.size(), p_.esd_clamp_assoc_max_mm,
+            list.c_str(),
+            total > shown ? ", ..." : "");
+        f.title = "Unclamped connector pins reaching silicon: " +
+                  std::to_string(total);
+        f.detail = buf;
+        f.remediation =
+            "For the ports that are user-accessible, add a clamp at the pin "
+            "(and check its return via). For the ones that are not, nothing — "
+            "record the decision rather than the part.";
+        out.push_back(std::move(f));
     }
 
     // ---- rule: connector grounds scattered around the board ----

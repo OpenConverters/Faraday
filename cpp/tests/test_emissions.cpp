@@ -423,3 +423,115 @@ TEST_CASE("C_stray comes off the copper, and refuses to be invented",
     CHECK_THROWS_AS(chassis_stray_c_f(400.0, 0.0), std::invalid_argument);
     CHECK_THROWS_AS(chassis_stray_c_f(400.0, 5.0, 0.5), std::invalid_argument);
 }
+
+TEST_CASE("CISPR 25 conducted: per-band class steps, and gaps that stay gaps",
+          "[emc][conducted][cispr25]") {
+    const ConductedLimit c5 = cispr25_conducted(5, "quasi-peak");
+    // Class 5 QP baseline, Table 4: LW 57, MW 41, SW 40, CB 31 dBuV
+    CHECK_THAT(*conducted_limit_at(c5, 200e3), WithinAbs(57.0, 1e-9));
+    CHECK_THAT(*conducted_limit_at(c5, 1e6), WithinAbs(41.0, 1e-9));
+    CHECK_THAT(*conducted_limit_at(c5, 6e6), WithinAbs(40.0, 1e-9));
+    CHECK_THAT(*conducted_limit_at(c5, 27e6), WithinAbs(31.0, 1e-9));
+    // Between the protected bands there is NO limit — information, not zero
+    CHECK_FALSE(conducted_limit_at(c5, 400e3).has_value());   // LW..MW gap
+    CHECK_FALSE(conducted_limit_at(c5, 3e6).has_value());     // MW..SW gap
+    CHECK_FALSE(conducted_limit_at(c5, 15e6).has_value());    // SW..CB gap
+
+    // The class step is per band: 10 dB in LW, 8 in MW, 6 from SW up. Class 3
+    // is NOT class 5 + 20 dB everywhere — that would be 8 dB too permissive in
+    // SW/CB, and permissive is the wrong direction to be wrong in.
+    const ConductedLimit c3 = cispr25_conducted(3, "quasi-peak");
+    CHECK_THAT(*conducted_limit_at(c3, 200e3), WithinAbs(57.0 + 20.0, 1e-9));
+    CHECK_THAT(*conducted_limit_at(c3, 1e6), WithinAbs(41.0 + 16.0, 1e-9));
+    CHECK_THAT(*conducted_limit_at(c3, 6e6), WithinAbs(40.0 + 12.0, 1e-9));
+
+    // detector offsets: peak = QP + 13, average = QP - 7
+    CHECK_THAT(*conducted_limit_at(cispr25_conducted(5, "peak"), 1e6),
+               WithinAbs(41.0 + 13.0, 1e-9));
+    CHECK_THAT(*conducted_limit_at(cispr25_conducted(5, "average"), 1e6),
+               WithinAbs(41.0 - 7.0, 1e-9));
+
+    CHECK_THROWS_AS(cispr25_conducted(0, "quasi-peak"), std::invalid_argument);
+    CHECK_THROWS_AS(cispr25_conducted(3, "rms"), std::invalid_argument);
+    // and every generated line is reachable by id from the registry
+    CHECK(conducted_limit_by_id("cispr25c3-qp").detector == "quasi-peak");
+    CHECK(conducted_limit_by_id("cispr25c5-av").detector == "average");
+    CHECK(limit_expects_automotive_lisn("cispr25c3-qp"));
+    CHECK_FALSE(limit_expects_automotive_lisn("cispr32b-qp"));
+}
+
+TEST_CASE("a design frequency in a CISPR 25 gap gets no requirement, and says so",
+          "[emc][conducted][cispr25]") {
+    // 400 kHz switching: the fundamental lands between LW (ends 300 kHz) and
+    // MW (starts 530 kHz), where no limit exists. Quoting an attenuation there
+    // would size a stage against a limit that is not measured.
+    const Trapezoid t{10.0, 400e3, 0.4, 20e-9};
+    const ConductedVerdict gap = conducted_verdict(
+        conducted_estimate(t, 10e-6, 10e-9, 0.01, 14.0, 100e-12),
+        t.f_sw_hz, "cispr25c3-qp");
+    CHECK_FALSE(gap.design_f_covered);
+    CHECK(gap.required_cm_db == 0.0);
+    CHECK(gap.required_dm_db == 0.0);
+    // the band-limited verdict still ranks the points that ARE measured
+    CHECK(!gap.points.empty());
+    for (const auto& p : gap.points)
+        CHECK(conducted_limit_at(conducted_limit_by_id("cispr25c3-qp"), p.f_hz));
+
+    // 600 kHz lands inside MW, and there the requirement is quoted
+    const Trapezoid t2{10.0, 600e3, 0.4, 20e-9};
+    const ConductedVerdict in = conducted_verdict(
+        conducted_estimate(t2, 10e-6, 10e-9, 0.01, 14.0, 100e-12),
+        t2.f_sw_hz, "cispr25c3-qp");
+    CHECK(in.design_f_covered);
+    CHECK(in.design_f_used_hz == 600e3);
+    CHECK(in.required_cm_db != 0.0);
+}
+
+TEST_CASE("the input branch is a NETWORK: bulk sets C, ceramics set L",
+          "[emc][conducted][branch]") {
+    // A real converter input: 2 x 390 uF electrolytic (2 nH each, 60 mOhm) and
+    // 2 x 1 uF ceramic (1.2 nH each, 5 mOhm). Collapsing that to one lumped
+    // capacitor cannot reproduce the crossover between them.
+    const std::vector<InputCapBranch> real = {
+        {390e-6, 2e-9, 0.06}, {390e-6, 2e-9, 0.06},
+        {1e-6, 1.2e-9, 0.005}, {1e-6, 1.2e-9, 0.005},
+    };
+    // At 10 kHz the bulk owns it, but NOT as pure capacitance: 1/(wC) is
+    // 40.8 mOhm per can against a 60 mOhm ESR, so the ESR is already the
+    // larger term. Two cans in parallel with the (still capacitive, 15.9 ohm)
+    // ceramics give |Z| = 36.2 mOhm — not the 20.4 mOhm a 782 uF ideal
+    // capacitor would suggest. This is exactly the error a lumped C makes.
+    CHECK_THAT(input_branch_z(real, 10e3), WithinRel(0.036153, 1e-4));
+    // At 10 MHz the cans are inductive (X = +125.7 mOhm) while each ceramic is
+    // only partly so (75.4 - 15.9 = 59.5 mOhm), and the parallel network lands
+    // at 21.2 mOhm.
+    CHECK_THAT(input_branch_z(real, 10e6), WithinRel(0.021179, 1e-4));
+    // the parallel network is never above the best single branch
+    for (double f : {1e5, 1e6, 5e6, 2e7}) {
+        double best = 1e30;
+        for (const auto& b : real)
+            best = std::min(best, input_branch_z({b}, f));
+        CHECK(input_branch_z(real, f) <= best * 1.000001);
+    }
+    // and a branch list reproduces the scalar form exactly when it is one cap
+    const Trapezoid t{10.0, 500e3, 0.4, 20e-9};
+    const ConductedEstimate one = conducted_estimate(t, 10e-6, 10e-9, 0.01, 48.0, 50e-12);
+    const ConductedEstimate lst = conducted_estimate(
+        t, {{10e-6, 10e-9, 0.01}}, 48.0, 50e-12);
+    REQUIRE(one.f_hz.size() == lst.f_hz.size());
+    for (size_t i = 0; i < one.f_hz.size(); ++i)
+        CHECK_THAT(lst.dm_dbuv[i], WithinAbs(one.dm_dbuv[i], 1e-9));
+
+    // the DM curve MOVES when the real branch replaces the lumped guess —
+    // which is the whole argument for reading the board's parts
+    const ConductedEstimate derived = conducted_estimate(t, real, 48.0, 50e-12);
+    bool differs = false;
+    for (size_t i = 0; i < one.dm_dbuv.size(); ++i)
+        if (std::abs(derived.dm_dbuv[i] - one.dm_dbuv[i]) > 3.0) differs = true;
+    CHECK(differs);
+
+    CHECK_THROWS_AS(input_branch_z({}, 1e6), std::invalid_argument);
+    CHECK_THROWS_AS(input_branch_z({{0.0, 1e-9, 0.01}}, 1e6), std::invalid_argument);
+    CHECK_THROWS_AS(conducted_estimate(t, std::vector<InputCapBranch>{}, 48.0, 50e-12),
+                    std::invalid_argument);
+}

@@ -373,3 +373,89 @@ test('the Faraday→Hertz bridge: conducted estimate leaves as a URL fragment',
     }
     await popup.close()
   })
+
+// ---------------------------------------------------------------------------
+// The parts on the board, and the operating point from outside it (ABT #797)
+// ---------------------------------------------------------------------------
+
+async function openEmissionsPanel(page) {
+  const loop = page.locator('[data-testid^="finding-F-"]',
+                            { hasText: 'Commutation loop' }).first()
+  await loop.click()
+  const id = (await loop.getAttribute('data-testid')).replace('finding-', '')
+  await page.getByTestId(`emit-${id}`).click()
+  await expect(page.getByTestId('emissions')).toBeVisible()
+}
+
+test('the input capacitors come off the board, not off a slider',
+  async ({ page }) => {
+    await page.goto('/')
+    await page.getByTestId('file-input').setInputFiles(
+      new URL('../../../cpp/tests/fixtures/real/mppt-2420-hc.kicad_pcb',
+              import.meta.url).pathname)
+    await expect(page.getByTestId('finding-count')).toBeVisible()
+    await openEmissionsPanel(page)
+
+    // the MPPT's own input rail: C1 + C2 (390 µF radials, spelled with the
+    // micro sign) plus the ceramics, with the mounting inductance measured
+    const derived = page.getByTestId('branch-derived')
+    await expect(derived).toBeVisible()
+    await expect(derived).toContainText('Input capacitors, off this board')
+    await expect(derived).toContainText('µF')
+    await expect(derived).toContainText('MOUNTING')
+    // with a derived branch there is no input-capacitor slider to mislead
+    await expect(page.getByTestId('bridge-cin')).toHaveCount(0)
+
+    // turning it off hands the question back, and the estimate follows
+    const verdict = page.getByTestId('conducted-verdict')
+    const withBoard = await verdict.textContent()
+    await page.getByTestId('use-board-cin').uncheck()
+    await expect(page.getByTestId('bridge-cin')).toBeVisible()
+    await expect(verdict).not.toHaveText(withBoard)
+  })
+
+test('an operating point handed over in the fragment drives the estimate',
+  async ({ page }) => {
+    // What Kirchhoff/Heaviside would send: circuit properties no layout can
+    // carry. In the #fragment, so it never reaches a server.
+    // guided mode PRINTS the waveform it is using, which is what this checks;
+    // the file-level beforeEach pins advanced, and a later init script wins
+    await page.addInitScript(() => localStorage.setItem('faraday.view', 'guided'))
+    const op = Buffer.from(JSON.stringify({
+      v: 1, source: 'kirchhoff', label: 'buck 48->12 V, 8 A',
+      currentA: 8, fSwHz: 250e3, duty: 0.25, riseNs: 7, vBusV: 60,
+    })).toString('base64')
+    await page.goto('/#op=' + op)
+    await page.getByTestId('file-input').setInputFiles(
+      new URL('../../../cpp/tests/fixtures/real/mppt-2420-hc.kicad_pcb',
+              import.meta.url).pathname)
+    await expect(page.getByTestId('finding-count')).toBeVisible()
+    await expect(page.getByTestId('meta-op')).toContainText('kirchhoff')
+
+    await openEmissionsPanel(page)
+    await expect(page.getByTestId('preset-assumed')).toContainText('8.0 A')
+    await expect(page.getByTestId('preset-assumed')).toContainText('250 kHz')
+    await expect(page.getByTestId('preset-assumed')).toContainText('7.0 ns')
+    await expect(page.getByTestId('preset-assumed')).toContainText('60 V')
+  })
+
+test('CISPR 25 is offered, and says what its bands and its LISN mean',
+  async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('faraday.view', 'advanced'))
+    await page.goto('/')
+    await page.getByTestId('file-input').setInputFiles(
+      new URL('../../../cpp/tests/fixtures/real/mppt-2420-hc.kicad_pcb',
+              import.meta.url).pathname)
+    await expect(page.getByTestId('finding-count')).toBeVisible()
+    await openEmissionsPanel(page)
+
+    const sel = page.getByTestId('conducted-limit')
+    await expect(sel.locator('option', { hasText: 'CISPR 25 Class 3' }).first())
+      .toHaveCount(1)
+    await sel.selectOption('cispr25c3-qp')
+    // the automotive caveat: the DM path is modelled on the mains LISN
+    await expect(page.getByTestId('conducted-lisn')).toContainText('5 µH LISN')
+    // and the verdict still names a mode and a frequency, inside the bands
+    await expect(page.getByTestId('conducted-verdict'))
+      .toContainText(/(common|differential)-mode/)
+  })

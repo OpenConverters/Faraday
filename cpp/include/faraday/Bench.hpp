@@ -16,6 +16,7 @@
 #include "NearFieldMap.hpp"
 #include "Shielding.hpp"
 #include "Pdn.hpp"
+#include "Operating.hpp"
 #include "ReturnPath.hpp"
 #include "Mna.hpp"
 #include "Rlgc.hpp"
@@ -459,13 +460,55 @@ inline nlohmann::json conducted_verdict_json(const emc::ConductedVerdict& v) {
             {"cmDominantFraction", v.cm_dominant_fraction},
             {"cmCrossoverMhz", v.cm_crossover_hz * 1e-6},
             {"designFMhz", v.design_f_hz * 1e-6},
+            {"designFCovered", v.design_f_covered},
+            {"designFUsedMhz", v.design_f_used_hz * 1e-6},
             {"designMarginDb", v.design_margin_db},
+            {"bandLimited", v.points.size() < 8},
+            {"automotiveLisn", emc::limit_expects_automotive_lisn(v.limit_id)},
             {"requiredDmDb", v.required_dm_db},
             {"requiredCmDb", v.required_cm_db},
             {"requiredDmBandDb", v.required_dm_band_db},
             {"requiredCmBandDb", v.required_cm_band_db},
             {"level", v.worst_margin_db < 0 ? "fail"
                       : (v.worst_margin_db < 6 ? "watch" : "ok")}};
+}
+
+// The input-capacitor branch, off the board's own parts. This is what turns
+// "input capacitor: 10 uF" from a slider into a measurement: which capacitors,
+// what they total, and how much of the branch inductance is the MOUNTING
+// rather than the parts. The DM path of the conducted estimate is exactly this
+// impedance, so deriving it removes the largest remaining invented input.
+inline nlohmann::json input_branch_json(const BoardIR& board, const Screener& sc) {
+    auto ib = op::input_branch(board, sc);
+    if (!ib) {
+        return {{"derived", false},
+                {"why",
+                 "no input-capacitor branch could be derived: this board has "
+                 "no switch node with a derived commutation loop, or the loop's "
+                 "capacitor has no rail of its own (a capacitor bridging two "
+                 "pours is a domain stitch, not an input capacitor). The "
+                 "branch is asked for rather than guessed."}};
+    }
+    nlohmann::json caps = nlohmann::json::array();
+    for (const auto& c : ib->caps)
+        caps.push_back({{"ref", c.ref}, {"package", c.package},
+                        {"cF", c.c_f}, {"eslH", c.esl_h},
+                        {"lMountH", c.l_mount_h},
+                        {"viaD1Mm", c.via_d1_mm}, {"viaD2Mm", c.via_d2_mm},
+                        {"noVia", c.no_via}});
+    return {{"derived", true},
+            {"rail", ib->rail}, {"returnNet", ib->return_net},
+            {"switchNet", ib->switch_net}, {"loopCapRef", ib->loop_cap_ref},
+            {"caps", caps}, {"count", (int)ib->caps.size()},
+            {"cF", ib->c_f}, {"lH", ib->l_h}, {"esrOhm", ib->esr_ohm},
+            {"lMountShare", ib->l_mount_share},
+            {"fResHz", ib->f_res_hz},
+            {"unparsed", ib->unparsed},
+            {"note",
+             "C and the mounting inductance are measured off this board (pad "
+             "escape + via barrels, ~0.8 nH/mm and 0.3 nH per barrel); package "
+             "ESL is by case size; ESR is the model's stated 15 mOhm default "
+             "and is the one assumption left in the branch."}};
 }
 
 inline nlohmann::json conducted_estimate(const nlohmann::json& j) {
@@ -492,9 +535,24 @@ inline nlohmann::json conducted_estimate(const nlohmann::json& j) {
             "state 'cStrayF'. There is no defensible default: this term IS the "
             "common-mode source.");
     }
-    auto est = emc::conducted_estimate(
-        t, j.value("cInF", 10e-6), j.value("eslH", 10e-9), j.value("esrOhm", 0.01),
-        j.value("vBusV", 48.0), c_stray);
+    // The differential-mode path: the board's OWN input capacitors when the
+    // caller passes them (op::input_branch derives the list, mounting
+    // inductance included), otherwise the single branch the caller states.
+    // A network and a lumped capacitor are not the same curve — the bulk sets
+    // C, the ceramics set L, and their crossover is a real feature.
+    std::vector<emc::InputCapBranch> branches;
+    std::string dm_source = "stated";
+    if (j.contains("inputBranches") && j.at("inputBranches").is_array() &&
+        !j.at("inputBranches").empty()) {
+        for (const auto& b : j.at("inputBranches"))
+            branches.push_back({b.at("cF").get<double>(), b.at("lH").get<double>(),
+                                b.value("esrOhm", 0.015)});
+        dm_source = "derived";
+    } else {
+        branches.push_back({j.value("cInF", 10e-6), j.value("eslH", 10e-9),
+                            j.value("esrOhm", 0.01)});
+    }
+    auto est = emc::conducted_estimate(t, branches, j.value("vBusV", 48.0), c_stray);
     nlohmann::json dm = nlohmann::json::array();
     nlohmann::json cm = nlohmann::json::array();
     for (size_t i = 0; i < est.f_hz.size(); ++i) {
@@ -509,6 +567,8 @@ inline nlohmann::json conducted_estimate(const nlohmann::json& j) {
             {"bands", {{"dmDb", 10.0}, {"cmDb", 15.0}}},
             {"cStrayF", c_stray},
             {"cStraySource", c_source},
+            {"dmSource", dm_source},
+            {"branchCount", (int)branches.size()},
             {"verdict", conducted_verdict_json(v)},
             {"note",
              "pre-hardware SEEDING estimate: DM = trapezoid comb x input-cap "
