@@ -3,6 +3,15 @@ import { test, expect } from '@playwright/test'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+// This suite exercises the ADVANCED view — the one that puts every decibel on
+// screen. A first visit now lands in GUIDED (plain language, presets, no
+// vocabulary), which has its own spec, so every suite declares the view it
+// means to test instead of inheriting whichever happens to be the default.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('faraday.view', 'advanced'))
+})
+
+
 const here = path.dirname(fileURLToPath(import.meta.url))
 const LOAD_MS = process.env.FARADAY_E2E_BASE ? 75000 : 30000
 const MPPT = path.join(here, '../../../cpp/tests/fixtures/real/mppt-2420-hc.kicad_pcb')
@@ -328,10 +337,18 @@ test('the Faraday→Hertz bridge: conducted estimate leaves as a URL fragment',
     await loop.click()
     const id = (await loop.getAttribute('data-testid')).replace('finding-', '')
     await page.getByTestId(`emit-${id}`).click()
-    const bridge = page.getByTestId('hertz-bridge')
+    const bridge = page.getByTestId('conducted')
     await expect(bridge).toBeVisible()
-    await expect(bridge).toContainText('assumed')      // C_stray honesty
+    // C_stray honesty, and it moved forward: the stray capacitance is now
+    // DERIVED from this board's dv/dt copper at a stated mounting gap rather
+    // than assumed. The ±15 dB band stays — the mounting still is an
+    // assumption, and the path through a heatsink or a transformer is not
+    // visible to a layout at all.
+    await expect(page.getByTestId('cstray-derived')).toContainText('derived')
     await expect(bridge).toContainText('±15 dB')
+    // and the estimate is now JUDGED here, not only shipped: mode, frequency, dB
+    await expect(page.getByTestId('conducted-verdict'))
+      .toContainText(/(common|differential)-mode/)
 
     const [popup] = await Promise.all([
       context.waitForEvent('page'),

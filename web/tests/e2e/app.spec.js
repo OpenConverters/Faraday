@@ -4,6 +4,15 @@ import { test, expect } from '@playwright/test'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+// This suite exercises the ADVANCED view — the one that puts every decibel on
+// screen. A first visit now lands in GUIDED (plain language, presets, no
+// vocabulary), which has its own spec, so every suite declares the view it
+// means to test instead of inheriting whichever happens to be the default.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('faraday.view', 'advanced'))
+})
+
+
 const here = path.dirname(fileURLToPath(import.meta.url))
 const FIXTURE = path.join(here, '../../../cpp/tests/fixtures/fixture_2layer.kicad_pcb')
 

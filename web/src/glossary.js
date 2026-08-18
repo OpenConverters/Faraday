@@ -164,8 +164,106 @@ export const RULES = [
 // The deep tools — not findings, but part of the same vocabulary.
 export const TOOLS = [
   { id: 'bench', name: 'Bench (field solve)', what: '2D boundary-element extraction of a coupled pair + transient — millivolts on the victim vs its receiver threshold.' },
-  { id: 'emissions', name: 'Emissions', what: 'Commutation-loop area against CISPR 32 / FCC limit lines, plus the cable common-mode current budget.' },
+  { id: 'emissions', name: 'Emissions', what: 'Commutation-loop area against CISPR 32 / FCC radiated limit lines, the cable common-mode current budget, and the CONDUCTED estimate judged per mode: which of common or differential mode dominates, at what frequency, and how many dB each filter stage must find.' },
   { id: 'near-field', name: 'Near field', what: 'Quasi-static |H| at component scale: which sensitive parts sit in the switching field, in A/m — never dBµV/m.' },
   { id: 'return-path', name: 'Return path', what: 'Effective loop height of every trace — geometry only, no assumed currents.' },
   { id: 'pdn', name: 'PDN', what: 'Rail impedance from every decap as an R-L-C branch with its mounting inductance measured off the board.' },
 ]
+
+// ---------------------------------------------------------------------------
+// Plain language — what GUIDED (basic) mode says instead
+// ---------------------------------------------------------------------------
+// The same findings, for someone who lays out boards but is not an EMC
+// engineer: one sentence for what was found, one for what to do about it. No
+// dB, no Greek, no standard numbers — those are all still there, one click
+// away, in advanced mode. Nothing here softens a verdict; it only removes
+// vocabulary. A rule with no entry falls back to its engineering text, which
+// is why this map can never quietly hide a finding.
+export const PLAIN = {
+  'coupled-run': {
+    says: 'These two tracks run side by side for long enough that whatever happens on one will show up on the other.',
+    do: 'Move them apart — three track-widths is the usual minimum — shorten the parallel stretch, or run a grounded track with vias between them.',
+  },
+  '3w': {
+    says: 'These two tracks are closer together than the usual safe spacing of three track-widths.',
+    do: 'Space them at least three track-widths apart, measured centre to centre.',
+  },
+  'diff-pair': {
+    says: 'This is a differential pair. The two tracks are meant to be coupled to each other, so this is information, not a fault.',
+    do: 'Nothing to fix. Keep the gap between them, and their two lengths, the same the whole way along.',
+  },
+  'diff-skew': {
+    says: 'One half of this pair is longer than the other, so the two halves of the signal no longer arrive together — and the difference leaks out onto the cable.',
+    do: 'Add a small zig-zag to the shorter one, at the point where the mismatch happens.',
+  },
+  'plane-crossing': {
+    says: 'This track crosses a gap in the copper underneath it. The return current cannot follow it across, so it takes a detour around the gap.',
+    do: 'Route around the gap, close the gap, or bridge it with a small capacitor right where the track crosses.',
+  },
+  'sparse-reference': {
+    says: 'There is not enough solid copper under these tracks for their return current to flow straight back.',
+    do: 'Fill in the copper under the routing, or move these tracks over a layer that has a solid plane.',
+  },
+  'no-reference-plane': {
+    says: 'This layer has no solid copper plane above or below it, so nothing routed on it has a defined way back.',
+    do: 'Add a plane layer, or move the important signals onto a layer that has one.',
+  },
+  'switch-node': {
+    says: 'This is the converter’s switching copper — the noisiest area on the board, and the source most other problems trace back to.',
+    do: 'Keep it as small as the heat allows, and keep sensitive parts and tracks away from it — including on the layers directly underneath.',
+  },
+  'switch-node-candidate': {
+    says: 'This net might be a switching converter, but from the layout alone it looks exactly like a linear regulator with a filter. Faraday will not guess between them.',
+    do: 'If it is a switching converter, click it in the strip at the bottom of the window and the whole board gets checked against it.',
+  },
+  'commutation-loop': {
+    says: 'This is the loop the current jumps into every time the converter switches. The area it encloses is what decides how loudly the board radiates.',
+    do: 'Move the input capacitor hard against the switching devices, and keep solid ground copper directly underneath the loop.',
+  },
+  'via-stub': {
+    says: 'Part of this via is unused. The leftover length behaves like a small resonator at high frequency.',
+    do: 'Back-drill it, use a blind or buried via — or leave it, if nothing on the board is fast enough to care.',
+  },
+  'dangling-stub': {
+    says: 'This track has a dead end that connects to nothing — a test point, or a route someone abandoned. Dead ends radiate.',
+    do: 'Delete the copper, or terminate it.',
+  },
+  'decoupling-distance': {
+    says: 'This decoupling capacitor sits too far from the chip it is meant to feed, so most of its benefit is lost in the distance.',
+    do: 'Move it next to the pin, on the same side of the board if you can, with the shortest possible via escape.',
+  },
+  'connector-ground-spread': {
+    says: 'The ground connections of the off-board connectors are scattered around the board, which turns the attached cables into antennas.',
+    do: 'Bring the off-board connectors together on one edge so their grounds meet at a single point. Where that is fixed, add a common-mode choke on each cable.',
+  },
+  'plane-cavity-mode': {
+    says: 'The power and ground planes behave like a drum that rings at particular frequencies. The corners of the board are the loudest places on it.',
+    do: 'Move the plane pair closer together, keep the switching parts away from the corners, and damp the ringing with ESR-controlled capacitors.',
+  },
+  'critical-mesh-ground': {
+    says: 'The switching current has to cross from one ground area into another, so both grounds — and everything referenced to them — carry the switching noise.',
+    do: 'Return the switching parts to the same ground area, and join the two grounds at one single point, away from the switching loop.',
+  },
+  'edge-radiation': {
+    says: 'The noisy switching copper runs along the edge of the board, where its field escapes into the air instead of staying between the track and the plane.',
+    do: 'Move it inboard, keep the ground plane out to the edge underneath it, and add a row of stitching vias along the edge.',
+  },
+  'pdn-antiresonance': {
+    says: 'The decoupling capacitors on this rail fight each other at one frequency instead of helping, and the supply impedance peaks there.',
+    do: 'Use several capacitors of the SAME value rather than a mix of decades, or put a small resistor in one branch to damp it.',
+  },
+  'cap-via-stub': {
+    says: 'This decoupling capacitor reaches its plane along a length of track instead of through a via at its own pad, which throws away much of what it was placed for.',
+    do: 'Put a via pair right beside the capacitor’s pads.',
+  },
+}
+
+// Risk word for guided mode — the severity label without the vocabulary.
+export const PLAIN_SEVERITY = {
+  high: 'Fix this',
+  medium: 'Worth fixing',
+  low: 'Minor',
+  info: 'Information',
+}
+
+export const plainFor = rule => PLAIN[rule] || null

@@ -8,6 +8,20 @@ each with the mechanism, the number, a stated confidence tier, and a remediation
 
 ![Faraday demo: the MPPT demo board loads, findings rank, the derived commutation loop opens, the near-field map renders](docs/faraday-demo.gif)
 
+## Guided and advanced
+
+One switch in the header, and it is the same review either way — same engine, same
+findings, same ranking. **Guided** says each finding in the language of the person who
+drew the board (*"this track crosses a gap in the copper underneath it, so its return
+current has to detour"* · *"route around the gap, close it, or bridge it with a
+capacitor"*), replaces the emissions sliders with four converter presets whose
+assumptions are printed rather than hidden, and answers in words. **Advanced** is
+everything: decibels, frequencies, confidence tiers, the physics text and the sliders
+that drive it. Nothing is suppressed in guided and nothing is softened — the vocabulary
+is the only difference, and every number is one click away (panels carry the switch too,
+since the header sits behind them). A first visit lands in guided; the choice is
+remembered.
+
 ## Formats
 
 | Format | Reaches | Notes |
@@ -113,6 +127,37 @@ actual common-mode current — it comes from ground-plane impedance and return-p
 detours, not from geometry — but the inverse needs no unknowns, and it lands in
 *microamps*, which is why an ordinary current probe never sees the mechanism that fails
 most products.
+
+### Conducted — which mode, at what frequency, and how many dB
+
+Below 30 MHz nothing radiates off a board this size; it walks out on the wires, and it
+walks out as **two different problems that need two different components**. The panel
+drives the same trapezoid into the two paths a LISN measures — differential mode through
+the input capacitor's branch impedance, common mode through the stray capacitance to
+earth — and judges **both against the conducted limit line, here**: CISPR 32 / EN 55032
+Class A or B mains, quasi-peak or average, the same values Hertz carries and pinned
+against them by test. What comes back is the sentence the estimate is worth: *"39 dB over
+the limit at 0.5 MHz, and it is common-mode noise"*, with the frequency above which it
+stays common mode, and the attenuation each stage has to find at the design frequency
+(ANP015's `A_req = level − limit + 10 dB`). A common-mode problem and a differential-mode
+problem are fixed by different parts, so which one you have is the first question, not a
+footnote.
+
+**C_stray is derived, not invented.** The plate that turns dV/dt into common-mode current
+is the switching copper, and Faraday measures it off the layout the same way it measures
+the commutation loop — tracks, pads and pours on every switch net, summed. What a layout
+file cannot carry is how far the metalwork is, so that is the only thing left to ask:
+a gap in millimetres, and whether the board is spaced off the chassis (air) or bolted
+against it (through the laminate, 4.5×). Fringing only adds, so the figure is a stated
+floor on the geometry's contribution — a heatsink on the device tab, a transformer's
+inter-winding capacitance and the harness add paths no layout can see.
+
+Then **design the filter that fixes this →** hands the two mode spectra to
+[Hertz](https://hertz.openconverters.com) in the URL *fragment* — the part of a URL that
+never reaches any server — where the CM and DM stages get sized against real parts and
+the filter's own PCB can be generated. Levels are peak against a quasi-peak line, which
+errs pessimistic; DM ±10 dB, CM ±15 dB. It seeds a filter design before hardware exists.
+It does not replace a LISN.
 
 The loop figure is an **estimate**, and the panel says so where it cannot be missed: differential-mode
 loop radiation only, no common-mode current on attached cables (which dominates most real

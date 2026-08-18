@@ -252,6 +252,12 @@ static std::string pdn_map(std::string request_json) {
 
 static std::string limit_lines() { return faraday::bench::limit_lines_json().dump(); }
 
+// The CONDUCTED limit lines (CISPR 32 mains, QP and AV) the verdict is judged
+// against — the panel picks one, the same way it picks a radiated standard.
+static std::string conducted_limits() {
+    return faraday::bench::conducted_limits_json().dump();
+}
+
 static std::string logic_families() {
     return faraday::bench::families_json().dump();
 }
@@ -275,6 +281,7 @@ EMSCRIPTEN_BINDINGS(faraday) {
     emscripten::function("shielding", &shielding);
     emscripten::function("shieldMaterials", &shield_materials);
     emscripten::function("limitLines", &limit_lines);
+    emscripten::function("conductedLimits", &conducted_limits);
     emscripten::function("logicFamilies", &logic_families);
     emscripten::function("version", &version);
 }

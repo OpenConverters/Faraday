@@ -310,3 +310,116 @@ TEST_CASE("a cable with no length is refused", "[emc][cm]") {
     CHECK_THROWS_AS(effective_length_m(-1.0, 50e6), std::invalid_argument);
     CHECK_THROWS_AS(cm_budget(1.0, "mil-std-461"), std::invalid_argument);
 }
+
+// ---------------------------------------------------------------------------
+// Conducted: the limit lines, the verdict, and the common-mode source term
+// ---------------------------------------------------------------------------
+
+TEST_CASE("CISPR 32 mains conducted limits match the published table",
+          "[emc][conducted]") {
+    const ConductedLimit& b_qp = conducted_limit_by_id("cispr32b-qp");
+    CHECK(b_qp.detector == "quasi-peak");
+    // Class B QP: 66 dBuV at 150 kHz falling to 56 at 500 kHz, flat 56 to
+    // 5 MHz, 60 from 5 to 30 MHz. Same numbers Hertz carries.
+    CHECK_THAT(*conducted_limit_at(b_qp, 150e3), WithinAbs(66.0, 1e-9));
+    CHECK_THAT(*conducted_limit_at(b_qp, 500e3), WithinAbs(56.0, 1e-9));
+    CHECK_THAT(*conducted_limit_at(b_qp, 1e6), WithinAbs(56.0, 1e-9));
+    CHECK_THAT(*conducted_limit_at(b_qp, 30e6), WithinAbs(60.0, 1e-9));
+    // the sloping segment is LOG-linear: the geometric midpoint of
+    // 150-500 kHz sits exactly halfway down the 10 dB drop
+    CHECK_THAT(*conducted_limit_at(b_qp, std::sqrt(150e3 * 500e3)),
+               WithinAbs(61.0, 1e-9));
+    // at a shared boundary the TIGHTER limit applies: Class A is 73 at
+    // 500 kHz, not the 79 of the segment that ends there
+    CHECK_THAT(*conducted_limit_at(conducted_limit_by_id("cispr32a-qp"), 500e3),
+               WithinAbs(73.0, 1e-9));
+    // average lines sit below their quasi-peak siblings, everywhere
+    const ConductedLimit& b_av = conducted_limit_by_id("cispr32b-av");
+    for (double f : {150e3, 300e3, 1e6, 10e6, 29e6})
+        CHECK(*conducted_limit_at(b_av, f) < *conducted_limit_at(b_qp, f));
+    CHECK_FALSE(conducted_limit_at(b_qp, 100e3).has_value());   // below the band
+    CHECK_FALSE(conducted_limit_at(b_qp, 50e6).has_value());    // above it
+    CHECK_THROWS_AS(conducted_limit_by_id("cispr11"), std::invalid_argument);
+}
+
+TEST_CASE("the design frequency is f_sw, or its first harmonic in the band",
+          "[emc][conducted]") {
+    CHECK(conducted_design_frequency(500e3) == 500e3);
+    CHECK(conducted_design_frequency(150e3) == 150e3);
+    // 100 kHz: nothing is measured below 150 kHz, so the filter is designed
+    // at the second harmonic
+    CHECK(conducted_design_frequency(100e3) == 200e3);
+    CHECK_THAT(conducted_design_frequency(60e3), WithinAbs(180e3, 1e-6));
+    CHECK_THROWS_AS(conducted_design_frequency(0.0), std::invalid_argument);
+}
+
+TEST_CASE("the conducted verdict names the mode, the frequency and the dB",
+          "[emc][conducted]") {
+    const Trapezoid t{10.0, 500e3, 0.4, 20e-9};
+    const ConductedEstimate est = conducted_estimate(t, 10e-6, 10e-9, 0.01, 48.0, 50e-12);
+    const ConductedVerdict v = conducted_verdict(est, t.f_sw_hz, "cispr32b-qp", 10.0);
+
+    REQUIRE(!v.points.empty());
+    CHECK(v.limit_label.find("Class B") != std::string::npos);
+    CHECK(v.design_f_hz == 500e3);
+    // hand values at 500 kHz (pinned in the estimate's own test): DM 95.65,
+    // CM 101.15 dBuV against a 56 dBuV limit
+    const ConductedPoint& p0 = v.points.front();
+    CHECK(p0.f_hz == 500e3);
+    CHECK_THAT(p0.limit_dbuv, WithinAbs(56.0, 1e-9));
+    CHECK_THAT(p0.dm_margin_db, WithinAbs(56.0 - 95.65, 0.3));
+    CHECK_THAT(p0.cm_margin_db, WithinAbs(56.0 - 101.15, 0.3));
+    // A_req = level - limit + margin, at the design frequency (ANP015 §1)
+    CHECK_THAT(v.required_cm_db, WithinAbs(101.15 - 56.0 + 10.0, 0.3));
+    CHECK_THAT(v.required_dm_db, WithinAbs(95.65 - 56.0 + 10.0, 0.3));
+    // the headline is the worse of the two modes, and it names which
+    CHECK(v.worst_margin_db == std::min(v.dm_worst_margin_db, v.cm_worst_margin_db));
+    CHECK((v.worst_mode == "CM" || v.worst_mode == "DM"));
+    CHECK(v.worst_margin_db < 0);        // 10 A at 500 kHz with no filter fails
+    CHECK(v.required_cm_band_db >= v.required_cm_db);   // the band is never kinder
+    CHECK(v.cm_dominant_fraction >= 0.0);
+    CHECK(v.cm_dominant_fraction <= 1.0);
+    // This input capacitor self-resonates at ~503 kHz, which is why DM dips at
+    // the fundamental and CM leads there; above resonance |Z_cin| = wL grows
+    // faster than the CM path's w*C_stray*25, so DM takes over and there is no
+    // frequency above which CM stays on top.
+    CHECK(v.cm_crossover_hz == 0.0);
+    CHECK(v.cm_dominant_fraction < 0.5);
+}
+
+TEST_CASE("a hundredfold C_stray makes it a common-mode problem, and says so",
+          "[emc][conducted]") {
+    const Trapezoid t{10.0, 500e3, 0.4, 20e-9};
+    const ConductedVerdict v = conducted_verdict(
+        conducted_estimate(t, 10e-6, 10e-9, 0.01, 48.0, 5e-9), t.f_sw_hz);
+    CHECK(v.worst_mode == "CM");
+    CHECK(v.cm_dominant_fraction == 1.0);
+    CHECK(v.cm_crossover_hz == v.points.front().f_hz);   // CM on top from the start
+    CHECK(v.required_cm_db > v.required_dm_db);
+}
+
+TEST_CASE("a verdict without a standard, or against an empty estimate, is refused",
+          "[emc][conducted]") {
+    const Trapezoid t{10.0, 500e3, 0.4, 20e-9};
+    const ConductedEstimate est = conducted_estimate(t, 10e-6, 10e-9, 0.01, 48.0, 50e-12);
+    CHECK_THROWS_AS(conducted_verdict(est, t.f_sw_hz, "en55011"), std::invalid_argument);
+    CHECK_THROWS_AS(conducted_verdict(ConductedEstimate{}, t.f_sw_hz),
+                    std::invalid_argument);
+    CHECK_THROWS_AS(conducted_verdict(est, t.f_sw_hz, "cispr32b-qp", -1.0),
+                    std::invalid_argument);
+}
+
+TEST_CASE("C_stray comes off the copper, and refuses to be invented",
+          "[emc][conducted]") {
+    // 400 mm^2 of switch-node copper 5 mm above a chassis:
+    //   C = eps0 * 4e-4 / 5e-3 = 0.708 pF
+    CHECK_THAT(chassis_stray_c_f(400.0, 5.0), WithinRel(0.7083e-12, 1e-3));
+    // an FR4-mounted heatsink against the laminate is 4.5x that, and half the
+    // distance doubles it — the two levers a designer actually has
+    CHECK_THAT(chassis_stray_c_f(400.0, 5.0, 4.5),
+               WithinRel(4.5 * 0.7083e-12, 1e-3));
+    CHECK_THAT(chassis_stray_c_f(400.0, 2.5), WithinRel(2.0 * 0.7083e-12, 1e-3));
+    CHECK_THROWS_AS(chassis_stray_c_f(0.0, 5.0), std::invalid_argument);
+    CHECK_THROWS_AS(chassis_stray_c_f(400.0, 0.0), std::invalid_argument);
+    CHECK_THROWS_AS(chassis_stray_c_f(400.0, 5.0, 0.5), std::invalid_argument);
+}

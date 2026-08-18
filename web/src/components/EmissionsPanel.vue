@@ -1,10 +1,23 @@
 <script setup>
-import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, inject } from 'vue'
 
 const props = defineProps({
   engine: { type: Object, required: true },
   finding: { type: Object, required: true },
+  // Every square millimetre of copper that swings with the switching edge,
+  // summed off THIS layout by the screener. It is the plate that drives
+  // common-mode current into the chassis, and it is why the conducted estimate
+  // no longer has to ask anyone to invent a stray capacitance.
+  dvdtAreaMm2: { type: Number, default: 0 },
 })
+const basic = inject('basic', computed(() => false))
+// The panel sits on a scrim, so the header toggle is unreachable while it is
+// open. Guided mode is worth nothing if "show me the numbers" is behind it.
+const view = inject('view', null)
+// NOTE: a ref reached through inject is auto-unwrapped in the TEMPLATE, so
+// `view.value = ...` written there assigns to a string and silently does
+// nothing. The setter belongs in script, where `view` is still the ref.
+function switchView() { if (view) view.value = basic.value ? 'advanced' : 'guided' }
 const emit = defineEmits(['close'])
 
 // Area comes from the layout — the one input that is hard to get and the
@@ -54,35 +67,118 @@ function run() {
     error.value = String(e)
   }
 }
-function onInput() { run(); runCm(); nextTick(draw) }
+function onInput() { run(); runCm(); runConducted(); nextTick(() => { draw(); drawConducted() }) }
 
-// ── the bridge to Hertz: a pre-hardware CONDUCTED estimate from the same
-// trapezoid, handed to hertz.openconverters.com as a URL fragment — the data
-// travels in the #hash, which never reaches any server. Bands are stated in
-// the payload; this SEEDS a filter design, it does not replace a LISN.
+// ── CONDUCTED: the other half of the answer ───────────────────────────────
+// The same trapezoid driven into the two paths a LISN measures, judged against
+// the conducted limit line HERE — which mode dominates, where in frequency it
+// fails, and how many dB each filter stage has to find. It used to travel
+// straight to Hertz as a pair of unjudged curves; a curve with no limit line
+// cannot tell anyone whether they have a problem.
+//
+// The payload still goes to hertz.openconverters.com in the URL FRAGMENT — the
+// part of a URL that never reaches any server — for the actual filter
+// synthesis (choke, X and Y capacitors, real part numbers).
 const vBus = ref(48)
-const cStrayPf = ref(50)
 const cInUf = ref(10)
+// C_stray: DERIVED from the dv/dt copper this board actually has, at a stated
+// mounting distance. The area is measured; the gap is the one thing a layout
+// file cannot carry, so it is the only thing left to ask for. Boards with no
+// switching copper (no converter) fall back to an explicitly stated value.
+const chassisGapMm = ref(10)
+const mounting = ref('air')     // 'air' = spaced off a chassis; 'laminate' = bolted against it
+const cStrayPf = ref(50)        // only when there is no dv/dt copper to derive from
+const conductedLimit = ref('cispr32b-qp')
+const conductedLimits = JSON.parse(props.engine.conductedLimits())
+const conducted = ref(null)
 const hertzError = ref('')
-function designInHertz() {
+const derivable = computed(() => props.dvdtAreaMm2 > 0)
+const epsR = computed(() => (mounting.value === 'laminate' ? 4.5 : 1.0))
+
+function conductedRequest() {
+  const req = {
+    currentA: current.value, fSwKhz: fsw.value, duty: duty.value,
+    riseNs: rise.value, vBusV: vBus.value, cInF: cInUf.value * 1e-6,
+    limit: conductedLimit.value,
+  }
+  if (derivable.value) {
+    req.dvdtAreaMm2 = props.dvdtAreaMm2
+    req.chassisGapMm = chassisGapMm.value
+    req.chassisEpsR = epsR.value
+  } else {
+    req.cStrayF = cStrayPf.value * 1e-12
+  }
+  return req
+}
+
+function runConducted() {
   hertzError.value = ''
   try {
-    const est = JSON.parse(props.engine.conductedEstimate(JSON.stringify({
-      currentA: current.value, fSwKhz: fsw.value, duty: duty.value,
-      riseNs: rise.value, vBusV: vBus.value, cStrayF: cStrayPf.value * 1e-12,
-      cInF: cInUf.value * 1e-6,
-    })))
-    if (est.error) { hertzError.value = est.error; return }
-    const payload = {
-      v: 1, source: 'faraday', fSwHz: fsw.value * 1e3,
-      bands: est.bands, note: est.note, spectra: est.spectra,
-    }
-    const frag = btoa(unescape(encodeURIComponent(JSON.stringify(payload))))
-    window.open('https://hertz.openconverters.com/#handoff=' + frag, '_blank',
-                'noopener')
-  } catch (e) { hertzError.value = String(e.message || e) }
+    const out = JSON.parse(props.engine.conductedEstimate(
+      JSON.stringify(conductedRequest())))
+    if (out.error) { hertzError.value = out.error; conducted.value = null; return }
+    conducted.value = out
+  } catch (e) {
+    hertzError.value = String(e.message || e)
+    conducted.value = null
+  }
 }
+
+function designInHertz() {
+  if (!conducted.value) { runConducted(); if (!conducted.value) return }
+  const est = conducted.value
+  const payload = {
+    v: 1, source: 'faraday', fSwHz: fsw.value * 1e3,
+    bands: est.bands, note: est.note, spectra: est.spectra,
+  }
+  const frag = btoa(unescape(encodeURIComponent(JSON.stringify(payload))))
+  window.open('https://hertz.openconverters.com/#handoff=' + frag, '_blank',
+              'noopener')
+}
+
+const cv = computed(() => conducted.value?.verdict || null)
+const cStrayPfShown = computed(() =>
+  conducted.value ? conducted.value.cStrayF * 1e12 : 0)
+
+// One sentence, in the words the answer is actually worth: which mode, where,
+// and by how much. This is the line the whole conducted section exists for.
+const conductedLine = computed(() => {
+  const v = cv.value
+  if (!v) return ''
+  const mode = v.worstMode === 'CM' ? 'common-mode' : 'differential-mode'
+  const at = v.worstFMhz < 1 ? `${(v.worstFMhz * 1000).toFixed(0)} kHz`
+                             : `${v.worstFMhz.toFixed(2)} MHz`
+  return v.worstMarginDb < 0
+    ? `${Math.abs(v.worstMarginDb).toFixed(0)} dB OVER the limit at ${at}, and it is ${mode} noise`
+    : `${v.worstMarginDb.toFixed(0)} dB under the limit, worst at ${at} (${mode})`
+})
+
+// ── guided presets ────────────────────────────────────────────────────────
+// Four switching waveforms that cover most of what people bring here. Guided
+// mode picks one instead of asking for four numbers nobody has to hand; the
+// choice is shown, never hidden, and advanced mode still types its own.
+const PRESETS = [
+  { id: 'pol', label: '3 A point-of-load', sub: '12 V, 500 kHz, 10 ns edges',
+    currentA: 3, fSwKhz: 500, riseNs: 10, duty: 0.4, vBusV: 12 },
+  { id: 'buck', label: '10 A buck', sub: '48 V, 500 kHz, 20 ns edges',
+    currentA: 10, fSwKhz: 500, riseNs: 20, duty: 0.4, vBusV: 48 },
+  { id: 'gan', label: 'fast GaN stage', sub: '48 V, 1 MHz, 5 ns edges',
+    currentA: 10, fSwKhz: 1000, riseNs: 5, duty: 0.4, vBusV: 48 },
+  { id: 'offline', label: 'offline flyback', sub: '400 V, 100 kHz, 50 ns edges',
+    currentA: 2, fSwKhz: 100, riseNs: 50, duty: 0.35, vBusV: 400 },
+]
+const preset = ref('buck')
+function applyPreset(p) {
+  preset.value = p.id
+  current.value = p.currentA; fsw.value = p.fSwKhz
+  rise.value = p.riseNs; duty.value = p.duty; vBus.value = p.vBusV
+  onInput()
+}
+
 watch([limit, ground], onInput)
+watch([vBus, cInUf, chassisGapMm, mounting, cStrayPf, conductedLimit],
+      () => { runConducted(); nextTick(drawConducted) })
+
 
 // ---- the chart -----------------------------------------------------------
 const canvas = ref(null)
@@ -171,11 +267,82 @@ function draw() {
   ctx.fill()
 }
 
-const ro = new ResizeObserver(() => draw())
+// The conducted chart: both modes and the limit line on one set of axes,
+// 150 kHz to 30 MHz. Two curves rather than one is the entire point — the
+// question "is this common mode or differential mode" is answered by which of
+// them is on top, and no single summed curve can answer it.
+const ccanvas = ref(null)
+
+function drawConducted() {
+  const el = ccanvas.value
+  const v = cv.value
+  if (!el || !v || !v.fMhz.length) return
+  const dpr = window.devicePixelRatio || 1
+  const w = el.clientWidth, h = el.clientHeight
+  if (!w || !h) return
+  el.width = w * dpr; el.height = h * dpr
+  const ctx = el.getContext('2d')
+  ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
+  ctx.clearRect(0, 0, w, h)
+
+  const padL = 46, padR = 10, padT = 12, padB = 26
+  const f0 = 0.15, f1 = 30                       // MHz, the conducted band
+  const X = f => padL + (Math.log10(f / f0) / Math.log10(f1 / f0)) * (w - padL - padR)
+  const all = [...v.dmDbuv, ...v.cmDbuv, ...v.limitDbuv]
+  const lo = Math.floor((Math.min(...all) - 5) / 20) * 20
+  const hi = Math.ceil((Math.max(...all) + 5) / 20) * 20
+  const Y = db => padT + (1 - (db - lo) / (hi - lo)) * (h - padT - padB)
+
+  ctx.font = '10px IBM Plex Mono, monospace'
+  ctx.strokeStyle = 'rgba(157,180,173,0.13)'
+  ctx.fillStyle = 'rgba(157,180,173,0.65)'
+  ctx.lineWidth = 1
+  for (const f of [0.15, 0.3, 0.5, 1, 3, 5, 10, 30]) {
+    ctx.beginPath(); ctx.moveTo(X(f), padT); ctx.lineTo(X(f), h - padB); ctx.stroke()
+    ctx.textAlign = 'center'
+    ctx.fillText(f < 1 ? String(f * 1000) : String(f), X(f), h - padB + 13)
+  }
+  for (let db = lo; db <= hi; db += 20) {
+    ctx.beginPath(); ctx.moveTo(padL, Y(db)); ctx.lineTo(w - padR, Y(db)); ctx.stroke()
+    ctx.textAlign = 'right'
+    ctx.fillText(String(db), padL - 6, Y(db) + 3)
+  }
+  ctx.textAlign = 'left'
+  ctx.fillText('dBµV', 4, padT + 2)
+  ctx.textAlign = 'center'
+  ctx.fillText('kHz | MHz', (padL + w) / 2, h - 3)
+
+  const path = (ys, colour, width, dash = []) => {
+    ctx.strokeStyle = colour; ctx.lineWidth = width; ctx.setLineDash(dash)
+    ctx.beginPath()
+    for (let i = 0; i < v.fMhz.length; i++) {
+      const x = X(v.fMhz[i]), y = Y(ys[i])
+      i ? ctx.lineTo(x, y) : ctx.moveTo(x, y)
+    }
+    ctx.stroke(); ctx.setLineDash([])
+  }
+  path(v.dmDbuv, '#6f9fc4', 1.6)                 // differential mode
+  path(v.cmDbuv, '#d98b5f', 1.6)                 // common mode
+  path(v.limitDbuv, '#ff5d5d', 2, [6, 4])        // the limit
+
+  // the worst point of the dominant mode — the frequency to quote
+  ctx.fillStyle = '#ff5d5d'
+  ctx.beginPath()
+  ctx.arc(X(Math.min(Math.max(f0, v.worstFMhz), f1)),
+          Y(v.worstLevelDbuv), 3.5, 0, 7)
+  ctx.fill()
+}
+
+const ro = new ResizeObserver(() => { draw(); drawConducted() })
 onMounted(() => {
   run()
   runCm()
-  nextTick(() => { draw(); if (canvas.value) ro.observe(canvas.value) })
+  runConducted()
+  nextTick(() => {
+    draw(); drawConducted()
+    if (canvas.value) ro.observe(canvas.value)
+    if (ccanvas.value) ro.observe(ccanvas.value)
+  })
   window.addEventListener('keydown', onKey)
 })
 onBeforeUnmount(() => {
@@ -222,6 +389,9 @@ const where = computed(() => {
         <span class="net">{{ base.net }}</span>
         <span class="area">{{ num(base.areaMm2, 0) }} mm² loop, measured off the copper</span>
         <div class="sp" />
+        <button v-if="view" class="vtog" data-testid="panel-view-toggle"
+                @click="switchView">
+          {{ basic ? 'show the numbers' : 'plain language' }}</button>
         <button class="x" @click="emit('close')" aria-label="Close">✕</button>
       </header>
 
@@ -241,20 +411,35 @@ const where = computed(() => {
           <div class="big">{{ r.worstMarginDb >= 0 ? '+' : '' }}{{ num(r.worstMarginDb) }}<small>dB</small></div>
           <div class="of">margin {{ where }} — {{ num(r.worstLevelDbuvM) }}
             against a {{ num(r.worstLevelDbuvM + r.worstMarginDb) }} dBµV/m limit</div>
-          <p class="verd">{{ r.level === 'fail' ? 'Over the limit as estimated.'
+          <p v-if="basic" class="verd" data-testid="verdict-plain">{{
+            r.level === 'fail'
+              ? 'As drawn, this loop alone would be over the radiated limit.'
+              : r.level === 'watch'
+                ? 'Just under the limit — close enough that a real board could go either way.'
+                : 'Well under the limit, for this loop.' }}</p>
+          <p v-else class="verd">{{ r.level === 'fail' ? 'Over the limit as estimated.'
             : r.level === 'watch' ? 'Under, but inside the noise of this estimate.'
             : 'Comfortably under, on this mechanism.' }}</p>
-          <dl>
+          <dl v-if="!basic">
             <div><dt>plateau</dt><dd>{{ num(r.plateauDbuvM) }} dBµV/m</dd></div>
             <div><dt>edge knee</dt><dd>{{ num(r.kneeMhz) }} MHz</dd></div>
             <div><dt>small-loop to</dt><dd>{{ num(r.smallLoopMaxMhz, 0) }} MHz</dd></div>
           </dl>
-          <p class="hint">The plateau above the knee is set by loop area, current
-            and edge rate alone — halve any one of them for 6 dB.</p>
+          <p class="hint">{{ basic
+            ? 'Three things move this number: the loop area, the current in it, and how fast the switch turns on. Halve any one of them and you gain 6 dB.'
+            : 'The plateau above the knee is set by loop area, current and edge rate alone — halve any one of them for 6 dB.' }}</p>
         </div>
       </div>
 
-      <div v-if="r" class="caveat" data-testid="emissions-caveat">
+      <div v-if="r && basic" class="caveat" data-testid="caveat-plain">
+        <b>This is an estimate, not a test report.</b> It covers the noise this
+        one loop radiates. It does not cover noise carried out on your cables,
+        your enclosure, or anything ringing on the board — and cable noise is
+        what fails most products. A clean result here means this loop is not
+        your problem, not that the product passes.
+      </div>
+
+      <div v-if="r && !basic" class="caveat" data-testid="emissions-caveat">
         <b>Estimate, not a compliance prediction.</b> Differential-mode loop
         radiation only. It does <b>not</b> model common-mode current on attached
         cables, which dominates most real failures, nor enclosures, nor board
@@ -270,7 +455,7 @@ const where = computed(() => {
           counted in the margin.</span>
       </div>
 
-      <div v-if="cm" class="cmbudget" data-testid="cm-budget">
+      <div v-if="cm && !basic" class="cmbudget" data-testid="cm-budget">
         <div class="cmhead">
           <h3>Common-mode budget</h3>
           <label class="cmlen">cable
@@ -293,7 +478,26 @@ const where = computed(() => {
           and stops counting as longer still.</p>
       </div>
 
-      <div class="controls">
+      <!-- Guided: pick the converter, don't type its waveform. The four
+           numbers behind the choice are printed underneath it, because an
+           assumption you cannot see is exactly what makes a tool feel
+           "generic". -->
+      <div v-if="basic" class="presets" data-testid="emissions-presets">
+        <p class="plabel">What is switching here?</p>
+        <div class="prow">
+          <button v-for="p in PRESETS" :key="p.id" class="pchip"
+                  :class="{ on: preset === p.id }" :data-testid="`preset-${p.id}`"
+                  @click="applyPreset(p)">
+            {{ p.label }}<small>{{ p.sub }}</small></button>
+        </div>
+        <p class="passumed" data-testid="preset-assumed">
+          Assuming <b>{{ num(current) }} A</b> switched at <b>{{ num(fsw, 0) }} kHz</b>
+          with <b>{{ num(rise) }} ns</b> edges, off a <b>{{ num(vBus, 0) }} V</b> bus —
+          the loop area ({{ num(base.areaMm2, 0) }} mm²) is measured off your copper.
+          Switch to <b>advanced</b> in the header to type your own.</p>
+      </div>
+
+      <div v-if="!basic" class="controls">
         <label class="sl"><span>switched current <b>{{ num(current) }} A</b></span>
           <input data-testid="emissions-current" type="range" min="0.1" max="60" step="0.1"
                  v-model.number="current" @input="onInput" /></label>
@@ -314,44 +518,160 @@ const where = computed(() => {
           <span>ground-plane reflection (+6 dB)</span></label>
       </div>
 
-      <div class="hertz-bridge" data-testid="hertz-bridge">
-        <p class="k line">conducted → filter design</p>
-        <p class="note">The same switching waveform, driven into the two paths a LISN
-          measures: DM through the input-capacitor branch, CM through an <em>assumed</em>
-          stray capacitance to earth. A seeding estimate (DM ±10 dB, CM ±15 dB) — enough
-          to design the line filter <b>before hardware exists</b>; verify with a LISN.</p>
-        <div class="controls">
-          <label class="sl"><span>bus voltage <b>{{ num(vBus, 0) }} V</b></span>
-            <input data-testid="bridge-vbus" type="range" min="5" max="800" step="1"
-                   v-model.number="vBus" /></label>
-          <label class="sl"><span>C_stray to earth <b>{{ num(cStrayPf, 0) }} pF</b> (assumed)</span>
-            <input data-testid="bridge-cstray" type="range" min="5" max="500" step="5"
-                   v-model.number="cStrayPf" /></label>
-          <label class="sl"><span>input capacitor <b>{{ num(cInUf, 0) }} µF</b></span>
-            <input data-testid="bridge-cin" type="range" min="0.1" max="200" step="0.1"
-                   v-model.number="cInUf" /></label>
+      <!-- ── CONDUCTED ────────────────────────────────────────────────────
+           Below 30 MHz nothing radiates off a board this size; it walks out on
+           the wires, and it walks out as two different problems that need two
+           different components. Which one you have is the first question, and
+           it is answered here rather than one site away. -->
+      <div class="conducted" data-testid="conducted">
+        <div class="chead">
+          <h3>{{ basic ? 'Noise going out on the wires' : 'Conducted emissions (150 kHz – 30 MHz)' }}</h3>
+          <label class="pick"><span>standard</span>
+            <select v-model="conductedLimit" data-testid="conducted-limit">
+              <option v-for="l in conductedLimits" :key="l.id" :value="l.id">{{ l.label }}</option>
+            </select></label>
         </div>
+
+        <p v-if="hertzError" class="warn" data-testid="conducted-error">{{ hertzError }}</p>
+
+        <template v-if="cv">
+          <p class="cbig" :class="cv.level" data-testid="conducted-verdict">
+            <b>{{ conductedLine }}</b></p>
+          <figure class="cfig">
+            <canvas ref="ccanvas" data-testid="conducted-chart" />
+            <figcaption>
+              <span class="k dm">differential mode</span>
+              <span class="k cmm">common mode</span>
+              <span class="k lim">{{ cv.limitLabel }}</span>
+            </figcaption>
+          </figure>
+
+          <p class="cwhich" data-testid="conducted-which">
+            <template v-if="basic">
+              {{ cv.worstMode === 'CM'
+                ? 'Common mode is the bigger problem here: noise leaving on ALL the wires together and coming back through earth. That is what a common-mode choke and the Y capacitors are for — a bigger input capacitor will not touch it.'
+                : 'Differential mode is the bigger problem here: noise going out on one wire and back on the other. That is what the X capacitor and the choke\'s leakage inductance are for.' }}
+              <template v-if="cv.cmCrossoverMhz > 0">
+                Above {{ num(cv.cmCrossoverMhz, 2) }} MHz it is common mode from there up.</template>
+            </template>
+            <template v-else>
+              CM leads at {{ (cv.cmDominantFraction * 100).toFixed(0) }}% of the band<template
+                v-if="cv.cmCrossoverMhz > 0"> and from {{ num(cv.cmCrossoverMhz, 2) }} MHz upward</template>.
+              Worst DM margin {{ num(cv.dmWorstMarginDb) }} dB at {{ num(cv.dmWorstFMhz, 2) }} MHz;
+              worst CM margin {{ num(cv.cmWorstMarginDb) }} dB at {{ num(cv.cmWorstFMhz, 2) }} MHz.
+              Each mode is judged against the full limit line, which is how a filter stage is
+              sized (ANP015); the line voltage carries both, and equal modes sum only 6 dB
+              above either.
+            </template>
+          </p>
+
+          <dl class="creq" data-testid="conducted-required">
+            <div><dt>CM stage needs</dt>
+              <dd>{{ cv.requiredCmDb > 0 ? num(cv.requiredCmDb, 0) + ' dB' : 'nothing' }}</dd></div>
+            <div><dt>DM stage needs</dt>
+              <dd>{{ cv.requiredDmDb > 0 ? num(cv.requiredDmDb, 0) + ' dB' : 'nothing' }}</dd></div>
+            <div><dt>at</dt><dd>{{ cv.designFMhz < 1
+              ? num(cv.designFMhz * 1000, 0) + ' kHz' : num(cv.designFMhz, 2) + ' MHz' }}</dd></div>
+            <div v-if="!basic"><dt>incl. margin</dt><dd>{{ num(cv.designMarginDb, 0) }} dB</dd></div>
+          </dl>
+        </template>
+
+        <!-- The common-mode source term. Derived where the board can supply it:
+             the plate is the switching copper, measured; only the distance to
+             the metalwork is asked for, because a layout file cannot carry it. -->
+        <div class="cstray" data-testid="cstray">
+          <p v-if="derivable" class="note" data-testid="cstray-derived">
+            <b>{{ num(cStrayPfShown, cStrayPfShown < 10 ? 2 : 0) }} pF</b> to the chassis,
+            <b>derived</b> from the <b>{{ num(dvdtAreaMm2, 0) }} mm²</b> of switching copper
+            on this board at the mounting below. That capacitance is what turns dV/dt into
+            common-mode current — a lower bound (fringing only adds, and a heatsink on the
+            device tab or a transformer's inter-winding capacitance add paths this cannot see).
+          </p>
+          <p v-else class="note" data-testid="cstray-stated">
+            No switching copper was identified on this board, so the stray capacitance to
+            earth cannot be derived from it — state one. It is the term the whole
+            common-mode estimate stands on, so it is asked for rather than assumed.
+          </p>
+          <div class="controls">
+            <label v-if="derivable" class="sl"><span>gap to chassis / heatsink
+                <b>{{ num(chassisGapMm, 1) }} mm</b></span>
+              <input data-testid="bridge-gap" type="range" min="0.5" max="50" step="0.5"
+                     v-model.number="chassisGapMm" /></label>
+            <label v-if="derivable" class="pick"><span>mounting</span>
+              <select v-model="mounting" data-testid="bridge-mounting">
+                <option value="air">spaced off it (air)</option>
+                <option value="laminate">bolted against it (through the laminate)</option>
+              </select></label>
+            <label v-else class="sl"><span>C_stray to earth <b>{{ num(cStrayPf, 0) }} pF</b> (stated)</span>
+              <input data-testid="bridge-cstray" type="range" min="5" max="500" step="5"
+                     v-model.number="cStrayPf" /></label>
+            <label class="sl"><span>bus voltage <b>{{ num(vBus, 0) }} V</b></span>
+              <input data-testid="bridge-vbus" type="range" min="5" max="800" step="1"
+                     v-model.number="vBus" /></label>
+            <label v-if="!basic" class="sl"><span>input capacitor <b>{{ num(cInUf, 0) }} µF</b></span>
+              <input data-testid="bridge-cin" type="range" min="0.1" max="200" step="0.1"
+                     v-model.number="cInUf" /></label>
+          </div>
+        </div>
+
         <button class="hbtn" data-testid="design-in-hertz" @click="designInHertz">
-          design the input filter in Hertz →</button>
+          {{ basic ? 'design the filter that fixes this →' : 'design the input filter in Hertz →' }}</button>
         <span v-if="hertzError" class="warn" data-testid="hertz-bridge-error">{{ hertzError }}</span>
-        <p class="note">Opens hertz.openconverters.com with the predicted CM/DM spectra in the
-          URL <b>fragment</b> — the part of a URL that never leaves your browser. Hertz judges
-          them against the limit, designs the filter, and can generate the filter's own PCB.</p>
+        <p class="note">{{ basic
+          ? 'Opens Hertz with these two curves already loaded, and it picks the choke and the capacitors. The curves travel inside the link itself — they never reach a server.'
+          : 'Opens hertz.openconverters.com with the predicted CM/DM spectra in the URL fragment — the part of a URL that never leaves your browser. Hertz sizes the CM and DM stages, rounds onto real parts, and can generate the filter\'s own PCB.' }}</p>
+        <p class="note"><b>A seeding estimate, not a measurement.</b> DM ±10 dB (the input
+          capacitor's branch parasitics are assumed), CM ±15 dB (the stray path is a floor).
+          Levels are peak against a {{ cv ? cv.detector : 'quasi-peak' }} line, which errs
+          pessimistic. Verify with a LISN.</p>
       </div>
+
     </section>
   </div>
 </template>
 
 <style scoped>
-.hertz-bridge {
-  margin-top: 14px; padding-top: 10px; border-top: 1px solid var(--resin-edge, #2a3a32);
+.conducted {
+  margin: 0 16px 14px; padding-top: 10px;
+  border-top: 1px solid var(--resin-edge, #2a3a32);
 }
-.hertz-bridge .hbtn {
+.chead { display: flex; align-items: baseline; gap: 12px; flex-wrap: wrap; }
+.chead h3 { font-family: var(--display); font-size: 13px; font-weight: 700;
+  letter-spacing: 0.12em; text-transform: uppercase; color: var(--copper); }
+.chead .pick { margin-left: auto; }
+.cbig { margin: 8px 0; font-size: 14px; }
+.cbig.fail b { color: var(--heat-high); }
+.cbig.watch b { color: var(--heat-med); }
+.cbig.ok b { color: var(--heat-low); }
+.cfig canvas { height: 220px; }
+.k.dm { color: #6f9fc4; }
+.k.cmm { color: var(--copper); }
+.cwhich { font-size: 12.5px; color: var(--tin); margin-top: 4px; }
+.creq { display: flex; gap: 18px; flex-wrap: wrap; margin: 8px 0;
+  font-family: var(--mono); font-size: 12px; }
+.creq > div { display: flex; gap: 6px; }
+.creq dt { color: var(--tin); }
+.creq dd { color: var(--silk); }
+.cstray { margin-top: 8px; }
+.conducted .hbtn {
   margin-top: 6px; padding: 7px 14px; cursor: pointer;
   background: none; color: #58c79a; border: 1px solid #2a5a46; border-radius: 5px;
   font: 600 13px/1 var(--mono, monospace); letter-spacing: .03em;
 }
-.hertz-bridge .hbtn:hover { border-color: #58c79a; }
+.conducted .hbtn:hover { border-color: #58c79a; }
+
+.presets { margin: 0 16px 12px; }
+.plabel { font-size: 13px; color: var(--silk); margin-bottom: 6px; }
+.prow { display: flex; gap: 8px; flex-wrap: wrap; }
+.pchip {
+  display: flex; flex-direction: column; align-items: flex-start; gap: 2px;
+  border: 1px solid var(--resin-edge); border-radius: 6px; padding: 6px 12px;
+  color: var(--silk); font-size: 12.5px; text-align: left;
+}
+.pchip small { font-family: var(--mono); font-size: 10.5px; color: var(--tin); }
+.pchip:hover { border-color: var(--copper); }
+.pchip.on { border-color: var(--copper); background: rgba(217,139,95,0.12); }
+.passumed { margin-top: 8px; font-size: 12px; color: var(--tin); }
 .scrim {
   position: fixed; inset: 0; z-index: 50;
   background: rgba(8, 12, 10, 0.72);
@@ -369,6 +689,9 @@ header h2 { font-family: var(--display); font-size: 17px; font-weight: 700;
 .net { font-family: var(--mono); font-size: 13px; }
 .area { font-family: var(--mono); font-size: 11px; color: var(--tin); }
 .sp { flex: 1; }
+.vtog { font-family: var(--mono); font-size: 11px; color: var(--tin);
+  border: 1px solid var(--resin-edge); border-radius: 999px; padding: 2px 10px; }
+.vtog:hover { border-color: var(--copper); color: var(--copper); }
 .x { color: var(--tin); font-size: 15px; padding: 0 4px; }
 .x:hover { color: var(--silk); }
 .err { margin: 12px 16px; padding: 10px 12px; border-radius: 4px;

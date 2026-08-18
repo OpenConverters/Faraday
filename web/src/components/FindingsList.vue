@@ -1,5 +1,6 @@
 <script setup>
-import { computed } from 'vue'
+import { computed, inject } from 'vue'
+import { plainFor, PLAIN_SEVERITY } from '../glossary.js'
 
 const props = defineProps({
   findings: { type: Array, required: true },
@@ -14,6 +15,9 @@ const props = defineProps({
   baselineName: { type: String, default: '' },
   onlyChanges: { type: Boolean, default: false },
 })
+// guided (basic) vs advanced — provided once by the app, never a prop drill
+const basic = inject('basic', computed(() => false))
+
 const emit = defineEmits(['select', 'toggleRule', 'bench', 'emissions', 'hide', 'unhideAll', 'glossary', 'toggleChanges', 'clearBaseline'])
 
 const netName = id =>
@@ -21,6 +25,22 @@ const netName = id =>
 
 const toolCount = computed(() =>
   props.findings.filter(f => f.solve || f.emit).length)
+
+// Plain language for guided mode. A rule with no entry keeps its engineering
+// text: better a sentence with a decibel in it than a finding that says less
+// than the engine knows.
+const plain = f => plainFor(f.rule)
+const riskWord = f => PLAIN_SEVERITY[f.severityLabel] || f.severityLabel
+// Guided mode drops the units from the row (the dB IS the ranking, and the
+// list is already ranked) but keeps the two that are plain physical sizes.
+const rowNumber = f => {
+  if (basic.value) return f.rule === 'switch-node' || f.rule === 'commutation-loop'
+    ? `${f.coupledLenMm.toFixed(0)} mm²` : ''
+  if (f.nextDb !== undefined) return `${f.nextDb.toFixed(1)} dB`
+  if (f.rule === 'switch-node' || f.rule === 'commutation-loop')
+    return `${f.coupledLenMm.toFixed(0)} mm²`
+  return f.coupledLenMm ? `${f.coupledLenMm.toFixed(1)} mm` : ''
+}
 
 const toolTitle = f => [
   f.solve && 'Field solve: extract this cross-section and simulate the crosstalk',
@@ -52,14 +72,14 @@ const toolTitle = f => [
       <span v-if="diff.resolved.length && !diff.added.length && !diff.worsened.length"
             class="dres">resolved: {{ diff.resolved.map(r => r.title).slice(0, 3).join(' · ') }}</span>
     </div>
-    <div v-if="rules.length > 1" class="filters" data-testid="rule-filters">
+    <div v-if="rules.length > 1 && !basic" class="filters" data-testid="rule-filters">
       <button v-for="[rule, n] in rules" :key="rule" class="rchip"
               :class="{ off: hiddenRules.has(rule) }"
               :data-testid="`rule-${rule}`"
               :aria-pressed="!hiddenRules.has(rule)"
               @click="emit('toggleRule', rule)">{{ rule }} <b>{{ n }}</b></button>
     </div>
-    <p v-if="toolCount" class="legend" data-testid="tools-legend">
+    <p v-if="toolCount && !basic" class="legend" data-testid="tools-legend">
       <svg class="tool" viewBox="0 0 13 12" aria-hidden="true">
         <rect x="4" y="2" width="5" height="2.2" /><path d="M0.5 10.5h12" />
         <path d="M4 4.6C2.6 6.2 2.2 8.4 2.2 10.4" class="faint" />
@@ -73,7 +93,12 @@ const toolTitle = f => [
       </svg> emissions
       <span class="lhint">— open a marked finding to run it</span>
     </p>
-    <p v-if="!findings.length" class="clean">
+    <p v-if="!findings.length && basic" class="clean" data-testid="clean-plain">
+      Nothing came up on this board. That means nothing was found by these
+      checks — not that the board will pass a test lab. Clocks and switching
+      nets still deserve a look by hand.
+    </p>
+    <p v-if="!findings.length && !basic" class="clean">
       Nothing flagged at the screening tier. That is a rank, not a guarantee —
       review clock and switching nets by hand.
     </p>
@@ -92,7 +117,7 @@ const toolTitle = f => [
                capability you have to open a finding to discover is one nobody
                finds. Indicative only: the row is already a button, so these
                cannot be buttons too. -->
-          <span v-if="f.solve || f.emit" class="tools"
+          <span v-if="(f.solve || f.emit) && !basic" class="tools"
                 :data-testid="`tools-${f.id}`" :title="toolTitle(f)">
             <svg v-if="f.solve" class="tool" viewBox="0 0 13 12" aria-hidden="true">
               <rect x="4" y="2" width="5" height="2.2" />
@@ -107,9 +132,9 @@ const toolTitle = f => [
               <path d="M11.4 10.2A8.8 8.8 0 0 0 2.6 1.4" class="faint" />
             </svg>
           </span>
-          <span class="fnum" v-if="f.nextDb !== undefined">{{ f.nextDb.toFixed(1) }} dB</span>
-          <span class="fnum" v-else-if="f.rule === 'switch-node' || f.rule === 'commutation-loop'">{{ f.coupledLenMm.toFixed(0) }} mm²</span>
-          <span class="fnum" v-else-if="f.coupledLenMm">{{ f.coupledLenMm.toFixed(1) }} mm</span>
+          <span v-if="basic" class="risk" :class="f.severityLabel"
+                :data-testid="`risk-${f.id}`">{{ riskWord(f) }}</span>
+          <span class="fnum">{{ rowNumber(f) }}</span>
           <span v-if="diffMap[f.id]" class="dbadge" :class="diffMap[f.id]"
                 :data-testid="`diff-${f.id}`">{{ diffMap[f.id] === 'new' ? 'NEW' : 'WORSE' }}</span>
           <span class="dismiss" :data-testid="`dismiss-${f.id}`" role="button"
@@ -117,20 +142,34 @@ const toolTitle = f => [
                 @click.stop="emit('hide', f.id)">✕</span>
         </button>
         <div v-if="f.id === selectedId" class="detail" data-testid="finding-detail">
-          <p>{{ f.detail }}</p>
-          <p class="fix"><b>Fix:</b> {{ f.remediation }}</p>
-          <p class="tags">
-            <span class="tag">{{ f.rule }}</span>
-            <span class="tag">{{ f.confidence }}</span>
-            <span v-if="f.minSepMm < 1e29 && f.minSepMm > 0" class="tag">min gap {{ f.minSepMm.toFixed(2) }} mm</span>
-          </p>
+          <!-- Guided: what it means, what to do, and an honest door to the
+               engineering text — never a shortened version of the physics
+               pretending to be the whole of it. -->
+          <template v-if="basic && plain(f)">
+            <p data-testid="plain-says">{{ plain(f).says }}</p>
+            <p class="fix"><b>What to do:</b> {{ plain(f).do }}</p>
+            <button class="why" :data-testid="`why-${f.id}`"
+                    @click.stop="emit('glossary')">
+              why this matters, and how it was measured →</button>
+          </template>
+          <template v-else>
+            <p>{{ f.detail }}</p>
+            <p class="fix"><b>Fix:</b> {{ f.remediation }}</p>
+            <p class="tags">
+              <span class="tag">{{ f.rule }}</span>
+              <span class="tag">{{ f.confidence }}</span>
+              <span v-if="f.minSepMm < 1e29 && f.minSepMm > 0" class="tag">min gap {{ f.minSepMm.toFixed(2) }} mm</span>
+            </p>
+          </template>
           <button v-if="f.solve" class="bench" :data-testid="`bench-${f.id}`"
                   @click.stop="emit('bench', f.id)">
-            Solve this cross-section →
+            {{ basic ? 'How much noise actually lands on the other track? →'
+                     : 'Solve this cross-section →' }}
           </button>
           <button v-if="f.emit" class="bench" :data-testid="`emit-${f.id}`"
                   @click.stop="emit('emissions', f.id)">
-            Predict radiated emissions →
+            {{ basic ? 'Would this pass an EMC test? →'
+                     : 'Predict radiated emissions →' }}
           </button>
         </div>
       </li>
@@ -225,7 +264,11 @@ const toolTitle = f => [
   /* seven columns: heat, id, title, tools, value, diff-badge, dismiss — a
      conditional child beyond the declared columns wraps onto a second grid
      row (learned twice, now encoded) */
-  display: grid; grid-template-columns: 10px auto 1fr auto auto auto auto;
+  /* eight: heat, id, title, tools, risk-word, value, diff-badge, dismiss.
+     Every conditional child needs its own declared column — one beyond the
+     template and the row silently wraps onto a second grid row (learned
+     three times now, so the count is stated rather than counted). */
+  display: grid; grid-template-columns: 10px auto 1fr auto auto auto auto auto;
   gap: 8px; align-items: center;
   width: 100%; text-align: left;
   padding: 8px 14px;
@@ -249,6 +292,12 @@ const toolTitle = f => [
   font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
 }
 .fnum { font-family: var(--mono); font-size: 12px; color: var(--silk); white-space: nowrap; }
+.risk { font-size: 10.5px; font-weight: 600; white-space: nowrap; letter-spacing: 0.02em; }
+.risk.high { color: var(--heat-high); }
+.risk.medium { color: var(--heat-med); }
+.risk.low, .risk.info { color: var(--tin); }
+.why { margin-top: 8px; font-size: 12px; color: var(--copper); text-align: left; }
+.why:hover { text-decoration: underline; }
 
 .detail {
   padding: 6px 14px 12px 32px;

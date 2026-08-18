@@ -424,27 +424,99 @@ inline nlohmann::json emissions_json(const emc::Prediction& p, int max_points) {
 }
 
 // Conducted (pre-hardware) estimate — the noise source a filter designer
-// needs, in the exact per-mode dBuV shape Hertz's Spectrum screen consumes.
-// Bands are stated IN the payload; they are seeding estimates, never data.
+// needs, in the exact per-mode dBuV shape Hertz's Spectrum screen consumes,
+// PLUS the verdict that makes it readable without the hop: which mode
+// dominates, where in frequency it fails, and how much attenuation each stage
+// has to find. Bands are stated IN the payload; they are seeding estimates,
+// never data.
+inline nlohmann::json conducted_limits_json() {
+    nlohmann::json out = nlohmann::json::array();
+    for (const auto& l : emc::conducted_limits())
+        out.push_back({{"id", l.id}, {"label", l.label}, {"detector", l.detector}});
+    return out;
+}
+
+inline nlohmann::json conducted_verdict_json(const emc::ConductedVerdict& v) {
+    nlohmann::json f = nlohmann::json::array(), dm = nlohmann::json::array(),
+                   cm = nlohmann::json::array(), lim = nlohmann::json::array();
+    for (const auto& p : v.points) {
+        f.push_back(p.f_hz * 1e-6);
+        dm.push_back(p.dm_dbuv);
+        cm.push_back(p.cm_dbuv);
+        lim.push_back(p.limit_dbuv);
+    }
+    return {{"fMhz", f}, {"dmDbuv", dm}, {"cmDbuv", cm}, {"limitDbuv", lim},
+            {"limitId", v.limit_id}, {"limitLabel", v.limit_label},
+            {"detector", v.detector},
+            {"worstMode", v.worst_mode},
+            {"worstMarginDb", v.worst_margin_db},
+            {"worstFMhz", v.worst_f_hz * 1e-6},
+            {"worstLevelDbuv", v.worst_level_dbuv},
+            {"dmWorstMarginDb", v.dm_worst_margin_db},
+            {"dmWorstFMhz", v.dm_worst_f_hz * 1e-6},
+            {"cmWorstMarginDb", v.cm_worst_margin_db},
+            {"cmWorstFMhz", v.cm_worst_f_hz * 1e-6},
+            {"cmDominantFraction", v.cm_dominant_fraction},
+            {"cmCrossoverMhz", v.cm_crossover_hz * 1e-6},
+            {"designFMhz", v.design_f_hz * 1e-6},
+            {"designMarginDb", v.design_margin_db},
+            {"requiredDmDb", v.required_dm_db},
+            {"requiredCmDb", v.required_cm_db},
+            {"requiredDmBandDb", v.required_dm_band_db},
+            {"requiredCmBandDb", v.required_cm_band_db},
+            {"level", v.worst_margin_db < 0 ? "fail"
+                      : (v.worst_margin_db < 6 ? "watch" : "ok")}};
+}
+
 inline nlohmann::json conducted_estimate(const nlohmann::json& j) {
+    const emc::Trapezoid t = trapezoid_from_json(j);
+    // C_stray is the term the entire common-mode estimate stands on, and it
+    // used to be an invented default. DERIVE it whenever the caller supplies
+    // the dv/dt copper area (which the layout carries) and the gap to the
+    // metalwork (which it cannot); otherwise take an explicitly stated value.
+    // Never a default — a silent 50 pF is a fabricated answer, not a fallback.
+    double c_stray = 0;
+    std::string c_source;
+    if (j.contains("dvdtAreaMm2") && j.contains("chassisGapMm")) {
+        c_stray = emc::chassis_stray_c_f(j.at("dvdtAreaMm2").get<double>(),
+                                         j.at("chassisGapMm").get<double>(),
+                                         j.value("chassisEpsR", 1.0));
+        c_source = "derived";
+    } else if (j.contains("cStrayF")) {
+        c_stray = j.at("cStrayF").get<double>();
+        c_source = "stated";
+    } else {
+        throw std::invalid_argument(
+            "conducted: the common-mode path needs C_stray — supply "
+            "'dvdtAreaMm2' + 'chassisGapMm' to derive it off the copper, or "
+            "state 'cStrayF'. There is no defensible default: this term IS the "
+            "common-mode source.");
+    }
     auto est = emc::conducted_estimate(
-        trapezoid_from_json(j), j.value("cInF", 10e-6),
-        j.value("eslH", 10e-9), j.value("esrOhm", 0.01),
-        j.value("vBusV", 48.0), j.value("cStrayF", 50e-12));
+        t, j.value("cInF", 10e-6), j.value("eslH", 10e-9), j.value("esrOhm", 0.01),
+        j.value("vBusV", 48.0), c_stray);
     nlohmann::json dm = nlohmann::json::array();
     nlohmann::json cm = nlohmann::json::array();
     for (size_t i = 0; i < est.f_hz.size(); ++i) {
         dm.push_back({est.f_hz[i], est.dm_dbuv[i]});
         cm.push_back({est.f_hz[i], est.cm_dbuv[i]});
     }
+    const emc::ConductedVerdict v = emc::conducted_verdict(
+        est, t.f_sw_hz, j.value("limit", std::string("cispr32b-qp")),
+        j.value("designMarginDb", 10.0));
     return {{"spectra", {{"dm", dm}, {"cm", cm}}},
             {"points", est.f_hz.size()},
             {"bands", {{"dmDb", 10.0}, {"cmDb", 15.0}}},
+            {"cStrayF", c_stray},
+            {"cStraySource", c_source},
+            {"verdict", conducted_verdict_json(v)},
             {"note",
              "pre-hardware SEEDING estimate: DM = trapezoid comb x input-cap "
-             "branch impedance (~+/-10 dB); CM = dV/dt through an ASSUMED "
-             "C_stray to earth (~+/-15 dB). Design with margin; verify with "
-             "a LISN."}};
+             "branch impedance (~+/-10 dB); CM = dV/dt through C_stray (" +
+             c_source +
+             "; ~+/-15 dB). Levels are peak, judged against a quasi-peak or "
+             "average line, which errs pessimistic. Design with margin; verify "
+             "with a LISN."}};
 }
 
 inline nlohmann::json predict_emissions(const nlohmann::json& j) {

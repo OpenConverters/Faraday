@@ -520,4 +520,238 @@ inline ConductedEstimate conducted_estimate(const Trapezoid& t, double c_in_f,
     return out;
 }
 
+// ---------------------------------------------------------------------------
+// Conducted limit lines — and the verdict the estimate is worth
+// ---------------------------------------------------------------------------
+// A spectrum without a limit line cannot answer the three questions a filter
+// designer actually asks: does it fail, AT WHAT FREQUENCY, and WHICH MODE is
+// driving it. The estimate above produced the two mode spectra; this turns
+// them into that answer, on the same board, before the hop to Hertz.
+//
+// The values are CISPR 32 / EN 55032 AC-mains conducted and they are the SAME
+// numbers Hertz carries (hertz.limits.CISPR32_CLASS_*_MAINS_*) — Hertz stays
+// the authority for conducted work (LISN models, the CISPR 16-1-1 detector,
+// filter synthesis); this table exists so Faraday's own panel can say pass or
+// fail before the handoff, and a test pins it against Hertz's numbers.
+//
+// Levels interpolate linearly in log10(f) inside a segment, which is the shape
+// CISPR limits are defined with (the 150-500 kHz mains segment slopes 10 dB).
+// Where two segments meet the LOWER limit applies — the standard's own
+// transition rule, so Class A at exactly 500 kHz is 73 dBuV and not 79.
+//
+// DETECTOR. The comb here is a peak envelope of an ideal trapezoid. A
+// quasi-peak reading is equal or lower and an average reading lower still, so
+// judging a peak estimate against the QP line errs toward pessimism — the
+// right direction for a screening number, and the same convention the radiated
+// side uses.
+
+struct ConductedSegment {
+    double f_lo_hz, f_hi_hz, lo_dbuv, hi_dbuv;
+};
+
+struct ConductedLimit {
+    std::string id, label, detector;   // detector: "quasi-peak" | "average"
+    std::vector<ConductedSegment> segs;
+};
+
+inline const std::vector<ConductedLimit>& conducted_limits() {
+    static const std::vector<ConductedLimit> L = {
+        {"cispr32b-qp", "CISPR 32 / EN 55032 Class B mains (QP)", "quasi-peak",
+         {{150e3, 500e3, 66.0, 56.0}, {500e3, 5e6, 56.0, 56.0}, {5e6, 30e6, 60.0, 60.0}}},
+        {"cispr32b-av", "CISPR 32 / EN 55032 Class B mains (AV)", "average",
+         {{150e3, 500e3, 56.0, 46.0}, {500e3, 5e6, 46.0, 46.0}, {5e6, 30e6, 50.0, 50.0}}},
+        {"cispr32a-qp", "CISPR 32 / EN 55032 Class A mains (QP)", "quasi-peak",
+         {{150e3, 500e3, 79.0, 79.0}, {500e3, 30e6, 73.0, 73.0}}},
+        {"cispr32a-av", "CISPR 32 / EN 55032 Class A mains (AV)", "average",
+         {{150e3, 500e3, 66.0, 66.0}, {500e3, 30e6, 60.0, 60.0}}},
+    };
+    return L;
+}
+
+inline const ConductedLimit& conducted_limit_by_id(const std::string& id) {
+    for (const auto& l : conducted_limits())
+        if (l.id == id) return l;
+    throw std::invalid_argument(
+        "conducted: unknown limit line '" + id +
+        "' — a margin means nothing without the standard it is against");
+}
+
+inline std::optional<double> conducted_limit_at(const ConductedLimit& l, double f_hz) {
+    if (!(f_hz > 0)) throw std::invalid_argument("conducted: frequency must be > 0");
+    std::optional<double> best;
+    for (const auto& s : l.segs) {
+        if (f_hz < s.f_lo_hz || f_hz > s.f_hi_hz) continue;
+        const double span = std::log10(s.f_hi_hz) - std::log10(s.f_lo_hz);
+        const double frac = (std::log10(f_hz) - std::log10(s.f_lo_hz)) / span;
+        const double v = s.lo_dbuv + frac * (s.hi_dbuv - s.lo_dbuv);
+        best = best ? std::min(*best, v) : v;
+    }
+    return best;
+}
+
+// ANP015's design frequency: f_sw itself, or its first harmonic that lands in
+// the measured band. Below 150 kHz nothing is measured, so designing at f_sw
+// would size the filter for a frequency no receiver looks at.
+inline double conducted_design_frequency(double f_sw_hz) {
+    if (!(f_sw_hz > 0))
+        throw std::invalid_argument("conducted: switching frequency must be > 0");
+    if (f_sw_hz >= 150e3) return f_sw_hz;
+    return std::ceil(150e3 / f_sw_hz) * f_sw_hz;
+}
+
+struct ConductedPoint {
+    double f_hz = 0;
+    double dm_dbuv = 0, cm_dbuv = 0;
+    double limit_dbuv = 0;
+    double dm_margin_db = 0, cm_margin_db = 0;   // positive = under the limit
+};
+
+// WHICH MODE. Each mode is judged against the FULL limit line, which is what
+// ANP015 does when it sizes a CM stage and a DM stage separately. The limit
+// strictly applies to the line voltage a LISN measures, and that carries both
+// modes at once — but they are not phase-coherent, and when they are equal the
+// sum is only 6 dB above either, which the +10 dB design margin covers. What
+// this must never do is invent a phase relationship to produce one prettier
+// number: the mode split IS the actionable output, because a CM problem and a
+// DM problem are fixed by different components.
+struct ConductedVerdict {
+    std::vector<ConductedPoint> points;
+    std::string limit_id, limit_label, detector;
+    // headline: the worse of the two modes, and where
+    double worst_margin_db = 0, worst_f_hz = 0, worst_level_dbuv = 0;
+    std::string worst_mode;                       // "CM" | "DM"
+    double dm_worst_margin_db = 0, dm_worst_f_hz = 0;
+    double cm_worst_margin_db = 0, cm_worst_f_hz = 0;
+    double cm_dominant_fraction = 0;              // share of in-band points where CM >= DM
+    // Lowest frequency above which CM stays at or above DM — "above 1.4 MHz
+    // this is a common-mode problem". 0 when DM is still on top at the top of
+    // the band (there is then no such frequency).
+    double cm_crossover_hz = 0;
+    double design_f_hz = 0, design_margin_db = 0;
+    // ANP015 A_req = level - limit + margin, at the design frequency. Negative
+    // means that mode already meets the limit and needs no stage.
+    double required_dm_db = 0, required_cm_db = 0;
+    // The same requirement taken over the WHOLE band rather than at one
+    // frequency — a filter sized only at f_design can still be short higher up.
+    double required_dm_band_db = 0, required_cm_band_db = 0;
+};
+
+inline ConductedVerdict conducted_verdict(const ConductedEstimate& est,
+                                          double f_sw_hz,
+                                          const std::string& limit_id = "cispr32b-qp",
+                                          double design_margin_db = 10.0) {
+    if (est.f_hz.size() != est.dm_dbuv.size() ||
+        est.f_hz.size() != est.cm_dbuv.size())
+        throw std::invalid_argument("conducted: malformed estimate");
+    if (est.f_hz.empty())
+        throw std::invalid_argument("conducted: empty estimate");
+    if (!(design_margin_db >= 0))
+        throw std::invalid_argument("conducted: design margin must be >= 0");
+    const ConductedLimit& lim = conducted_limit_by_id(limit_id);
+
+    ConductedVerdict v;
+    v.limit_id = lim.id;
+    v.limit_label = lim.label;
+    v.detector = lim.detector;
+    v.design_f_hz = conducted_design_frequency(f_sw_hz);
+    v.design_margin_db = design_margin_db;
+
+    bool have = false;
+    size_t cm_over = 0;
+    for (size_t i = 0; i < est.f_hz.size(); ++i) {
+        auto lv = conducted_limit_at(lim, est.f_hz[i]);
+        if (!lv) continue;                    // outside the line's coverage
+        ConductedPoint p;
+        p.f_hz = est.f_hz[i];
+        p.dm_dbuv = est.dm_dbuv[i];
+        p.cm_dbuv = est.cm_dbuv[i];
+        p.limit_dbuv = *lv;
+        p.dm_margin_db = *lv - p.dm_dbuv;
+        p.cm_margin_db = *lv - p.cm_dbuv;
+        if (p.cm_dbuv >= p.dm_dbuv) ++cm_over;
+        if (!have || p.dm_margin_db < v.dm_worst_margin_db) {
+            v.dm_worst_margin_db = p.dm_margin_db;
+            v.dm_worst_f_hz = p.f_hz;
+        }
+        if (!have || p.cm_margin_db < v.cm_worst_margin_db) {
+            v.cm_worst_margin_db = p.cm_margin_db;
+            v.cm_worst_f_hz = p.f_hz;
+        }
+        have = true;
+        v.points.push_back(p);
+    }
+    if (!have)
+        throw std::invalid_argument(
+            "conducted: no estimated point falls inside this limit line's "
+            "frequency coverage");
+
+    v.cm_dominant_fraction = (double)cm_over / (double)v.points.size();
+    // scan down from the top: the crossover is the first frequency from which
+    // CM never falls below DM again
+    v.cm_crossover_hz = 0;
+    for (size_t i = v.points.size(); i-- > 0;) {
+        if (v.points[i].cm_dbuv < v.points[i].dm_dbuv) break;
+        v.cm_crossover_hz = v.points[i].f_hz;
+    }
+
+    if (v.cm_worst_margin_db <= v.dm_worst_margin_db) {
+        v.worst_mode = "CM";
+        v.worst_margin_db = v.cm_worst_margin_db;
+        v.worst_f_hz = v.cm_worst_f_hz;
+    } else {
+        v.worst_mode = "DM";
+        v.worst_margin_db = v.dm_worst_margin_db;
+        v.worst_f_hz = v.dm_worst_f_hz;
+    }
+    for (const auto& p : v.points)
+        if (p.f_hz == v.worst_f_hz)
+            v.worst_level_dbuv = v.worst_mode == "CM" ? p.cm_dbuv : p.dm_dbuv;
+
+    // A_req at the design frequency: the comb's point nearest it in log f
+    const ConductedPoint* at = &v.points.front();
+    double best = 1e30;
+    for (const auto& p : v.points) {
+        const double d = std::abs(std::log10(p.f_hz / v.design_f_hz));
+        if (d < best) { best = d; at = &p; }
+    }
+    v.required_dm_db = at->dm_dbuv - at->limit_dbuv + design_margin_db;
+    v.required_cm_db = at->cm_dbuv - at->limit_dbuv + design_margin_db;
+    v.required_dm_band_db = design_margin_db - v.dm_worst_margin_db;
+    v.required_cm_band_db = design_margin_db - v.cm_worst_margin_db;
+    return v;
+}
+
+// ---------------------------------------------------------------------------
+// The common-mode source term, off the copper
+// ---------------------------------------------------------------------------
+// C_stray is what turns dV/dt into common-mode current, and it used to be a
+// slider with an invented default — the one number in the conducted estimate
+// that was pure assumption. Most of it is not assumption: the PLATE is the
+// dv/dt copper, and Faraday measures that off the layout exactly the way it
+// measures the commutation loop. What the layout cannot carry is how far the
+// metalwork is, so that is the one thing left to state:
+//
+//     C = eps0 * eps_r * A / d
+//
+// Fringing is ignored, and fringing only ADDS, so this is a floor rather than
+// a guess in the middle. Two mounting cases matter: a chassis or heatsink at
+// an air gap (eps_r = 1), and one bolted against the board's own dielectric
+// (eps_r of the laminate, a much larger capacitance). Neither is the whole
+// story — a heatsink on the FET tab, the transformer's inter-winding
+// capacitance and the cable harness all add paths this cannot see — so the
+// derived value stays a stated lower bound on the geometry's contribution.
+inline constexpr double EPS0 = 8.8541878128e-12;   // F/m
+
+inline double chassis_stray_c_f(double area_mm2, double gap_mm, double eps_r = 1.0) {
+    if (!(area_mm2 > 0))
+        throw std::invalid_argument("conducted: dv/dt copper area must be > 0 mm^2");
+    if (!(gap_mm > 0))
+        throw std::invalid_argument(
+            "conducted: the gap to the chassis must be > 0 — a plate at zero "
+            "distance is a short, not a capacitance");
+    if (!(eps_r >= 1.0))
+        throw std::invalid_argument("conducted: epsilon_r must be >= 1");
+    return EPS0 * eps_r * (area_mm2 * 1e-6) / (gap_mm * 1e-3);
+}
+
 }  // namespace faraday::emc

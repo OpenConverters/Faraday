@@ -1,5 +1,5 @@
 <script setup>
-import { ref, computed, watch, onMounted } from 'vue'
+import { ref, computed, watch, onMounted, provide } from 'vue'
 import BoardView from './components/BoardView.vue'
 import FindingsList from './components/FindingsList.vue'
 import BenchPanel from './components/BenchPanel.vue'
@@ -10,6 +10,25 @@ import ImpedancePanel from './components/ImpedancePanel.vue'
 import GlossaryPanel from './components/GlossaryPanel.vue'
 import StackupPanel from './components/StackupPanel.vue'
 import { unzip } from './zip.js'
+
+// ── GUIDED vs ADVANCED ────────────────────────────────────────────────────
+// The same review, two vocabularies. Advanced is everything this tool knows:
+// dB, frequencies, confidence tiers, the sliders that drive the physics.
+// Guided says the same findings in the language of the person who drew the
+// board — one line for what was found, one for what to do — and puts every
+// number one click away rather than in the way. It is NOT a reduced review:
+// the identical engine runs, the identical findings rank, nothing is
+// suppressed. A first visit lands in guided, because a screen full of
+// unexplained decibels reads as "generic" to anyone who did not write it; the
+// choice is remembered from then on.
+const view = ref(localStorage.getItem('faraday.view') || 'guided')
+const basic = computed(() => view.value === 'guided')
+watch(view, v => localStorage.setItem('faraday.view', v))
+provide('basic', basic)
+// the ref itself, so a modal panel can offer the same switch: the header is
+// behind the scrim while a panel is open, and "show me the numbers" has to be
+// reachable from the place that made you want them
+provide('view', view)
 
 const engine = ref(null)
 const boardText = ref('')
@@ -176,6 +195,11 @@ function chooseStackup(name) {
 }
 
 const meta = computed(() => report.value?.meta ?? null)
+// The dv/dt copper: every square millimetre that swings with the switching
+// edge, summed off the layout by the screener. It is the plate that drives
+// common-mode current into the chassis, and handing it to the emissions panel
+// is what lets the conducted estimate stop asking anyone to invent a C_stray.
+const dvdtAreaMm2 = computed(() => meta.value?.dvdtCopper?.totalMm2 ?? 0)
 const findings = computed(() => report.value?.findings ?? [])
 
 // Rule filter: dense boards render 200 overlapping overlays, so let the reader
@@ -473,6 +497,19 @@ function toggleRule(rule) {
       <h1 class="brand">FARADAY</h1>
       <span class="tagline">EMC design review — runs in your browser, nothing is uploaded</span>
       <div class="spacer" />
+      <!-- One switch, always in the same place: the review does not change,
+           only how much of its vocabulary is on screen. -->
+      <div class="viewtoggle" data-testid="view-toggle" role="group"
+           aria-label="Level of detail">
+        <button :class="{ on: basic }" data-testid="view-guided"
+                :aria-pressed="basic" @click="view = 'guided'"
+                title="Plain language: what was found and what to do about it. Every number is still one click away.">
+          guided</button>
+        <button :class="{ on: !basic }" data-testid="view-advanced"
+                :aria-pressed="!basic" @click="view = 'advanced'"
+                title="Everything: decibels, frequencies, confidence tiers, and the sliders that drive the physics.">
+          advanced</button>
+      </div>
       <label class="filebtn">
         <input data-testid="file-input" type="file" multiple
                accept=".kicad_pcb,.hyp,.HYP,.xml,.zip,.gbr,.gtl,.gbl,.g1,.g2,.g3,.g4,.gm1,.gko,.drl,.xln,.txt"
@@ -587,7 +624,11 @@ function toggleRule(rule) {
           </select></label>
         <button class="detail" data-testid="nf-detail" @click="nfDetail = true">
           victims &amp; shielding →</button>
-        <span class="cav"><b>What couples on the board.</b> Quasi-static induction
+        <span v-if="basic" class="cav" data-testid="nf-cav-plain"><b>Which parts sit in
+          the switching field.</b> Warmer colour means a stronger magnetic field at that
+          spot. It is not a "will it pass" number — it is where to move a sensitive part
+          away from, or where a shield can would earn its place.</span>
+        <span v-if="!basic" class="cav"><b>What couples on the board.</b> Quasi-static induction
           at component scale, in A/m — not a radiation map, and only switching
           loops are modelled as sources. No dBµV/m, no limit line: there is no
           reliable near-field to far-field transform. The ring current is your
@@ -615,7 +656,11 @@ function toggleRule(rule) {
                 @click="fixStitching">
           generate stitching vias → new file</button>
         <span v-if="fixResult" class="top" data-testid="rp-fix-result">{{ fixResult }}</span>
-        <span class="cav"><b>How far away each trace's return current really is</b> —
+        <span v-if="basic" class="cav" data-testid="rp-cav-plain"><b>How far each track's
+          return current has to travel to get back.</b> Bigger numbers mean bigger loops,
+          and bigger loops both radiate and pick up more. Everything here is measured off
+          your copper — nothing is assumed about your currents.</span>
+        <span v-if="!basic" class="cav"><b>How far away each trace's return current really is</b> —
           the dielectric height where the plane is solid beneath it, the detour where
           it is not, the hop at every layer change. Every number here is a geometric
           fact of the layout. For a defensible far-field figure with a limit line, use
@@ -668,7 +713,8 @@ function toggleRule(rule) {
                 @close="benchId = ''" />
 
     <EmissionsPanel v-if="emitFinding && engine" :engine="engine"
-                    :finding="emitFinding" @close="emitId = ''" />
+                    :finding="emitFinding"
+                    :dvdt-area-mm2="dvdtAreaMm2" @close="emitId = ''" />
 
     <NearFieldPanel v-if="nfDetail && nearField && engine" :engine="engine"
                     :result="nearField" :params="nfParams"
@@ -689,13 +735,25 @@ function toggleRule(rule) {
                   @apply="applyStackup" @close="stackupOpen = false" />
 
     <footer v-if="meta" class="metastrip" data-testid="meta-strip">
-      <span class="m">format: <b>{{ report.format }}</b></span>
-      <span class="m">stackup: <b>{{ meta.stackupSource }}</b></span>
-      <span v-for="p in meta.planes" :key="p.layer" class="m">
+      <!-- Guided keeps ONE line of it: what was read and what it was screened
+           on. The rest is provenance — essential when you are defending a
+           number, noise when you are looking for what to fix. Switch-node
+           candidates stay in both, because a heuristic's negative has to be as
+           visible as its positive (ABT #410) and promoting one changes the
+           review. -->
+      <span v-if="basic" class="m" data-testid="meta-plain">
+        Screened a <b>{{ report.format }}</b> board on <b>{{ meta.stackupSource }}</b><template
+          v-if="meta.switchNodes?.length"> · <b>{{ meta.switchNodes.length }}</b>
+          switching net(s) found</template><template
+          v-if="dvdtAreaMm2 > 0"> · <b>{{ dvdtAreaMm2.toFixed(0) }} mm²</b> of switching copper</template>
+      </span>
+      <span v-if="!basic" class="m">format: <b>{{ report.format }}</b></span>
+      <span v-if="!basic" class="m">stackup: <b>{{ meta.stackupSource }}</b></span>
+      <span v-for="p in meta.planes" :key="p.layer" v-show="!basic" class="m">
         {{ p.layer }} <b>{{ p.isPlane ? 'plane' : 'signal' }}</b>
         <template v-if="p.zoneCoverage > 0"> · {{ Math.round(p.zoneCoverage * 100) }}% pour</template>
       </span>
-      <span v-if="meta.switchNodes?.length" class="m sw" data-testid="meta-switchnodes">
+      <span v-if="meta.switchNodes?.length && !basic" class="m sw" data-testid="meta-switchnodes">
         switch nodes:
         <template v-for="(n, i) in meta.switchNodes" :key="n">
           <template v-if="i"> · </template><b>{{ n }}</b><template
@@ -716,13 +774,13 @@ function toggleRule(rule) {
                   + `same shape, so Faraday won't guess. If this IS a switcher, click to `
                   + `screen it (recorded as user-declared in the report).`"
                 @click="promoteNet(c.net)">⊕ {{ c.net }}</button></span>
-      <span v-if="meta.diffPairsRecognized" class="m">{{ meta.diffPairsRecognized }} diff pair(s) recognized</span>
-      <span v-if="meta.polygonOnlyNets?.length" class="m">
+      <span v-if="meta.diffPairsRecognized && !basic" class="m">{{ meta.diffPairsRecognized }} diff pair(s) recognized</span>
+      <span v-if="meta.polygonOnlyNets?.length && !basic" class="m">
         {{ meta.polygonOnlyNets.length }} zone-routed net(s) judged by pour outline</span>
       <span v-if="meta.crossingCheckSkippedPlanes?.length" class="m warn">
         void check skipped on {{ meta.crossingCheckSkippedPlanes.join(', ') }} (no fill)</span>
       <span v-if="meta.approximatedArcs" class="m warn">{{ meta.approximatedArcs }} arc(s) chord-approximated</span>
-      <span v-if="meta.droppedBelowFloorDb" class="m">{{ meta.droppedBelowFloorDb }} pairs below {{ meta.reportFloorDb }} dB floor</span>
+      <span v-if="meta.droppedBelowFloorDb && !basic" class="m">{{ meta.droppedBelowFloorDb }} pairs below {{ meta.reportFloorDb }} dB floor</span>
       <span v-if="meta.droppedByFindingCap" class="m warn">{{ meta.droppedByFindingCap }} findings over cap — tighten scope</span>
       <span v-if="!report.board.bboxFromOutline" class="m warn">no Edge.Cuts outline — extents from geometry</span>
       <!-- import-time plausibility gate: the fatal tier never gets here (it
@@ -770,6 +828,16 @@ function toggleRule(rule) {
 .banner.error { background: #3a1a1e; color: #ffb3b8; font-family: var(--mono); }
 .banner.wait { background: var(--resin); color: var(--tin); font-family: var(--mono); }
 .banner.ask { background: #2a2418; color: var(--silk); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.viewtoggle {
+  display: inline-flex; border: 1px solid var(--resin-edge); border-radius: 999px;
+  overflow: hidden; margin-right: 4px;
+}
+.viewtoggle button {
+  font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em;
+  padding: 3px 12px; color: var(--tin); background: transparent;
+}
+.viewtoggle button:hover { color: var(--copper); }
+.viewtoggle button.on { background: var(--copper); color: var(--bare-fr4); }
 .chip {
   border: 1px solid var(--heat-med); color: var(--heat-med);
   border-radius: 999px; padding: 5px 14px; font-size: 13px;

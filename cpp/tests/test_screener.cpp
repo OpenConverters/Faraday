@@ -2,6 +2,7 @@
 #include <catch2/catch_approx.hpp>
 #include <faraday/KicadImporter.hpp>
 #include <faraday/Diff.hpp>
+#include <faraday/Emissions.hpp>
 #include <faraday/Fixes.hpp>
 #include <faraday/Report.hpp>
 #include <faraday/Screener.hpp>
@@ -268,6 +269,42 @@ TEST_CASE("screener: switch node found by connectivity; rails and LEDs are not",
     REQUIRE(f != nullptr);
     CHECK((*f)["confidence"] == "heuristic");  // never claims certainty
     CHECK((*f)["coupledLenMm"].get<double>() > 0.0);  // copper extent, mm^2
+}
+
+TEST_CASE("the dv/dt copper is measured, not assumed — it IS the CM source plate",
+          "[screener][switchnode][conducted]") {
+    // Same board as above. SW carries one 10 mm x 1.0 mm track and two 1 mm^2
+    // pads (L1 pin 1, Q1 pin 1), so the plate that swings with the edge is
+    // exactly 12 mm^2 — and no other net's copper may enter that number.
+    std::string head = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "SW") (net 4 "G")
+      (segment (start 5 5) (end 15 5) (width 1.0) (layer "F.Cu") (net 1))
+      (zone (net 4) (net_name "G") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 30 0) (xy 30 30) (xy 0 30))))
+      (footprint "L" (layer "F.Cu") (at 5 5)
+        (property "Reference" "L1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SW")))
+      (footprint "Q" (layer "F.Cu") (at 15 5)
+        (property "Reference" "Q1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 1 "SW")))
+    ))";
+    BoardIR b = import_kicad(head, builtin_stackup("default-2layer"));
+    nlohmann::json report = analyze_board(b);
+    const auto& dv = report["meta"]["dvdtCopper"];
+    CHECK(dv["totalMm2"].get<double>() == Approx(12.0));
+    REQUIRE(dv["perNet"].size() == 1);
+    CHECK(dv["perNet"][0]["net"] == "SW");
+    CHECK(dv["perNet"][0]["mm2"].get<double>() == Approx(12.0));
+
+    // and it feeds the number the conducted estimate used to ask the user to
+    // invent: 12 mm^2 at 10 mm of air is 10.6 fF
+    CHECK(emc::chassis_stray_c_f(dv["totalMm2"].get<double>(), 10.0) ==
+          Approx(1.0625e-14).epsilon(0.01));
+
+    // A board with no switch node has no dv/dt copper — zero, not a guess.
+    CHECK(analyze_board(fixture_board())["meta"]["dvdtCopper"]["totalMm2"]
+              .get<double>() == 0.0);
 }
 
 // IEC/DIN designators. A European schematic names transistors T*, ICs IC*

@@ -53,6 +53,15 @@ const TINY_2LAYER = `(kicad_pcb (version 20221018) (generator pcbnew)
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
+// This suite exercises the ADVANCED view — the one that puts every decibel on
+// screen. A first visit now lands in GUIDED (plain language, presets, no
+// vocabulary), which has its own spec, so every suite declares the view it
+// means to test instead of inheriting whichever happens to be the default.
+test.beforeEach(async ({ page }) => {
+  await page.addInitScript(() => localStorage.setItem('faraday.view', 'advanced'))
+})
+
+
 const here = path.dirname(fileURLToPath(import.meta.url))
 
 // Loading a 1.16 MB board means downloading a 656 kB WASM engine and parsing

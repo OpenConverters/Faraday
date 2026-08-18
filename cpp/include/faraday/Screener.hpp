@@ -348,6 +348,50 @@ class Screener {
         return out;
     }
 
+    // ---- the dv/dt copper -------------------------------------------------
+    // The plate that drives common-mode current into the chassis: every square
+    // millimetre of copper that swings with the switching edge. It is measured
+    // off the layout exactly the way the commutation loop is, which is what
+    // lets the conducted estimate stop asking the user to invent a C_stray
+    // (emc::chassis_stray_c_f takes this area and the one number the board
+    // cannot carry — how far the metalwork is).
+    //
+    // Tracks, pads and pours on a switch net, summed. Where a track lands on
+    // its own pad the overlap is counted twice; that is a few percent, and it
+    // errs toward MORE capacitance, which is the pessimistic direction for an
+    // emissions estimate. Via barrels are not counted: their plate area toward
+    // a chassis under the board is the annular ring, which is already in the
+    // pad sum, and the barrel itself faces the board's own layers.
+    nlohmann::json dvdt_copper() const {
+        std::map<int, double> per_net;
+        for (const auto& s : b_.segments) {
+            if (!sw_nets_.count(s.net)) continue;
+            const double len = std::hypot(s.x2 - s.x1, s.y2 - s.y1);
+            per_net[s.net] += len * s.width;
+        }
+        for (const auto& p : b_.pads) {
+            if (!sw_nets_.count(p.net)) continue;
+            per_net[p.net] += p.w * p.h;
+        }
+        for (const auto& z : b_.zones) {
+            if (!sw_nets_.count(z.net)) continue;
+            double a = std::abs(z.signed_area());
+            for (const auto& h : z.holes) {
+                ZonePoly hp;
+                hp.pts = h;
+                a -= std::abs(hp.signed_area());
+            }
+            per_net[z.net] += std::max(0.0, a);
+        }
+        double total = 0;
+        nlohmann::json nets = nlohmann::json::array();
+        for (const auto& [net, mm2] : per_net) {
+            total += mm2;
+            nets.push_back({{"net", b_.net_name(net)}, {"mm2", mm2}});
+        }
+        return {{"totalMm2", total}, {"perNet", nets}};
+    }
+
     // Coverage/meta for the report — everything not analysed, stated.
     nlohmann::json meta() const {
         nlohmann::json planes = nlohmann::json::array();
@@ -400,6 +444,7 @@ class Screener {
                 {"switchNodes", sw},
                 {"switchNodeSource", sw_src},
                 {"switchNodeCandidates", sw_cand},
+                {"dvdtCopper", dvdt_copper()},
                 {"polygonOnlyNets", polyonly}};
     }
 
