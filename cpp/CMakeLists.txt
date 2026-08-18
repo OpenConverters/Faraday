@@ -92,6 +92,17 @@ if(FARADAY_KIRCHHOFF_ROOT AND FARADAY_KIRCHHOFF_BUILD)
     target_include_directories(faraday_spice_check PRIVATE ${FARADAY_KIRCHHOFF_ROOT}/src)
     target_link_libraries(faraday_spice_check PRIVATE faraday ${XCHECK_KIRCHHOFF} ${XCHECK_NGSPICE})
     message(STATUS "Faraday: building faraday_spice_check (exported deck vs libngspice)")
+
+    # ABT #807: the conducted-EMI run — parasitics + device + LISN, to steady
+    # state. Needs Hertz for the LISN model (never a third copy of it).
+    set(FARADAY_HERTZ_ROOT "" CACHE PATH "Hertz checkout (header-only core)")
+    if(FARADAY_HERTZ_ROOT)
+        add_executable(faraday_emi_sim tools/faraday_emi_sim.cpp)
+        target_include_directories(faraday_emi_sim PRIVATE
+            ${FARADAY_KIRCHHOFF_ROOT}/src ${FARADAY_HERTZ_ROOT}/cpp/include)
+        target_link_libraries(faraday_emi_sim PRIVATE faraday ${XCHECK_KIRCHHOFF} ${XCHECK_NGSPICE})
+        message(STATUS "Faraday: building faraday_emi_sim (board + device + LISN)")
+    endif()
 endif()
 
 if(FARADAY_BUILD_TESTS)

@@ -63,6 +63,15 @@ inline std::string spice_token(const std::string& raw) {
     while (!out.empty() && out.back() == '_') out.pop_back();
     if (out.empty()) out = "N";
     if (std::isdigit((unsigned char)out.front())) out = "N" + out;
+    // SPICE RESERVES ITS GROUND NAMES. ngspice treats "0" and "gnd" (any case)
+    // as the global reference node — so a board whose return net is called GND,
+    // which is nearly all of them, emitted a subcircuit port that SILENTLY
+    // BECAME ground. The deck still parsed, the operating point still solved,
+    // and the return-line LISN measured exactly zero because every return
+    // current had bypassed it through the alias. Renaming is safe: the manifest
+    // carries the original net name, and nothing but SPICE reads these tokens.
+    for (const char* reserved : {"GND", "GROUND", "GND!", "0"})
+        if (out == reserved) return "N_" + out;
     return out;
 }
 
