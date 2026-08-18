@@ -285,12 +285,19 @@ function drawConducted() {
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, w, h)
 
-  const padL = 46, padR = 10, padT = 12, padB = 26
+  const padL = 46, padR = 10, padT = 20, padB = 26
   const f0 = 0.15, f1 = 30                       // MHz, the conducted band
   const X = f => padL + (Math.log10(f / f0) / Math.log10(f1 / f0)) * (w - padL - padR)
   const all = [...v.dmDbuv, ...v.cmDbuv, ...v.limitDbuv]
-  const lo = Math.floor((Math.min(...all) - 5) / 20) * 20
+  // The comb's sinc nulls run to -140 dBuV and there is nothing to read down
+  // there; letting them set the axis squeezes the whole decision — the two
+  // curves against the limit — into the top fifth of the plot. Floor the axis
+  // 40 dB under the limit, clip the paths to the plot rectangle, and SAY that
+  // the nulls run off the bottom rather than quietly flattening them onto it.
+  const limLo = Math.min(...v.limitDbuv)
+  const lo = Math.floor((limLo - 40) / 20) * 20
   const hi = Math.ceil((Math.max(...all) + 5) / 20) * 20
+  const clipped = Math.min(...all) < lo
   const Y = db => padT + (1 - (db - lo) / (hi - lo)) * (h - padT - padB)
 
   ctx.font = '10px IBM Plex Mono, monospace'
@@ -308,7 +315,8 @@ function drawConducted() {
     ctx.fillText(String(db), padL - 6, Y(db) + 3)
   }
   ctx.textAlign = 'left'
-  ctx.fillText('dBµV', 4, padT + 2)
+  ctx.fillText('dBµV', 4, 10)          // above the plot: the top gridline's
+                                       // own label lives at x = padL - 6
   ctx.textAlign = 'center'
   ctx.fillText('kHz | MHz', (padL + w) / 2, h - 3)
 
@@ -321,6 +329,10 @@ function drawConducted() {
     }
     ctx.stroke(); ctx.setLineDash([])
   }
+  ctx.save()
+  ctx.beginPath()
+  ctx.rect(padL, padT, w - padL - padR, h - padT - padB)
+  ctx.clip()
   path(v.dmDbuv, '#6f9fc4', 1.6)                 // differential mode
   path(v.cmDbuv, '#d98b5f', 1.6)                 // common mode
   path(v.limitDbuv, '#ff5d5d', 2, [6, 4])        // the limit
@@ -331,6 +343,13 @@ function drawConducted() {
   ctx.arc(X(Math.min(Math.max(f0, v.worstFMhz), f1)),
           Y(v.worstLevelDbuv), 3.5, 0, 7)
   ctx.fill()
+  ctx.restore()
+
+  if (clipped) {
+    ctx.fillStyle = 'rgba(157,180,173,0.7)'
+    ctx.textAlign = 'right'
+    ctx.fillText('nulls run below the axis', w - padR, h - padB - 4)
+  }
 }
 
 const ro = new ResizeObserver(() => { draw(); drawConducted() })

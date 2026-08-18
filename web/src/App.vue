@@ -831,6 +831,7 @@ function toggleRule(rule) {
 .viewtoggle {
   display: inline-flex; border: 1px solid var(--resin-edge); border-radius: 999px;
   overflow: hidden; margin-right: 4px;
+  flex: none; white-space: nowrap;   /* a crowded header must not clip the switch */
 }
 .viewtoggle button {
   font-family: var(--mono); font-size: 11px; letter-spacing: 0.04em;
