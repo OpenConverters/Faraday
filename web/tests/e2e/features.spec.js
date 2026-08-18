@@ -1,5 +1,6 @@
 // The batch-six features: PDN, calculator, export, sweep. Headless always.
 import { test, expect } from '@playwright/test'
+import fs from 'node:fs'
 import path from 'node:path'
 import { fileURLToPath } from 'node:url'
 
@@ -458,4 +459,27 @@ test('CISPR 25 is offered, and says what its bands and its LISN mean',
     // and the verdict still names a mode and a frequency, inside the bands
     await expect(page.getByTestId('conducted-verdict'))
       .toContainText(/(common|differential)-mode/)
+  })
+
+test('#load= opens a board by URL — the KiCad plugin\'s whole path into the app',
+  async ({ page }) => {
+    // The plugin serves the open board from localhost and sends the browser to
+    // faraday/#load=<that URL>; nothing is uploaded, the fetch happens here.
+    // Nothing covered this end of it, and the hash handling has since grown a
+    // second parameter (#op=), so this pins that they coexist.
+    const board = fs.readFileSync(
+      new URL('../../../cpp/tests/fixtures/real/mppt-2420-hc.kicad_pcb',
+              import.meta.url).pathname, 'utf8')
+    await page.route('**/served-board.kicad_pcb', route =>
+      route.fulfill({ status: 200, contentType: 'text/plain', body: board }))
+
+    await page.goto('/#load=' +
+      encodeURIComponent('http://127.0.0.1:9/served-board.kicad_pcb'))
+    // this board carries no stackup, so it asks before analysing
+    const card = page.getByTestId('stackup-card')
+    await expect(card.or(page.getByTestId('finding-F-0001')).first())
+      .toBeVisible({ timeout: 30000 })
+    if (await card.count()) await card.getByText('Default 4-layer').click()
+    await expect(page.getByTestId('finding-F-0001')).toBeVisible({ timeout: 30000 })
+    await expect(page.getByTestId('meta-strip')).toContainText('kicad')
   })
