@@ -159,6 +159,53 @@ function designInHertz() {
               'noopener')
 }
 
+// ── a SIMULATED run, read back (ABT #809) ─────────────────────────────────
+// The trapezoid below is a seed: an ideal waveform driven into the board's own
+// impedances. A simulation of THIS board — its parasitics, a real device model,
+// a LISN — is a second, better-founded source for the same two curves, and the
+// panel shows both rather than choosing. Where they disagree by more than the
+// seed's stated bands, that disagreement is information about the models and
+// the panel says so; averaging them would destroy it.
+const simulated = ref(null)
+const simError = ref('')
+function loadSimulated(ev) {
+  const file = ev.target.files?.[0]
+  ev.target.value = ''
+  if (!file) return
+  const r = new FileReader()
+  r.onload = () => {
+    try {
+      const p = JSON.parse(String(r.result))
+      if (p.v !== 1 || !p.spectra?.dm || !p.spectra?.cm)
+        throw new Error('not a simulated-run export (expected v:1 with dm/cm spectra)')
+      simulated.value = p
+      simError.value = ''
+      nextTick(drawConducted)
+    } catch (e) {
+      simulated.value = null
+      simError.value = 'could not read that run: ' + String(e.message || e)
+    }
+  }
+  r.readAsText(file)
+}
+// The two sources, at the frequency where the seed is worst. A gap wider than
+// the seed's own band (DM ±10 dB, CM ±15 dB) is worth a sentence.
+const simVsSeed = computed(() => {
+  const v = cv.value, p = simulated.value
+  if (!v || !p) return null
+  const mode = v.worstMode === 'CM' ? 'cm' : 'dm'
+  const band = mode === 'cm' ? 15 : 10
+  const fHz = v.worstFMhz * 1e6
+  let best = null
+  for (const [f, l] of p.spectra[mode])
+    if (!best || Math.abs(Math.log10(f / fHz)) < Math.abs(Math.log10(best[0] / fHz)))
+      best = [f, l]
+  if (!best) return null
+  return { mode: v.worstMode, seed: v.worstLevelDbuv, sim: best[1],
+           fMhz: best[0] / 1e6, band,
+           disagrees: Math.abs(best[1] - v.worstLevelDbuv) > band }
+})
+
 const cv = computed(() => conducted.value?.verdict || null)
 const cStrayPfShown = computed(() =>
   conducted.value ? conducted.value.cStrayF * 1e12 : 0)
@@ -359,6 +406,31 @@ function drawConducted() {
   path(v.dmDbuv, '#6f9fc4', 1.6)                 // differential mode
   path(v.cmDbuv, '#d98b5f', 1.6)                 // common mode
   path(v.limitDbuv, '#ff5d5d', 2, [6, 4])        // the limit
+
+  // the simulated run, on its own frequency base — drawn thinner and dashed,
+  // because it is a different KIND of number and must not be mistaken for the
+  // seed it is being compared against
+  const sim = simulated.value
+  if (sim) {
+    const simPath = (pts, colour) => {
+      ctx.strokeStyle = colour
+      ctx.lineWidth = 1.2
+      ctx.setLineDash([3, 3])
+      ctx.beginPath()
+      let started = false
+      for (const [f, lv] of pts) {
+        const mhz = f / 1e6
+        if (mhz < f0 || mhz > f1) continue
+        const x = X(mhz), y = Y(lv)
+        started ? ctx.lineTo(x, y) : ctx.moveTo(x, y)
+        started = true
+      }
+      ctx.stroke()
+      ctx.setLineDash([])
+    }
+    simPath(sim.spectra.dm, '#9fd0ef')
+    simPath(sim.spectra.cm, '#ffc79a')
+  }
 
   // the worst point of the dominant mode — the frequency to quote
   ctx.fillStyle = '#ff5d5d'
@@ -635,6 +707,41 @@ const where = computed(() => {
           </p>
         </template>
 
+        <!-- A simulated run of THIS board, read back (ABT #809). -->
+        <div class="simrow" data-testid="sim-row">
+          <label class="simbtn">
+            <input type="file" accept=".json,application/json"
+                   data-testid="sim-input" @change="loadSimulated" />
+            {{ simulated ? 'replace the simulated run…' : 'load a simulated run…' }}
+          </label>
+          <span v-if="simError" class="warn" data-testid="sim-error">{{ simError }}</span>
+          <template v-else-if="simulated">
+            <span class="k dm">DM simulated</span><span class="k cmm">CM simulated</span>
+            <span class="simnote" data-testid="sim-note">
+              <template v-if="basic">
+                These dashed curves come from simulating <b>your own board</b> —
+                its measured parasitics with a real switching device — instead of
+                an ideal waveform. Closer to the truth, and still not a
+                measurement.
+              </template>
+              <template v-else>
+                <b>Simulated</b>, not measured: {{ simulated.note }}
+              </template>
+            </span>
+            <span v-if="simVsSeed" class="simnote"
+                  :class="{ warn: simVsSeed.disagrees }" data-testid="sim-vs-seed">
+              At {{ num(simVsSeed.fMhz, 2) }} MHz the seed reads
+              {{ num(simVsSeed.seed) }} dBµV and the simulation
+              {{ num(simVsSeed.sim) }} dBµV<template v-if="simVsSeed.disagrees">
+                — further apart than the seed's own ±{{ simVsSeed.band }} dB band,
+                so one of the two models is wrong about this board and the
+                difference is worth chasing rather than averaging</template><template
+                v-else> — inside the seed's stated ±{{ simVsSeed.band }} dB, so
+                the two independent paths agree</template>.
+            </span>
+          </template>
+        </div>
+
         <!-- The differential-mode source term: the board's own capacitors.
              The DM curve is this branch's impedance, so where the layout can
              supply it, a slider asking for "input capacitor" is the tool
@@ -744,6 +851,15 @@ const where = computed(() => {
 .creq dt { color: var(--tin); }
 .creq dd { color: var(--silk); }
 .cstray { margin-top: 8px; }
+.simrow { display: flex; flex-wrap: wrap; align-items: baseline; gap: 8px;
+  margin: 8px 0; }
+.simbtn { border: 1px solid var(--resin-edge); border-radius: 999px;
+  padding: 2px 12px; font-family: var(--mono); font-size: 11px;
+  color: var(--tin); cursor: pointer; }
+.simbtn:hover { border-color: var(--copper); color: var(--copper); }
+.simbtn input { display: none; }
+.simnote { flex: 1 1 100%; font-size: 12px; color: var(--tin); }
+.simnote.warn { color: var(--heat-med); }
 .inl { margin-left: 8px; font-family: var(--mono); font-size: 11px; }
 .cwhich.warn { color: var(--heat-med); }
 .conducted .hbtn {

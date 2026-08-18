@@ -244,6 +244,49 @@ or a stackup that does not fit gets a sentence and an exit code, never an empty
 deck. This is stage 1 of ABT #804 — the pipeline that ends in a simulated CM/DM
 spectrum judged against a limit line.
 
+## The whole conducted pipeline — a board in, a CM/DM verdict out
+
+The deck above is stage 1 of four (ABT #804). End to end, on your own machine,
+nothing uploaded:
+
+```bash
+# 1. the device, from the parts catalogue — or a refusal
+kelvin-spice-model --catalog mosfets.ndjson --part EPC2019 --name SW --out q.lib
+
+# 2. the board's parasitics + that device + a LISN, run to steady state
+faraday_emi_sim board.kicad_pcb --stackup default-4layer --chassis-gap-mm 8 \
+    --model q.lib --vin 48 --duty 0.4 --fsw 500e3 --iload 10 --out emi.json
+
+# 3. read it the way a receiver does, and judge it
+python3 hertz/scripts/read_simulated.py emi.json --limit cispr32b --out spectra.json
+```
+
+```
+ DM  worst   -32.3 dB at   2.000 MHz   (level 88.3 dBuV, needs 42 dB …)
+ CM  worst    -3.6 dB at   2.000 MHz   (level 59.6 dBuV, needs 14 dB …)
+dominant   : DM — that is the stage to design first
+```
+
+Each repo owns its half: **Kelvin** the device model and its *tier* (vendor /
+datasheet-parameterised / refused — never a class default, which is
+indistinguishable from a real model once it is in a netlist), **Faraday** the
+parasitics and the assembly, **Kirchhoff** the in-process libngspice, **Hertz**
+the LISN, the CM/DM separation and the limit lines. Nothing is duplicated.
+
+`spectra.json` loads straight back into the emissions panel, where the
+simulated curves are drawn **beside** the analytic trapezoid seed rather than
+replacing it, with the gap between them stated at the seed's worst frequency.
+On the MPPT the two independent paths ask for 14 dB of CM attenuation each and
+42 vs 50 dB of DM — inside the seed's own ±10 dB band, which is the first
+evidence either path has that the other is not wrong.
+
+What it still is not: **validated**. A simulated spectrum with a limit line on
+it looks like a compliance prediction, and this project earns those claims
+(FastHenry for loop inductance, vendor hot loops for the derived mesh, nine
+boards for cross-format agreement). ABT #810 is that instrument —
+`hertz/scripts/compare_measured.py` reports the error per decade against a real
+LISN measurement — and it is open, waiting on lab data rather than on code.
+
 ## The return-path layer
 
 The **return path** chip colours every trace by its *effective loop height* — how far

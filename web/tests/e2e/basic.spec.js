@@ -163,3 +163,42 @@ test('C_stray is derived from this board\'s switching copper, not invented',
   await page.getByTestId('bridge-mounting').selectOption('laminate')
   expect(await pf() / near).toBeGreaterThan(4.0)
 })
+
+test('a simulated run reads back into the panel, beside the seed it checks',
+  async ({ page }) => {
+    // ABT #809: the trapezoid is a seed; a SPICE run of this same board — its
+    // measured parasitics, a real device model, a LISN — is the better-founded
+    // source for the same two curves. The panel must show both and compare
+    // them, never quietly replace one with the other.
+    await page.addInitScript(() => localStorage.setItem('faraday.view', 'advanced'))
+    await loadBoard(page)
+    const ids = await page.evaluate(() =>
+      [...document.querySelectorAll('[data-testid^="finding-F-"]')]
+        .map(e => e.dataset.testid.replace('finding-', '')))
+    for (const id of ids) {
+      await page.getByTestId(`finding-${id}`).click()
+      if (await page.getByTestId(`emit-${id}`).count()) {
+        await page.getByTestId(`emit-${id}`).click()
+        break
+      }
+    }
+    await expect(page.getByTestId('emissions')).toBeVisible()
+    await expect(page.getByTestId('sim-row')).toBeVisible()
+
+    // the real thing: hertz/scripts/read_simulated.py's export of a
+    // faraday_emi_sim run on this very board
+    await page.getByTestId('sim-input').setInputFiles(
+      new URL('./fixtures-simulated-run.json', import.meta.url).pathname)
+    await expect(page.getByTestId('sim-note')).toContainText('Simulated')
+    // and it says how the two independent paths compare at the seed's worst
+    // point, in dB, rather than picking one
+    await expect(page.getByTestId('sim-vs-seed')).toContainText('the seed reads')
+    await expect(page.getByTestId('sim-vs-seed')).toContainText('dBµV')
+
+    // a file that is not a run is refused with a reason, not silently ignored
+    await page.getByTestId('sim-input').setInputFiles({
+      name: 'nope.json', mimeType: 'application/json',
+      buffer: Buffer.from('{"hello":true}'),
+    })
+    await expect(page.getByTestId('sim-error')).toContainText('not a simulated-run export')
+  })
