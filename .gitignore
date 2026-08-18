@@ -1,5 +1,5 @@
 build/
-build-wasm/
+build-*/
 web/node_modules/
 web/dist/
 web/public/faraday.js

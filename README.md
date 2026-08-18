@@ -205,6 +205,45 @@ loop radiation only, no common-mode current on attached cables (which dominates 
 failures), no enclosure, no board resonances. A clean result means this loop is not your
 problem — not that the product passes.
 
+## The SPICE deck — what the copper adds, where a simulator can read it
+
+A conducted-emissions prediction needs two halves. A circuit simulation knows
+the devices and nothing about the copper; Faraday measures the copper and cannot
+know the devices. `--spice` writes Faraday's half:
+
+```bash
+faraday_cli board.kicad_pcb --stackup default-4layer \
+    --spice deck.cir --manifest deck.json --chassis-gap-mm 8
+```
+
+The subcircuit is five ports — the rail as it *arrives*, the rail *after* the
+mesh inductance (where the switching cell attaches), the switch node, the return
+and chassis — and between them the parasitics, each measured: the commutation
+mesh's inductance (Grover over the derived loop hull, ~15% against FastHenry),
+the input capacitor bank part by part with **mounting inductance measured
+pad-to-via**, and the stray capacitance from the dv/dt copper area to a stated
+chassis gap. It is topology-neutral on purpose: Faraday measures copper, it does
+not decide that a board is a buck.
+
+The manifest gives every value a **provenance** — `measured` off the copper,
+`derived` from measured quantities, `stated` by you, or `default` (a model
+constant, named as such: ESR is the only one, and for an electrolytic it is
+optimistic). A deck whose reader cannot tell which is which gets trusted
+uniformly, and most of it should not be.
+
+And the file **names its own absences** at the top, before anything a machine
+reads: no device models, no gate loop, no control loop, nothing off the board.
+It is deliberately not runnable alone — a deck that omitted those silently would
+look runnable and produce numbers with the authority of a simulation and the
+content of a guess. `faraday_spice_check` (built when Kirchhoff is available)
+wraps it in a harness and solves an operating point through Kirchhoff's
+**in-process libngspice**, so "it parses" is a fact and not a hope.
+
+Boards that cannot answer say so: no switch node, no derived commutation loop,
+or a stackup that does not fit gets a sentence and an exit code, never an empty
+deck. This is stage 1 of ABT #804 — the pipeline that ends in a simulated CM/DM
+spectrum judged against a limit line.
+
 ## The return-path layer
 
 The **return path** chip colours every trace by its *effective loop height* — how far

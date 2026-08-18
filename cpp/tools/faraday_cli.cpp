@@ -1,5 +1,7 @@
 // faraday_cli: board.kicad_pcb | gerber-dir/ | file1.gbr file2.gbr ...
 //              [--stackup default-<N>layer] [-o report.json]
+//              [--spice deck.cir] [--manifest deck.json]
+//              [--chassis-gap-mm X] [--chassis-eps-r X]
 // Screens the board and prints the ranked findings; writes the full report
 // JSON (board geometry + findings + meta) for the web viewer.
 
@@ -8,6 +10,7 @@
 #include <faraday/Report.hpp>
 #include <faraday/Import.hpp>
 #include <faraday/Screener.hpp>
+#include <faraday/SpiceExport.hpp>
 
 #include <filesystem>
 #include <fstream>
@@ -31,6 +34,12 @@ int main(int argc, char** argv) {
     // NEW or WORSENED findings — the gate a brownfield board can adopt today
     std::string baseline_path, fail_on_regression;
     std::string fix_out;   // --fix-stitching <out.kicad_pcb>
+    // --spice/--manifest: the parasitic-annotated netlist (ABT #805) — the
+    // copper's half of a conducted-emissions simulation, written where a
+    // simulator can read it. --chassis-gap-mm is the one quantity a layout
+    // cannot carry, so without it the common-mode element is not emitted.
+    std::string spice_out, manifest_out;
+    faraday::spice::ExportOptions spice_opt;
     // --switch-net NAME (repeatable): screen NAME as a switch node, recorded
     // with switchNodeSource "user" — the CLI face of candidate promotion
     std::vector<std::string> user_switch_nets;
@@ -47,6 +56,12 @@ int main(int argc, char** argv) {
         else if (a == "--fail-on-regression" && i + 1 < argc)
             fail_on_regression = argv[++i];
         else if (a == "--fix-stitching" && i + 1 < argc) fix_out = argv[++i];
+        else if (a == "--spice" && i + 1 < argc) spice_out = argv[++i];
+        else if (a == "--manifest" && i + 1 < argc) manifest_out = argv[++i];
+        else if (a == "--chassis-gap-mm" && i + 1 < argc)
+            spice_opt.chassis_gap_mm = std::stod(argv[++i]);
+        else if (a == "--chassis-eps-r" && i + 1 < argc)
+            spice_opt.chassis_eps_r = std::stod(argv[++i]);
         else board_paths.push_back(a);
     }
     std::string dir_root;   // non-empty → paths become relative to it
@@ -147,6 +162,30 @@ int main(int argc, char** argv) {
                 std::cout << "  wrote " << fix_out << " (review it in KiCad; "
                           << "the original is untouched)\n";
             }
+        }
+        if (!spice_out.empty() || !manifest_out.empty()) {
+            faraday::Screener ssc(board, sp);
+            const faraday::spice::Deck deck =
+                faraday::spice::build(board, ssc, spice_opt);
+            if (!spice_out.empty()) {
+                std::ofstream fo(spice_out);
+                fo << deck.cir;
+                std::cout << "\nspice: wrote " << spice_out << " ("
+                          << deck.manifest["entries"].size()
+                          << " extracted values, ports "
+                          << deck.manifest["ports"][0].get<std::string>() << "/"
+                          << deck.manifest["ports"][1].get<std::string>() << "/"
+                          << deck.manifest["ports"][2].get<std::string>()
+                          << "/CHASSIS)\n";
+            }
+            if (!manifest_out.empty()) {
+                std::ofstream fo(manifest_out);
+                fo << deck.manifest.dump(2);
+                std::cout << "spice: wrote " << manifest_out
+                          << " (provenance per value)\n";
+            }
+            for (const auto& w : deck.manifest["warnings"])
+                std::cout << "  warning: " << w.get<std::string>() << "\n";
         }
         if (!baseline_path.empty()) {
             nlohmann::json base = nlohmann::json::parse(slurp(baseline_path));

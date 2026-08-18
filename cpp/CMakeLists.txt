@@ -85,6 +85,13 @@ if(FARADAY_KIRCHHOFF_ROOT AND FARADAY_KIRCHHOFF_BUILD)
     target_include_directories(faraday_xcheck PRIVATE ${FARADAY_KIRCHHOFF_ROOT}/src)
     target_link_libraries(faraday_xcheck PRIVATE faraday ${XCHECK_KIRCHHOFF} ${XCHECK_NGSPICE})
     message(STATUS "Faraday: building faraday_xcheck (mna vs in-process ngspice)")
+
+    # Does the EXPORTED deck (ABT #805) parse in a real engine? Same rule as
+    # everywhere else: Kirchhoff's in-process libngspice, never the binary.
+    add_executable(faraday_spice_check tools/faraday_spice_check.cpp)
+    target_include_directories(faraday_spice_check PRIVATE ${FARADAY_KIRCHHOFF_ROOT}/src)
+    target_link_libraries(faraday_spice_check PRIVATE faraday ${XCHECK_KIRCHHOFF} ${XCHECK_NGSPICE})
+    message(STATUS "Faraday: building faraday_spice_check (exported deck vs libngspice)")
 endif()
 
 if(FARADAY_BUILD_TESTS)
@@ -113,7 +120,8 @@ if(FARADAY_BUILD_TESTS)
         tests/test_nearfield.cpp
         tests/test_nfmap.cpp
         tests/test_shielding.cpp
-        tests/test_pdn.cpp)
+        tests/test_pdn.cpp
+        tests/test_spice.cpp)
     target_link_libraries(test_faraday PRIVATE faraday Catch2::Catch2WithMain)
     target_compile_definitions(test_faraday PRIVATE
         FARADAY_FIXTURE_DIR="${CMAKE_CURRENT_SOURCE_DIR}/tests/fixtures")
