@@ -14,10 +14,17 @@ const railIdx = ref(0)
 const dI = ref(1.0)      // A
 const dV = ref(50)       // mV
 const vrmL = ref(20)     // nH
+// Which return the rail is measured against. An isolated board has more than
+// one — a PoE front end's VSS_POE beside the board's own GND — and only the
+// designer knows which side the question is about. Empty = the engine's own
+// choice, which is the return carrying the most copper.
+const gndNet = ref('')
+const gndChoices = computed(() => result.value?.gndCandidates ?? [])
 
 function run() {
   try {
-    const out = JSON.parse(props.engine.pdn(JSON.stringify({ vrmLnH: vrmL.value })))
+    const out = JSON.parse(props.engine.pdn(JSON.stringify({
+      vrmLnH: vrmL.value, gndNet: gndNet.value })))
     if (out.error) { error.value = out.error; result.value = null; return }
     error.value = ''
     result.value = out
@@ -124,7 +131,18 @@ const num = (x, d = 1) => (x === undefined || x === null ? '—' : Number(x).toF
     <section class="panel" data-testid="pdn-panel" role="dialog" aria-label="PDN impedance">
       <header>
         <h2>PDN</h2>
-        <span class="sub" v-if="result">against {{ result.gnd }}</span>
+        <span class="sub" v-if="result && gndChoices.length < 2">against {{ result.gnd }}</span>
+        <!-- more than one return on this board: let the designer say which,
+             rather than silently answering about the bigger one -->
+        <label v-if="gndChoices.length > 1" class="sub gndpick" data-testid="pdn-gnd">
+          against
+          <select v-model="gndNet" @change="run">
+            <option v-for="c in gndChoices" :key="c.net" :value="c.net">
+              {{ c.net }} ({{ c.pourMm2 > 0 ? c.pourMm2.toFixed(0) + ' mm² pour' : 'no pour' }},
+              {{ c.capTerminals }} cap pins)
+            </option>
+          </select>
+        </label>
         <select v-if="result && result.rails.length > 1" v-model.number="railIdx"
                 data-testid="pdn-rail" class="railsel">
           <option v-for="(r, i) in result.rails" :key="r.net" :value="i">
@@ -214,6 +232,9 @@ header { display: flex; align-items: center; gap: 12px; padding: 11px 16px;
 header h2 { font-family: var(--display); font-size: 17px; font-weight: 700;
   letter-spacing: 0.16em; color: #8fb8ff; }
 .sub { font-family: var(--mono); font-size: 11px; color: var(--tin); }
+.gndpick select { font-family: var(--mono); font-size: 11px; color: var(--silk);
+  background: var(--resin); border: 1px solid var(--resin-edge);
+  border-radius: 4px; padding: 1px 4px; margin-left: 4px; }
 .railsel { background: var(--bare-fr4); color: var(--silk); font-family: var(--mono);
   font-size: 12px; border: 1px solid var(--resin-edge); border-radius: 3px; padding: 4px 6px; }
 .sp { flex: 1; }

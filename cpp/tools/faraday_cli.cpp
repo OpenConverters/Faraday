@@ -1,7 +1,7 @@
 // faraday_cli: board.kicad_pcb | gerber-dir/ | file1.gbr file2.gbr ...
 //              [--stackup default-<N>layer] [-o report.json]
 //              [--spice deck.cir] [--manifest deck.json]
-//              [--chassis-gap-mm X] [--chassis-eps-r X]
+//              [--chassis-gap-mm X] [--chassis-eps-r X] [--return-net NAME]
 // Screens the board and prints the ranked findings; writes the full report
 // JSON (board geometry + findings + meta) for the web viewer.
 
@@ -62,6 +62,8 @@ int main(int argc, char** argv) {
             spice_opt.chassis_gap_mm = std::stod(argv[++i]);
         else if (a == "--chassis-eps-r" && i + 1 < argc)
             spice_opt.chassis_eps_r = std::stod(argv[++i]);
+        else if (a == "--return-net" && i + 1 < argc)
+            spice_opt.return_net = argv[++i];
         else board_paths.push_back(a);
     }
     std::string dir_root;   // non-empty → paths become relative to it

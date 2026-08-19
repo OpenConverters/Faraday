@@ -850,6 +850,9 @@ inline nlohmann::json pdn_json(const BoardIR& board, const Screener& screener,
     pdn::Params p;
     p.vrm_r_ohm = j.value("vrmROhm", 0.01);
     p.vrm_l_h = j.value("vrmLnH", 20.0) * 1e-9;
+    // An isolated board has more than one legitimate return, and only the
+    // designer knows which side the question is about.
+    p.gnd_net = j.value("gndNet", std::string());
     const pdn::Result d = pdn::discover(board, screener, p);
     nlohmann::json rails = nlohmann::json::array();
     for (const auto& rail : d.rails) {
@@ -884,7 +887,13 @@ inline nlohmann::json pdn_json(const BoardIR& board, const Screener& screener,
                          {"zMaxMhz", c.z_max_hz * 1e-6},
                          {"antires", ar}});
     }
+    nlohmann::json cands = nlohmann::json::array();
+    for (const auto& c : d.gnd_candidates)
+        cands.push_back({{"net", c.name}, {"pourMm2", c.pour_mm2},
+                         {"capTerminals", c.cap_terminals},
+                         {"named", c.named}, {"plane", c.plane}});
     return {{"gnd", d.gnd_name}, {"rails", rails},
+            {"gndCandidates", cands},
             {"vrmROhm", p.vrm_r_ohm}, {"vrmLnH", p.vrm_l_h * 1e9}};
 }
 

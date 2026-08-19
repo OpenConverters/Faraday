@@ -8,6 +8,7 @@
 
 #include <faraday/Import.hpp>
 #include <faraday/Pdn.hpp>
+#include <faraday/Operating.hpp>
 
 using namespace faraday;
 using Catch::Matchers::WithinRel;
@@ -169,4 +170,154 @@ TEST_CASE("the micro sign parses — real boards do not spell it 'u'",
     // and the refusals still refuse: a bare number has no unit
     CHECK_FALSE(pdn::parse_capacitance("100").has_value());
     CHECK_FALSE(pdn::parse_capacitance("DNP").has_value());
+}
+
+TEST_CASE("the reference is chosen by copper, not by net-table order",
+          "[pdn][isolated]") {
+    // An isolated front end: VSS_POE is a real return with a name that says
+    // ground, listed FIRST, carrying nothing. GND is the board's actual
+    // reference — a full pour with every decoupling capacitor on it.
+    //
+    // The old rule was "the first net whose name contains gnd or vss", so the
+    // exporter's net ordering decided the answer, and this board reported
+    // "no decoupling capacitor found between a power net and VSS_POE" while
+    // sitting on a fully decoupled 3V3 rail.
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "VSS_POE") (net 2 "GND") (net 3 "+3V3")
+      (segment (start 2 2) (end 8 2) (width 0.3) (layer "F.Cu") (net 1))
+      (zone (net 2) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 40 0) (xy 40 30) (xy 0 30))))
+      (via (at 12.4 10) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 2))
+      (via (at 12.4 12) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 3))
+      (footprint "C" (layer "F.Cu") (at 12 10)
+        (property "Reference" "C1") (property "Value" "100nF")
+        (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net 3 "+3V3"))
+        (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net 2 "GND")))
+      (footprint "C" (layer "F.Cu") (at 16 10)
+        (property "Reference" "C2") (property "Value" "10uF")
+        (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net 3 "+3V3"))
+        (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net 2 "GND")))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
+    Screener sc(b);
+    const auto r = pdn::discover(b, sc, pdn::Params{});
+
+    CHECK(r.gnd_name == "GND");                 // the copper decides
+    REQUIRE(r.rails.size() == 1);
+    CHECK(r.rails[0].name == "+3V3");
+    CHECK(r.rails[0].caps.size() == 2);
+
+    // and both returns are reported, best first, with the evidence
+    REQUIRE(r.gnd_candidates.size() >= 2);
+    CHECK(r.gnd_candidates[0].name == "GND");
+    CHECK(r.gnd_candidates[0].pour_mm2 > 1000.0);
+    CHECK(r.gnd_candidates[0].cap_terminals == 2);
+    bool saw_poe = false;
+    for (const auto& c : r.gnd_candidates)
+        if (c.name == "VSS_POE") {
+            saw_poe = true;
+            CHECK(c.named);                     // it IS a candidate
+            CHECK(c.pour_mm2 == 0.0);           // it just has no copper
+            CHECK(c.cap_terminals == 0);
+        }
+    CHECK(saw_poe);
+}
+
+TEST_CASE("an isolated board can be asked about the other side by name",
+          "[pdn][isolated]") {
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "VSS_POE") (net 2 "GND") (net 3 "+3V3") (net 4 "VPOE")
+      (zone (net 2) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 40 0) (xy 40 30) (xy 0 30))))
+      (zone (net 1) (net_name "VSS_POE") (layer "F.Cu")
+        (filled_polygon (layer "F.Cu") (pts (xy 0 0) (xy 10 0) (xy 10 10) (xy 0 10))))
+      (via (at 4.4 4) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
+      (via (at 4.4 6) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 4))
+      (via (at 12.4 10) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 2))
+      (via (at 12.4 12) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 3))
+      (footprint "C" (layer "F.Cu") (at 4 4)
+        (property "Reference" "C9") (property "Value" "220nF")
+        (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net 4 "VPOE"))
+        (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net 1 "VSS_POE")))
+      (footprint "C" (layer "F.Cu") (at 12 10)
+        (property "Reference" "C1") (property "Value" "100nF")
+        (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net 3 "+3V3"))
+        (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net 2 "GND")))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
+    Screener sc(b);
+
+    // by default the bigger return wins
+    CHECK(pdn::discover(b, sc, pdn::Params{}).gnd_name == "GND");
+
+    // …and the isolated side is reachable when the designer names it
+    pdn::Params p;
+    p.gnd_net = "VSS_POE";
+    const auto iso = pdn::discover(b, sc, p);
+    CHECK(iso.gnd_name == "VSS_POE");
+    REQUIRE(iso.rails.size() == 1);
+    CHECK(iso.rails[0].name == "VPOE");
+
+    // a name that is not on the board is a typo, not a fallback
+    p.gnd_net = "VSS_POF";
+    CHECK_THROWS_WITH(pdn::discover(b, sc, p),
+                      Catch::Matchers::ContainsSubstring("typo rather than a fallback"));
+}
+
+TEST_CASE("the refusal names what it chose and what else was there",
+          "[pdn][isolated]") {
+    // No decoupling anywhere: the message must still be actionable.
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "VSS_POE") (net 2 "GND")
+      (zone (net 2) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 40 0) (xy 40 30) (xy 0 30))))
+      (zone (net 1) (net_name "VSS_POE") (layer "F.Cu")
+        (filled_polygon (layer "F.Cu") (pts (xy 0 0) (xy 10 0) (xy 10 10) (xy 0 10))))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
+    Screener sc(b);
+    REQUIRE_THROWS_WITH(
+        pdn::discover(b, sc, pdn::Params{}),
+        Catch::Matchers::ContainsSubstring("chosen as the reference") &&
+        Catch::Matchers::ContainsSubstring("Other returns on this board") &&
+        Catch::Matchers::ContainsSubstring("VSS_POE") &&
+        Catch::Matchers::ContainsSubstring("isolated"));
+}
+
+TEST_CASE("a value field carries a rating too, and that is not ambiguity",
+          "[pdn][values]") {
+    // Refusing these was refusing most of the real world: the leading field is
+    // a complete capacitance and what follows is a voltage, a dielectric or a
+    // tolerance. Reading it is not a guess.
+    CHECK_THAT(*pdn::parse_capacitance("220n 100V"), WithinRel(220e-9, 1e-12));
+    CHECK_THAT(*pdn::parse_capacitance("10uF/25V"), WithinRel(10e-6, 1e-12));
+    CHECK_THAT(*pdn::parse_capacitance("4.7µF 16V X7R"), WithinRel(4.7e-6, 1e-12));
+    CHECK_THAT(*pdn::parse_capacitance("100 nF"), WithinRel(100e-9, 1e-12));
+    CHECK_THAT(*pdn::parse_capacitance("100 nF 50V"), WithinRel(100e-9, 1e-12));
+    CHECK_THAT(*pdn::parse_capacitance("4u7,50V"), WithinRel(4.7e-6, 1e-12));
+    CHECK_THAT(*pdn::parse_capacitance("1µF ±10% X5R"), WithinRel(1e-6, 1e-12));
+
+    // IEC 60062 with the multiplier standing in for the decimal point, and no
+    // whole part at all — how 73 of Glasgow's 92 capacitors are written
+    CHECK_THAT(*pdn::parse_capacitance("u1"), WithinRel(100e-9, 1e-12));
+    CHECK_THAT(*pdn::parse_capacitance("n47"), WithinRel(0.47e-9, 1e-12));
+    CHECK_THAT(*pdn::parse_capacitance("u1 25V"), WithinRel(100e-9, 1e-12));
+    CHECK_FALSE(pdn::parse_capacitance("uF").has_value());   // a unit alone
+
+    // and the refusals still refuse — a unit is still required, and a field
+    // that is not a capacitance is not one because it sits next to a number
+    CHECK_FALSE(pdn::parse_capacitance("100").has_value());
+    CHECK_FALSE(pdn::parse_capacitance("100 50V").has_value());
+    CHECK_FALSE(pdn::parse_capacitance("50V 100n").has_value());   // rating first
+    CHECK_FALSE(pdn::parse_capacitance("DNP").has_value());
+    CHECK_FALSE(pdn::parse_capacitance("X7R").has_value());
+    CHECK_FALSE(pdn::parse_capacitance("").has_value());
+
+    // inductances read the same way
+    CHECK_THAT(*op::parse_inductance("4u7 20%"), WithinRel(4.7e-6, 1e-12));
+    CHECK_THAT(*op::parse_inductance("10 uH"), WithinRel(10e-6, 1e-12));
+    CHECK_FALSE(op::parse_inductance("10 A").has_value());
 }

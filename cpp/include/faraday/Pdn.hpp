@@ -79,6 +79,10 @@ struct Params {
     // rules of thumb, stated: escape trace and via barrel inductance
     double nh_per_mm = 0.8;
     double via_nh = 0.3;
+    // Name the reference explicitly. An isolated converter has two legitimate
+    // returns and only the designer knows which side is being asked about; an
+    // unknown name THROWS rather than falling back to the guess.
+    std::string gnd_net;
 };
 
 struct Curve {
@@ -87,10 +91,26 @@ struct Curve {
     std::vector<std::pair<double, double>> antires;   // f, z of local maxima
 };
 
+// Every net that could have been the reference, and the evidence for it. The
+// choice used to be "the first net whose name contains gnd or vss", in net
+// TABLE ORDER — which on an isolated board (a PoE front end with VSS_POE
+// beside the real GND) picked whichever the exporter happened to list first,
+// and then found no decoupling at all because the capacitors are on the other
+// one. Carrying the alternatives means the refusal can say what it looked at.
+struct GroundCandidate {
+    int net = -1;
+    std::string name;
+    double pour_mm2 = 0;       // copper pour on this net — the physical reference
+    int cap_terminals = 0;     // capacitor pads landing on it
+    bool named = false;        // its name says ground
+    bool plane = false;        // a layer references it as its plane
+};
+
 struct Result {
     std::vector<Rail> rails;
     int gnd_net = -1;
     std::string gnd_name;
+    std::vector<GroundCandidate> gnd_candidates;   // best first
 };
 
 // ---------------------------------------------------------------------------
@@ -102,27 +122,74 @@ inline Result discover(const BoardIR& board, const Screener& screener,
     if (!(p.f_lo_hz > 0) || !(p.f_hi_hz > p.f_lo_hz) || p.points < 8)
         throw std::invalid_argument("pdn: bad frequency grid");
 
-    // The reference: a plane net whose name says ground, else the largest
-    // plane. Refusing when there is none — a PDN without a return is not a
-    // network.
+    // THE REFERENCE IS DECIDED BY THE COPPER, not by the net table's order.
+    // A name that says ground makes a net a CANDIDATE; what makes it the
+    // reference is the pour it carries and the capacitors that return to it.
     Result r;
-    for (const auto& n : board.nets) {
-        std::string lo;
-        for (char c : n.name) lo += (char)std::tolower((unsigned char)c);
-        if (lo.find("gnd") != std::string::npos ||
-            lo.find("vss") != std::string::npos) {
-            r.gnd_net = n.id;
-            r.gnd_name = n.name;
-            break;
-        }
-    }
-    if (r.gnd_net < 0) {
+    {
+        std::set<int> plane_nets;
         for (const auto& lm : screener.layer_models())
-            if (lm.is_plane && lm.plane_net >= 0) {
-                r.gnd_net = lm.plane_net;
-                r.gnd_name = board.net_name(lm.plane_net);
-                break;
+            if (lm.is_plane && lm.plane_net >= 0) plane_nets.insert(lm.plane_net);
+
+        std::map<int, double> pour;
+        for (const auto& z : board.zones) {
+            if (z.net <= 0) continue;
+            double a = std::abs(z.signed_area());
+            for (const auto& h : z.holes) {
+                ZonePoly hp;
+                hp.pts = h;
+                a -= std::abs(hp.signed_area());
             }
+            pour[z.net] += std::max(0.0, a);
+        }
+        std::map<std::string, std::vector<const Pad*>> by_comp;
+        for (const auto& pad : board.pads) by_comp[pad.component].push_back(&pad);
+        std::map<int, int> cap_terminals;
+        for (const auto& [ref, pads] : by_comp) {
+            if (ref.empty() || ref[0] != 'C') continue;
+            for (const Pad* pad : pads)
+                if (pad->net > 0) ++cap_terminals[pad->net];
+        }
+
+        for (const auto& n : board.nets) {
+            std::string lo;
+            for (char c : n.name) lo += (char)std::tolower((unsigned char)c);
+            const bool named = lo.find("gnd") != std::string::npos ||
+                               lo.find("vss") != std::string::npos;
+            const bool plane = plane_nets.count(n.id) > 0;
+            if (!named && !plane) continue;
+            GroundCandidate c;
+            c.net = n.id;
+            c.name = n.name;
+            c.named = named;
+            c.plane = plane;
+            c.pour_mm2 = pour.count(n.id) ? pour[n.id] : 0.0;
+            c.cap_terminals = cap_terminals.count(n.id) ? cap_terminals[n.id] : 0;
+            r.gnd_candidates.push_back(std::move(c));
+        }
+        // Most copper first; then the most capacitors returning to it; a name
+        // that says ground breaks a genuine tie. Order in the net table never
+        // decides anything.
+        std::sort(r.gnd_candidates.begin(), r.gnd_candidates.end(),
+                  [](const GroundCandidate& a, const GroundCandidate& b) {
+                      if (a.pour_mm2 != b.pour_mm2) return a.pour_mm2 > b.pour_mm2;
+                      if (a.cap_terminals != b.cap_terminals)
+                          return a.cap_terminals > b.cap_terminals;
+                      if (a.named != b.named) return a.named;
+                      return a.net < b.net;
+                  });
+        if (!p.gnd_net.empty()) {
+            for (const auto& n : board.nets)
+                if (n.name == p.gnd_net) { r.gnd_net = n.id; r.gnd_name = n.name; }
+            if (r.gnd_net < 0)
+                throw std::invalid_argument(
+                    "pdn: no net named '" + p.gnd_net +
+                    "' on this board — the reference was named explicitly and "
+                    "does not exist, which is a typo rather than a fallback");
+        } else if (!r.gnd_candidates.empty()) {
+            r.gnd_net = r.gnd_candidates.front().net;
+            r.gnd_name = r.gnd_candidates.front().name;
+        }
     }
     if (r.gnd_net < 0)
         throw std::invalid_argument(
@@ -224,12 +291,60 @@ inline Result discover(const BoardIR& board, const Screener& screener,
             r.rails.push_back(std::move(rail));
     std::sort(r.rails.begin(), r.rails.end(),
               [](const Rail& a, const Rail& b) { return a.caps.size() > b.caps.size(); });
-    if (r.rails.empty())
-        throw std::invalid_argument(
-            "pdn: no decoupling capacitor with a parseable value found between "
-            "a power net and " + r.gnd_name +
-            " — either the board has none, or the value fields are not "
-            "capacitances");
+    if (r.rails.empty()) {
+        // Say what was chosen, on what evidence, and what else was available.
+        // On an isolated board the answer is usually "you asked about the other
+        // ground", and the user can only see that if the alternatives are named.
+        std::string why = "pdn: no decoupling capacitor with a parseable value "
+                          "found between a power net and " + r.gnd_name;
+        for (const auto& c : r.gnd_candidates)
+            if (c.net == r.gnd_net) {
+                char b[220];
+                std::snprintf(b, sizeof b,
+                              " (chosen as the reference: %.0f mm2 of pour, %d "
+                              "capacitor terminal(s))",
+                              c.pour_mm2, c.cap_terminals);
+                why += b;
+            }
+        if (r.gnd_candidates.size() > 1) {
+            why += ". Other returns on this board: ";
+            size_t shown = 0;
+            for (const auto& c : r.gnd_candidates) {
+                if (c.net == r.gnd_net || shown >= 3) continue;
+                char b[200];
+                std::snprintf(b, sizeof b, "%s%s (%.0f mm2, %d cap terminals)",
+                              shown ? ", " : "", c.name.c_str(), c.pour_mm2,
+                              c.cap_terminals);
+                why += b;
+                ++shown;
+            }
+            why += ". If this board is isolated, name the side you mean.";
+        }
+        // "The board has none" and "the values are unreadable" are different
+        // problems with different fixes, and the caller cannot tell them apart
+        // from the outside. Count them.
+        int caps_total = 0, caps_unparsed = 0;
+        std::string examples;
+        for (const auto& [ref, pads] : by_comp) {
+            if (ref.empty() || ref[0] != 'C' || pads.size() < 2) continue;
+            ++caps_total;
+            auto ci = comps.find(ref);
+            const std::string value = ci != comps.end() ? ci->second->value : "";
+            if (parse_capacitance(value)) continue;
+            ++caps_unparsed;
+            if (caps_unparsed <= 3)
+                examples += (examples.empty() ? "" : ", ") + ref + "='" + value + "'";
+        }
+        char cb[320];
+        std::snprintf(cb, sizeof cb,
+                      " This board carries %d two-terminal capacitor(s); %d of "
+                      "them have a value this refuses to guess at%s%s.",
+                      caps_total, caps_unparsed,
+                      examples.empty() ? "" : " (e.g. ",
+                      examples.empty() ? "" : (examples + ")").c_str());
+        why += cb;
+        throw std::invalid_argument(why);
+    }
     return r;
 }
 

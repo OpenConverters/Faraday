@@ -44,6 +44,9 @@ struct ExportOptions {
     // count copper the loop element already contains.
     double r_ac_f_hz = 1e6;
     std::string subckt = "faraday_parasitics";
+    // Which return the deck is built against. Empty = the board's own biggest;
+    // named = the side of an isolated converter the caller means.
+    std::string return_net;
 };
 
 struct Deck {
@@ -129,7 +132,7 @@ inline Deck build(const BoardIR& board, const Screener& sc,
     }
     const double l_loop_nh = Screener::hull_loop_inductance_nh(loop->hull, w_med);
 
-    auto branch = op::input_branch(board, sc);
+    auto branch = op::input_branch(board, sc, o.return_net);
     const nlohmann::json dvdt = sc.dvdt_copper();
     const double dvdt_mm2 = dvdt.value("totalMm2", 0.0);
 

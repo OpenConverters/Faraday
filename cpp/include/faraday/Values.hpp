@@ -40,9 +40,41 @@ inline std::string normalize_micro(const std::string& raw) {
 // "100n", "4u7", "0.1uF", "2200p", "390µF". A BARE NUMBER IS REFUSED: a "100"
 // is picofarads in one library and nanofarads in the next, and a wrong guess
 // poisons every curve it feeds.
+//
+// A value field usually carries MORE than the value — "220n 100V", "10uF/25V",
+// "4.7µF 16V X7R" — and refusing those was refusing most of the real world.
+// It is not a guess to read them: the leading field is a complete, unambiguous
+// capacitance and what follows is a rating. So the string is split on its
+// separators and the FIRST one or two fields are offered to the strict parser
+// ("100 nF" is one value written with a space; "220n 100V" is a value and a
+// rating). Everything after that is ignored, and anything that does not parse
+// as a whole field is still refused.
+inline std::optional<double> parse_si_strict(const std::string& v, char unit_letter);
+
 inline std::optional<double> parse_si_value(const std::string& raw_in,
                                             char unit_letter) {
-    const std::string raw = normalize_micro(raw_in);
+    std::string raw = normalize_micro(raw_in);
+    for (char& c : raw)
+        if (c == '/' || c == ',' || c == ';') c = ' ';
+    std::vector<std::string> fields;
+    for (size_t i = 0; i < raw.size();) {
+        while (i < raw.size() && std::isspace((unsigned char)raw[i])) ++i;
+        size_t j = i;
+        while (j < raw.size() && !std::isspace((unsigned char)raw[j])) ++j;
+        if (j > i) fields.push_back(raw.substr(i, j - i));
+        i = j;
+    }
+    if (fields.empty()) return std::nullopt;
+    if (auto one = parse_si_strict(fields[0], unit_letter)) return one;
+    // "100 nF": one value written with a space in it
+    if (fields.size() >= 2)
+        if (auto two = parse_si_strict(fields[0] + fields[1], unit_letter))
+            return two;
+    return std::nullopt;
+}
+
+inline std::optional<double> parse_si_strict(const std::string& raw,
+                                             char unit_letter) {
     std::string v;
     for (char c : raw)
         if (!std::isspace((unsigned char)c)) v += (char)std::tolower((unsigned char)c);
@@ -63,12 +95,36 @@ inline std::optional<double> parse_si_value(const std::string& raw_in,
         const double m = mult(v[i]);
         if (m == 0) continue;
         const std::string a = v.substr(0, i), b = v.substr(i + 1);
-        try {
-            if (!a.empty() && b.empty()) return std::stod(a) * m;
-            if (!a.empty() && !b.empty() &&
-                b.find_first_not_of("0123456789") == std::string::npos)
-                return std::stod(a + "." + b) * m;
-        } catch (...) { return std::nullopt; }
+        // std::stod STOPS at the first character it cannot use and reports
+        // success — "50v100" comes back as 50. That turned "50V 100n" (a
+        // rating written before the value) into 50 nF: a wrong number, silently,
+        // which is the one outcome this parser exists to prevent. Require the
+        // WHOLE numeric field to be consumed.
+        auto whole = [](const std::string& text) -> std::optional<double> {
+            if (text.empty()) return std::nullopt;
+            try {
+                size_t used = 0;
+                const double value = std::stod(text, &used);
+                if (used != text.size()) return std::nullopt;
+                return value;
+            } catch (...) { return std::nullopt; }
+        };
+        if (!a.empty() && b.empty()) {
+            if (auto x = whole(a)) return *x * m;
+            return std::nullopt;
+        }
+        // IEC 60062 with no whole part: the multiplier IS the decimal point and
+        // it leads. "u1" is 0.1 uF, "n47" is 0.47 nF — 73 of Glasgow's 92
+        // capacitors are written this way, and refusing them left that board's
+        // PDN almost entirely unmodelled. Unambiguous, so not a guess.
+        if (a.empty() && !b.empty() &&
+            b.find_first_not_of("0123456789") == std::string::npos) {
+            if (auto x = whole("0." + b)) return *x * m;
+        }
+        if (!a.empty() && !b.empty() &&
+            b.find_first_not_of("0123456789") == std::string::npos) {
+            if (auto x = whole(a + "." + b)) return *x * m;
+        }
         return std::nullopt;
     }
     return std::nullopt;

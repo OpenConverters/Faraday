@@ -43,6 +43,7 @@ struct Args {
     double settle_cycles = 40, capture_cycles = 64;
     std::optional<double> chassis_gap_mm;
     std::string dump_deck;       // write the assembled deck and stop guessing
+    std::string return_net;      // which return, on an isolated board
 };
 
 std::string slurp(const std::string& p) {
@@ -79,6 +80,7 @@ int main(int argc, char** argv) try {
         else if (s == "--lout" && i + 1 < argc) a.l_out_h = std::stod(next());
         else if (s == "--chassis-gap-mm" && i + 1 < argc)
             a.chassis_gap_mm = std::stod(next());
+        else if (s == "--return-net" && i + 1 < argc) a.return_net = next();
         else if (s == "--capture-cycles" && i + 1 < argc)
             a.capture_cycles = std::stod(next());
         else if (s == "--out" && i + 1 < argc) a.out = next();
@@ -111,6 +113,7 @@ int main(int argc, char** argv) try {
     faraday::Screener sc(board);
     faraday::spice::ExportOptions eo;
     eo.chassis_gap_mm = a.chassis_gap_mm;
+    eo.return_net = a.return_net;
     const faraday::spice::Deck deck = faraday::spice::build(board, sc, eo);
     const auto& ports = deck.manifest["ports"];
     const std::string RAIL = ports[0], CELL = ports[1], SW = ports[2],

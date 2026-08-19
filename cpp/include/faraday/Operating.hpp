@@ -57,11 +57,16 @@ struct InputBranch {
 // derived commutation loop, or a loop capacitor that bridges two pours (a
 // domain stitch, not an input capacitor). No fallback rail is guessed — a
 // wrong branch would silently move every conducted number.
+// `return_net` names the reference explicitly — an isolated converter has two,
+// and the conducted estimate built on the wrong one would be measuring the
+// wrong loop while looking entirely reasonable.
 inline std::optional<InputBranch> input_branch(const BoardIR& board,
-                                               const Screener& sc) {
+                                               const Screener& sc,
+                                               const std::string& return_net = "") {
     if (sc.switch_nets().empty()) return std::nullopt;
 
     pdn::Params pp;
+    pp.gnd_net = return_net;
     pdn::Result pr;
     try {
         pr = pdn::discover(board, sc, pp);
