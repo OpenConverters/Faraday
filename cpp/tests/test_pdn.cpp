@@ -321,3 +321,66 @@ TEST_CASE("a value field carries a rating too, and that is not ambiguity",
     CHECK_THAT(*op::parse_inductance("10 uH"), WithinRel(10e-6, 1e-12));
     CHECK_FALSE(op::parse_inductance("10 A").has_value());
 }
+
+TEST_CASE("a board whose export carried part numbers instead of values",
+          "[pdn][values]") {
+    // Altium's ODB++ writes the manufacturer part number in the component
+    // record and no value at all, so every capacitor arrives nameless. The
+    // model must refuse (a guessed capacitance is a wrong impedance curve that
+    // looks exactly like a right one) and must say how to get the values back.
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "GND") (net 2 "+3V3")
+      (zone (net 1) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 40 0) (xy 40 30) (xy 0 30))))
+      (via (at 12.4 10) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
+      (via (at 12.4 12) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 2))
+      (footprint "885012206077" (layer "F.Cu") (at 12 10)
+        (property "Reference" "C1")
+        (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net 2 "+3V3"))
+        (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net 1 "GND")))
+      (footprint "885012206077" (layer "F.Cu") (at 16 10)
+        (property "Reference" "C2")
+        (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net 2 "+3V3"))
+        (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net 1 "GND")))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
+    Screener sc(b);
+
+    // the refusal names the cause and the way out
+    REQUIRE_THROWS_WITH(
+        pdn::discover(b, sc, pdn::Params{}),
+        Catch::Matchers::ContainsSubstring("carry NO value at all") &&
+        Catch::Matchers::ContainsSubstring("885012206077") &&
+        Catch::Matchers::ContainsSubstring("--parts-out") &&
+        Catch::Matchers::ContainsSubstring("--values"));
+
+    // the question the board can ask a catalogue
+    const auto parts = parts_without_values(b);
+    REQUIRE(parts.size() == 2);
+    CHECK(parts[0].first == "C1");
+    CHECK(parts[0].second == "885012206077");
+
+    // …and the answer, handed back
+    values::ValueTable vt = values::parse_value_table("refdes,value\nC1,100pF\nC2,100pF\n");
+    CHECK(apply_values(b, vt) == 2);
+    Screener sc2(b);
+    const auto r = pdn::discover(b, sc2, pdn::Params{});
+    REQUIRE(r.rails.size() == 1);
+    CHECK(r.rails[0].caps.size() == 2);
+    CHECK_THAT(r.rails[0].caps[0].c_f, WithinRel(100e-12, 1e-9));
+}
+
+TEST_CASE("a value the board itself carries always beats the side file",
+          "[pdn][values]") {
+    BoardIR b;
+    b.components.push_back({"C1", "lib:C_0603", "100nF", 0, 0, 0});
+    b.components.push_back({"C2", "885012206077", "", 0, 0, 0});
+    values::ValueTable vt =
+        values::parse_value_table("C1,10uF\nC2,100pF\n");
+    CHECK(apply_values(b, vt) == 1);          // only the empty one
+    CHECK(b.components[0].value == "100nF");  // the layout wins
+    CHECK(b.components[1].value == "100pF");
+    CHECK(vt.ignored == 1);
+    CHECK_THROWS_AS(values::parse_value_table("nonsense\n"), std::invalid_argument);
+}

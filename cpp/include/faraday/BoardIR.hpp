@@ -7,6 +7,8 @@
 // This is the P0 *internal* IR. It becomes the governed BAS schema only after
 // the screening engine has proven the field set (and with explicit approval).
 
+#include "Values.hpp"
+
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <stdexcept>
@@ -220,6 +222,31 @@ struct BoardIR {
         return -1;
     }
 };
+
+// Fill in values the export did not carry, from a refdes->value table. Returns
+// how many were applied. A value already on the board is never overwritten —
+// the layout outranks a side file, always.
+inline size_t apply_values(BoardIR& b, values::ValueTable& t) {
+    for (auto& c : b.components) {
+        auto it = t.by_refdes.find(c.reference);
+        if (it == t.by_refdes.end()) continue;
+        if (!c.value.empty()) { ++t.ignored; continue; }
+        c.value = it->second;
+        ++t.applied;
+    }
+    return t.applied;
+}
+
+// Components whose value the export did NOT carry, with the part number it
+// carried instead — the question to ask a parts catalogue.
+inline std::vector<std::pair<std::string, std::string>> parts_without_values(
+    const BoardIR& b) {
+    std::vector<std::pair<std::string, std::string>> out;
+    for (const auto& c : b.components)
+        if (c.value.empty() && !c.footprint.empty())
+            out.push_back({c.reference, c.footprint});
+    return out;
+}
 
 // ---- JSON (for the web viewer / report) ----
 

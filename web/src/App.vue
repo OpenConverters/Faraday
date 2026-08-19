@@ -231,6 +231,49 @@ const meta = computed(() => report.value?.meta ?? null)
 // common-mode current into the chassis, and handing it to the emissions panel
 // is what lets the conducted estimate stop asking anyone to invent a C_stray.
 const dvdtAreaMm2 = computed(() => meta.value?.dvdtCopper?.totalMm2 ?? 0)
+
+// ── values a CAD export did not carry ────────────────────────────────────
+// Altium's ODB++ writes the manufacturer part number in the component record
+// and no value at all, so a board full of real capacitors arrives nameless and
+// every model that needs a capacitance — the PDN, the input branch, the Y-cap
+// rule — correctly refuses to invent one. This hands them back.
+const valuesNote = ref('')
+const partsMissing = computed(() => {
+  if (!engine.value || !report.value) return 0
+  try {
+    const p = JSON.parse(engine.value.partsWithoutValues())
+    return Array.isArray(p) ? p.length : 0
+  } catch { return 0 }
+})
+async function loadValues(file) {
+  if (!file || !engine.value) return
+  try {
+    const text = await file.text()
+    const out = JSON.parse(engine.value.applyValues(text))
+    if (out.error) { valuesNote.value = out.error; return }
+    valuesNote.value = `filled ${out.applied} component value(s) from ` +
+      `${file.name}` + (out.ignored ? ` — ${out.ignored} skipped, the board ` +
+      `already carried a value` : '')
+    // reanalyze, NOT analyze: analyze() re-imports the board text and would
+    // build a fresh IR, throwing away the values just applied to this one.
+    await reanalyze()
+  } catch (e) {
+    valuesNote.value = 'could not read that table: ' + String(e.message || e)
+  }
+}
+
+// The parts list the table answers — offered as a download, so the round trip
+// (ask the board, resolve the part numbers, hand them back) works from here.
+function downloadParts() {
+  if (!engine.value) return
+  const p = JSON.parse(engine.value.partsWithoutValues())
+  const csv = 'refdes,part\n' + p.map(x => `${x.refdes},${x.part}`).join('\n') + '\n'
+  const a = document.createElement('a')
+  a.href = URL.createObjectURL(new Blob([csv], { type: 'text/csv' }))
+  a.download = (fileName.value || 'board') + '-parts.csv'
+  a.click()
+  URL.revokeObjectURL(a.href)
+}
 const findings = computed(() => report.value?.findings ?? [])
 
 // Rule filter: dense boards render 200 overlapping overlays, so let the reader
@@ -586,6 +629,35 @@ function toggleRule(rule) {
     <div v-if="rpError" class="banner error" data-testid="rp-error">{{ rpError }}</div>
 
     <div v-if="nfError" class="banner error" data-testid="nf-error">{{ nfError }}</div>
+
+    <!-- Some exports carry part numbers and no values (Altium's ODB++ does).
+         Say so once, where it is actionable, rather than only inside whichever
+         panel refuses first. -->
+    <div v-if="report && partsMissing > 0" class="banner ask" data-testid="values-card">
+      <p><b>{{ partsMissing }} component(s) carry a part number and no value</b> —
+         this export wrote part numbers instead. Every model that needs a
+         capacitance (PDN impedance, the conducted input branch, the Y-capacitor
+         rule) refuses to guess one, so they are quiet until the values arrive.</p>
+      <button class="chip" data-testid="parts-download" @click="downloadParts">
+        download the part list (refdes, part number)</button>
+      <label class="chip real">
+        <input type="file" accept=".csv,.txt" style="display:none"
+               data-testid="values-input"
+               @change="e => { loadValues(e.target.files[0]); e.target.value = '' }" />
+        load component values (refdes, value)…</label>
+    </div>
+
+    <!-- Outside the card on purpose: filling the values RETIRES the card, and
+         the confirmation of what just happened must outlive the thing that
+         asked for it. -->
+    <div v-if="valuesNote" class="banner wait" data-testid="values-note">
+      {{ valuesNote }}
+      <label class="chip">
+        <input type="file" accept=".csv,.txt" style="display:none"
+               data-testid="values-input-again"
+               @change="e => { loadValues(e.target.files[0]); e.target.value = '' }" />
+        load another table…</label>
+    </div>
 
     <div v-if="needStackup" class="banner ask" data-testid="stackup-card">
       <p><b>{{ suggestCopper }} copper layers</b> — read from the board. What the file does

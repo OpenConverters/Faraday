@@ -2,6 +2,7 @@
 //              [--stackup default-<N>layer] [-o report.json]
 //              [--spice deck.cir] [--manifest deck.json]
 //              [--chassis-gap-mm X] [--chassis-eps-r X] [--return-net NAME]
+//              [--parts-out parts.csv] [--values values.csv]
 // Screens the board and prints the ranked findings; writes the full report
 // JSON (board geometry + findings + meta) for the web viewer.
 
@@ -39,6 +40,11 @@ int main(int argc, char** argv) {
     // simulator can read it. --chassis-gap-mm is the one quantity a layout
     // cannot carry, so without it the common-mode element is not emitted.
     std::string spice_out, manifest_out;
+    // Values the CAD export did not carry. --parts-out asks the question
+    // (refdes,partNumber); --values answers it (refdes,value). Altium's ODB++
+    // writes part numbers and no values at all, so without this a board full
+    // of real capacitors has no PDN and no input branch.
+    std::string parts_out, values_in;
     faraday::spice::ExportOptions spice_opt;
     // --switch-net NAME (repeatable): screen NAME as a switch node, recorded
     // with switchNodeSource "user" — the CLI face of candidate promotion
@@ -64,6 +70,8 @@ int main(int argc, char** argv) {
             spice_opt.chassis_eps_r = std::stod(argv[++i]);
         else if (a == "--return-net" && i + 1 < argc)
             spice_opt.return_net = argv[++i];
+        else if (a == "--parts-out" && i + 1 < argc) parts_out = argv[++i];
+        else if (a == "--values" && i + 1 < argc) values_in = argv[++i];
         else board_paths.push_back(a);
     }
     std::string dir_root;   // non-empty → paths become relative to it
@@ -111,6 +119,29 @@ int main(int argc, char** argv) {
         faraday::BoardIR board =
             faraday::import_board_set(files, std::move(user), &fmt);
         std::cout << "format: " << faraday::format_name(fmt) << "\n";
+
+        // Values the export did not carry, before anything reads them.
+        if (!values_in.empty()) {
+            faraday::values::ValueTable vt =
+                faraday::values::parse_value_table(slurp(values_in));
+            const size_t n = faraday::apply_values(board, vt);
+            std::cout << "values: filled " << n << " component(s) from "
+                      << values_in;
+            if (vt.ignored)
+                std::cout << " (" << vt.ignored
+                          << " skipped — the board already carried a value, "
+                             "which always wins)";
+            std::cout << "\n";
+        }
+        if (!parts_out.empty()) {
+            const auto parts = faraday::parts_without_values(board);
+            std::ofstream po(parts_out);
+            po << "refdes,part\n";
+            for (const auto& [ref, part] : parts) po << ref << "," << part << "\n";
+            std::cout << "parts: " << parts.size()
+                      << " component(s) with a part number and no value -> "
+                      << parts_out << "\n";
+        }
 
         faraday::ScreenerParams sp;
         sp.user_switch_nets = user_switch_nets;

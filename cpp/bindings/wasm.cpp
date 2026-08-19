@@ -97,6 +97,40 @@ static std::string analyze_set(std::string request_json) {
     }
 }
 
+// Values the CAD export did not carry. Altium's ODB++ writes the manufacturer
+// part number and no value at all, so a board full of real capacitors arrives
+// with none — and the PDN, the input branch and the Y-capacitor rule all
+// correctly refuse to invent them. This takes the refdes,value table back in;
+// the caller then re-screens. partsWithoutValues() asks the question the table
+// answers, so the browser can offer the same workflow the CLI has.
+static std::string apply_values(std::string csv) {
+    try {
+        if (!g_board)
+            throw std::runtime_error("no board loaded");
+        faraday::values::ValueTable vt = faraday::values::parse_value_table(csv);
+        const size_t applied = faraday::apply_values(*g_board, vt);
+        return nlohmann::json{{"applied", applied},
+                              {"ignored", vt.ignored},
+                              {"offered", vt.by_refdes.size()}}
+            .dump();
+    } catch (const std::exception& e) {
+        return nlohmann::json{{"error", e.what()}}.dump();
+    }
+}
+
+static std::string parts_without_values() {
+    try {
+        if (!g_board)
+            throw std::runtime_error("no board loaded");
+        nlohmann::json out = nlohmann::json::array();
+        for (const auto& [ref, part] : faraday::parts_without_values(*g_board))
+            out.push_back({{"refdes", ref}, {"part", part}});
+        return out.dump();
+    } catch (const std::exception& e) {
+        return nlohmann::json{{"error", e.what()}}.dump();
+    }
+}
+
 // Re-screen the LAST analyzed board with session options — the candidate-
 // promotion path. No re-import: g_board IS the board the report came from.
 // {"userSwitchNets":["NET", ...]} replaces the session's promoted set.
@@ -284,6 +318,8 @@ EMSCRIPTEN_BINDINGS(faraday) {
     emscripten::function("analyze", &analyze);
     emscripten::function("analyzeSet", &analyze_set);
     emscripten::function("reanalyze", &reanalyze);
+    emscripten::function("applyValues", &apply_values);
+    emscripten::function("partsWithoutValues", &parts_without_values);
     emscripten::function("diffReports", &diff_reports_js);
     emscripten::function("fixStitching", &fix_stitching);
     emscripten::function("solvePair", &solve_pair);

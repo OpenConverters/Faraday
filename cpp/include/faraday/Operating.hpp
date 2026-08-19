@@ -29,6 +29,8 @@
 
 #include "Pdn.hpp"
 
+#include <set>
+
 namespace faraday::op {
 
 struct BranchCap {
@@ -80,11 +82,21 @@ inline std::optional<InputBranch> input_branch(const BoardIR& board,
         // The loop capacitor's rail: its net that is not the RETURN. Not
         // "not poured" — a converter's input rail is very often a pour of its
         // own (the MPPT's /DCDC_HV+ is), and excluding poured nets rejected
-        // exactly the boards this exists for. A capacitor whose two nets are
-        // both the return is a domain stitch and is skipped below.
+        // exactly the boards this exists for.
+        //
+        // But a capacitor bridging TWO GROUND DOMAINS is not an input branch at
+        // all; it is the domain stitch the critical-mesh rule flags. Seen on a
+        // PoE board whose commutation loop closes through an AGND<->GND
+        // capacitor: taking "the net that is not GND" gave AGND, and the
+        // conducted estimate would have been built on the far side of a ground
+        // stitch. Every candidate return pdn::discover ranked is disqualified
+        // here, not just the one it chose.
+        std::set<int> returns;
+        for (const auto& c : pr.gnd_candidates) returns.insert(c.net);
+        returns.insert(pr.gnd_net);
         int rail_net = -1;
         for (int n : loop->cap_nets)
-            if (n > 0 && n != pr.gnd_net) rail_net = n;
+            if (n > 0 && !returns.count(n)) rail_net = n;
         if (rail_net < 0) continue;
 
         for (const auto& rail : pr.rails) {

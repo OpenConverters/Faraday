@@ -202,3 +202,54 @@ test('a simulated run reads back into the panel, beside the seed it checks',
     })
     await expect(page.getByTestId('sim-error')).toContainText('not a simulated-run export')
   })
+
+test('a board whose export carried part numbers can be given its values',
+  async ({ page }) => {
+    // Altium's ODB++ writes the manufacturer part number and no value at all,
+    // so the PDN, the input branch and the Y-capacitor rule go quiet. The app
+    // must say so where it is actionable and offer the round trip: ask the
+    // board for its part list, hand back a refdes,value table.
+    await page.addInitScript(() => localStorage.setItem('faraday.view', 'advanced'))
+    await page.goto('/')
+    // a KiCad board with no values and part numbers in the footprint field —
+    // the same shape an Altium ODB++ export arrives in
+    const board = `(kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "GND") (net 2 "+3V3")
+      (zone (net 1) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 40 0) (xy 40 30) (xy 0 30))))
+      (segment (start 5 5) (end 25 5) (width 0.3) (layer "F.Cu") (net 2))
+      (via (at 12.4 10) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
+      (via (at 12.4 12) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 2))
+      (footprint "885012206077" (layer "F.Cu") (at 12 10)
+        (property "Reference" "C1")
+        (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net 2 "+3V3"))
+        (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net 1 "GND")))
+      (footprint "885012206077" (layer "F.Cu") (at 16 10)
+        (property "Reference" "C2")
+        (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net 2 "+3V3"))
+        (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net 1 "GND")))
+    )`
+    await page.getByTestId('file-input').setInputFiles({
+      name: 'no-values.kicad_pcb', mimeType: 'text/plain',
+      buffer: Buffer.from(board),
+    })
+    const card = page.getByTestId('stackup-card')
+    await expect(card.or(page.getByTestId('values-card')).first())
+      .toBeVisible({ timeout: 30000 })
+    if (await card.count()) await card.getByText('Default 2-layer').click()
+
+    const values = page.getByTestId('values-card')
+    await expect(values).toBeVisible({ timeout: 30000 })
+    await expect(values).toContainText('carry a part number and no value')
+    await expect(values).toContainText('refuses to guess')
+
+    // handing the table back fills them, and the board is re-screened
+    await page.getByTestId('values-input').setInputFiles({
+      name: 'values.csv', mimeType: 'text/csv',
+      buffer: Buffer.from('refdes,value\nC1,100pF\nC2,100pF\n'),
+    })
+    await expect(page.getByTestId('values-note')).toContainText('filled 2')
+    // …and with values present the card retires itself
+    await expect(page.getByTestId('values-card')).toHaveCount(0)
+  })

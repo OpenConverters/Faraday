@@ -323,8 +323,8 @@ inline Result discover(const BoardIR& board, const Screener& screener,
         // "The board has none" and "the values are unreadable" are different
         // problems with different fixes, and the caller cannot tell them apart
         // from the outside. Count them.
-        int caps_total = 0, caps_unparsed = 0;
-        std::string examples;
+        int caps_total = 0, caps_unparsed = 0, caps_empty = 0;
+        std::string examples, part_example;
         for (const auto& [ref, pads] : by_comp) {
             if (ref.empty() || ref[0] != 'C' || pads.size() < 2) continue;
             ++caps_total;
@@ -332,6 +332,12 @@ inline Result discover(const BoardIR& board, const Screener& screener,
             const std::string value = ci != comps.end() ? ci->second->value : "";
             if (parse_capacitance(value)) continue;
             ++caps_unparsed;
+            if (value.empty()) {
+                ++caps_empty;
+                if (part_example.empty() && ci != comps.end() &&
+                    !ci->second->footprint.empty())
+                    part_example = ref + " -> '" + ci->second->footprint + "'";
+            }
             if (caps_unparsed <= 3)
                 examples += (examples.empty() ? "" : ", ") + ref + "='" + value + "'";
         }
@@ -343,6 +349,24 @@ inline Result discover(const BoardIR& board, const Screener& screener,
                       examples.empty() ? "" : " (e.g. ",
                       examples.empty() ? "" : (examples + ")").c_str());
         why += cb;
+        // The commonest cause by far, and it is not the user's fault: some CAD
+        // exports carry the manufacturer PART NUMBER and no value at all
+        // (Altium's ODB++ does). The values are not lost, they are in the
+        // catalogue that knows those part numbers — so say how to get them
+        // back rather than leaving "no capacitors" as the last word.
+        if (caps_empty > 0 && caps_empty * 2 >= caps_total && !part_example.empty()) {
+            char pb[420];
+            std::snprintf(pb, sizeof pb,
+                          " %d of them carry NO value at all — this export "
+                          "wrote part numbers instead (%s). Supply a "
+                          "refdes,value table and every model here works: in "
+                          "the app, 'load component values'; on the command "
+                          "line, --parts-out parts.csv to ask, kelvin-values "
+                          "to resolve the part numbers, --values values.csv to "
+                          "hand them back.",
+                          caps_empty, part_example.c_str());
+            why += pb;
+        }
         throw std::invalid_argument(why);
     }
     return r;

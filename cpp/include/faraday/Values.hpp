@@ -8,6 +8,9 @@
 // Screener.hpp. One definition, no per-caller re-implementation.
 
 #include <cctype>
+#include <map>
+#include <sstream>
+#include <stdexcept>
 #include <optional>
 #include <string>
 #include <vector>
@@ -149,6 +152,47 @@ inline double esl_from_footprint(const std::string& fp) {
     for (const auto& [k, v] : table)
         if (fp.find(k) != std::string::npos) return v;
     return 1.0e-9;   // unknown package: mid-of-road, stated in the output
+}
+
+// ---------------------------------------------------------------------------
+// Values a CAD export did not carry
+// ---------------------------------------------------------------------------
+// A board can arrive with no component values at all: Altium's ODB++ writes the
+// manufacturer PART NUMBER in the component record and nothing else, so every
+// capacitor reaches the screener nameless. The values are not lost — they are
+// in the catalogue that knows those part numbers — but they have to be handed
+// back in. This reads the "refdes,value" table that does it.
+//
+// Only EMPTY values are filled. A value the board itself carries always wins:
+// a side file must never quietly overrule what the layout says.
+struct ValueTable {
+    std::map<std::string, std::string> by_refdes;
+    size_t applied = 0, ignored = 0;      // ignored = the board already had one
+};
+
+inline ValueTable parse_value_table(const std::string& text) {
+    ValueTable t;
+    std::istringstream in(text);
+    std::string line;
+    while (std::getline(in, line)) {
+        const size_t comma = line.find(',');
+        if (comma == std::string::npos) continue;
+        auto trim = [](std::string s) {
+            const char* ws = " \t\r\n\"";
+            const size_t a = s.find_first_not_of(ws);
+            const size_t b = s.find_last_not_of(ws);
+            return a == std::string::npos ? std::string() : s.substr(a, b - a + 1);
+        };
+        const std::string ref = trim(line.substr(0, comma));
+        const std::string val = trim(line.substr(comma + 1));
+        if (ref.empty() || val.empty() || ref == "refdes") continue;
+        t.by_refdes[ref] = val;
+    }
+    if (t.by_refdes.empty())
+        throw std::invalid_argument(
+            "values: no 'refdes,value' rows found — the file is empty, or it is "
+            "not the two-column table this expects");
+    return t;
 }
 
 }  // namespace faraday::values
