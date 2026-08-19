@@ -97,10 +97,14 @@ fi
 
 echo "==> live engine vs a clean-HEAD build, and the app end to end"
 # The comparison needs a local build to compare against, so serve one.
-(cd web && npm run dev -- --port 5199 --strictPort >/tmp/faraday-deploy-dev.log 2>&1 &)
-DEV_PID=$!
-trap 'kill $DEV_PID 2>/dev/null || true; pkill -f "vite.*5199" 2>/dev/null || true' EXIT
-sleep 6
+# nohup, not a backgrounded subshell: the subshell's child was dying with the
+# shell that spawned it, so the comparison had nothing to compare against and
+# the gate failed for a reason that had nothing to do with the deployment.
+# And never pipe this script through grep or tail — the pipeline's exit status
+# is the LAST command's, so a failing gate would report success.
+(cd web && nohup npx vite --port 5199 --strictPort >/tmp/faraday-deploy-dev.log 2>&1 &)
+trap 'pkill -f "vite --port 5199" 2>/dev/null || true' EXIT
+sleep 8
 (cd web && FARADAY_E2E_BASE="$URL" npx playwright test deployed.spec.js --reporter=line)
 (cd web && FARADAY_E2E_BASE="$URL" npx playwright test --grep "board loads" --reporter=line)
 
