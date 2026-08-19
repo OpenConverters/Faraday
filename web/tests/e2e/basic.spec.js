@@ -253,3 +253,44 @@ test('a board whose export carried part numbers can be given its values',
     // …and with values present the card retires itself
     await expect(page.getByTestId('values-card')).toHaveCount(0)
   })
+
+test('with a simulated run loaded, Hertz gets THAT and not the seed',
+  async ({ page, context }) => {
+    // Two sources on one chart, and only one of them stands on a transient of
+    // this board. Shipping the ideal trapezoid onward while the simulation sits
+    // beside it would be the wrong half — and the provenance travels, because
+    // "seeded from a trapezoid" and "measured off your own board" are not
+    // interchangeable when a filter gets designed from it.
+    await page.addInitScript(() => localStorage.setItem('faraday.view', 'advanced'))
+    await loadBoard(page)
+    const ids = await page.evaluate(() =>
+      [...document.querySelectorAll('[data-testid^="finding-F-"]')]
+        .map(e => e.dataset.testid.replace('finding-', '')))
+    for (const id of ids) {
+      await page.getByTestId(`finding-${id}`).click()
+      if (await page.getByTestId(`emit-${id}`).count()) {
+        await page.getByTestId(`emit-${id}`).click()
+        break
+      }
+    }
+    await expect(page.getByTestId('emissions')).toBeVisible()
+    await page.getByTestId('sim-input').setInputFiles(
+      new URL('./fixtures-simulated-run.json', import.meta.url).pathname)
+    await expect(page.getByTestId('sim-note')).toBeVisible()
+
+    const [popup] = await Promise.all([
+      context.waitForEvent('page'),
+      page.getByTestId('design-in-hertz').click(),
+    ])
+    const url = popup.url()
+    expect(url).toContain('hertz.openconverters.com/#handoff=')
+    const payload = JSON.parse(Buffer.from(
+      url.split('#handoff=')[1], 'base64').toString('utf8'))
+    expect(payload.v).toBe(1)
+    expect(payload.source).toBe('faraday-simulated')
+    expect(payload.note).toContain('SIMULATED')
+    // and it is the simulation's own curves, on its own frequency base
+    expect(payload.spectra.dm.length).toBeGreaterThan(10)
+    expect(payload.spectra.cm.length).toBeGreaterThan(10)
+    await popup.close()
+  })

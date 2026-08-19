@@ -147,12 +147,29 @@ function runConducted() {
   }
 }
 
+// Which curves cross to Hertz. With a SIMULATED run loaded, sending the
+// trapezoid seed instead would be perverse: the same panel is showing the
+// user two sources and the better-founded one is right there. So the
+// simulation wins when it exists, and the payload says which it is — Hertz
+// prints the note beside the filter it designs, and "seeded from an ideal
+// trapezoid" and "measured off a transient of your own board" are not
+// interchangeable provenance.
 function designInHertz() {
-  if (!conducted.value) { runConducted(); if (!conducted.value) return }
-  const est = conducted.value
-  const payload = {
-    v: 1, source: 'faraday', fSwHz: fsw.value * 1e3,
-    bands: est.bands, note: est.note, spectra: est.spectra,
+  const sim = simulated.value
+  let payload
+  if (sim) {
+    payload = {
+      v: 1, source: 'faraday-simulated', fSwHz: sim.fSwHz ?? fsw.value * 1e3,
+      note: 'SIMULATED from this board: ' + (sim.note || ''),
+      spectra: sim.spectra,
+    }
+  } else {
+    if (!conducted.value) { runConducted(); if (!conducted.value) return }
+    const est = conducted.value
+    payload = {
+      v: 1, source: 'faraday', fSwHz: fsw.value * 1e3,
+      bands: est.bands, note: est.note, spectra: est.spectra,
+    }
   }
   const frag = btoa(unescape(encodeURIComponent(JSON.stringify(payload))))
   window.open('https://hertz.openconverters.com/#handoff=' + frag, '_blank',
@@ -813,7 +830,9 @@ const where = computed(() => {
         </div>
 
         <button class="hbtn" data-testid="design-in-hertz" @click="designInHertz">
-          {{ basic ? 'design the filter that fixes this →' : 'design the input filter in Hertz →' }}</button>
+          {{ simulated ? 'design the filter from the SIMULATED spectra in Hertz →'
+             : basic ? 'design the filter that fixes this →'
+             : 'design the input filter in Hertz →' }}</button>
         <span v-if="hertzError" class="warn" data-testid="hertz-bridge-error">{{ hertzError }}</span>
         <p class="note">{{ basic
           ? 'Opens Hertz with these two curves already loaded, and it picks the choke and the capacitors. The curves travel inside the link itself — they never reach a server.'
