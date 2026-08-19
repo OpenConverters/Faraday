@@ -10,6 +10,22 @@
 # This script therefore (a) refuses to deploy a dirty tree unless --allow-dirty,
 # (b) rebuilds the WASM engine, and (c) after the rsync, hashes the LIVE files
 # against the local build — per artifact, engine AND bundle separately.
+#
+# THE HASH CHECK PROVES TRANSPORT, NOT PROVENANCE — and for the WASM engine it
+# cannot prove provenance even in principle, because this emcc toolchain is not
+# byte-reproducible. Measured 2026-08-19: two builds of identical source in the
+# identical directory, back to back, gave two different binaries — same
+# 1,372,181 bytes, 18 bytes different inside the CODE section, no custom
+# sections involved, flipping between exactly two outputs. BINARYEN_CORES=1 and
+# EMCC_CORES=1 do not settle it, which points at pointer-ordered containers in
+# LLVM/Binaryen rather than at anything a flag reaches. So rebuilding elsewhere
+# and comparing hashes would raise false alarms, and a match would be luck.
+#
+# What replaces it is behavioural and stronger: tests/e2e/deployed.spec.js runs
+# the SAME board through the live engine and through a locally built clean-HEAD
+# engine and requires the reports to be identical finding for finding — which
+# subsumes the 18 bytes, since if any of them mattered the reports would differ
+# — and then drives the live app end to end with an empty console.
 set -euo pipefail
 cd "$(dirname "$0")/.."
 
@@ -79,7 +95,13 @@ if [ -n "$bundle" ]; then
 fi
 [ "$fail" = 0 ] || { echo "byte verification FAILED — do not trust this deploy" >&2; exit 1; }
 
-echo "==> end-to-end check against the live site"
-(cd web && FARADAY_E2E_BASE="$URL" npx playwright test --grep "board loads")
+echo "==> live engine vs a clean-HEAD build, and the app end to end"
+# The comparison needs a local build to compare against, so serve one.
+(cd web && npm run dev -- --port 5199 --strictPort >/tmp/faraday-deploy-dev.log 2>&1 &)
+DEV_PID=$!
+trap 'kill $DEV_PID 2>/dev/null || true; pkill -f "vite.*5199" 2>/dev/null || true' EXIT
+sleep 6
+(cd web && FARADAY_E2E_BASE="$URL" npx playwright test deployed.spec.js --reporter=line)
+(cd web && FARADAY_E2E_BASE="$URL" npx playwright test --grep "board loads" --reporter=line)
 
 echo "==> deployed and verified: $URL"
