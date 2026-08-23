@@ -243,7 +243,69 @@ Two things surfaced on the way in, both fixed:
   Bottom for an outer-layer or reference-plane rule to find. Position in the
   sorted stack decides the face.
 
-### What S1 still needs
+### It exports a deck
+
+Both gaps are closed, and closing them turned out to be two general features
+rather than two conversion patches.
+
+**Monolithic converters had no mesh at all.** The derivation looks for a
+switching DEVICE on the node whose conduction path can be inferred from its
+pads — and the switch designator it looks for is `Q` or `T`. A regulator with
+the switches inside it has neither, so shapes A and B never even begin. That
+is not a DC3042A quirk: it is every integrated point-of-load buck ever built,
+which is most of what gets designed, and every one of them produced no deck.
+
+Shape C derives the loop that actually carries the pulsed current: a
+capacitor, the IC's rail pin, the switches inside, the return pin, back. Which
+rail is the pulsed one is not guessed either — **the inductor is on the
+continuous side by construction**, so the hot rail is the one NOT reachable
+from the switch node through a magnetic. That is right for a buck (inductor to
+the output, hot loop at the input) and for a boost (inductor from the input,
+hot loop at the output) without either topology being assumed. Pinned by two
+fixtures where the geometry deliberately points the other way.
+
+**Painted pours were invisible.** Not one `G36` region in four Gerbers: PADS
+paints its fills as overlapping strokes. The coverage scan now measures those
+too — a track is a capsule, and its intersection with a sample row is an
+interval like any other, unioned so overlap cannot inflate it. A layer covered
+by fewer than 20 strokes stays routing, because a set with no outline takes
+its board area from the copper extent, and two parallel tracks otherwise cover
+their own bounding box completely.
+
+The effect on this board is not subtle:
+
+| | before | after |
+|---|---|---|
+| planes found | none | In1, Bottom |
+| findings | 200 shown, **2,926 over cap** | **27** |
+
+Three thousand findings were the board shouting that nothing had a reference
+plane. With `--values` from the demo manual's parts list and a stated
+`--chassis-gap-mm`, `--spice` writes the deck: `L_MESH` 6.92 nH over an
+8.19 mm² derived loop, eleven input-capacitor branches with per-part C/ESR/ESL,
+and `C_STRAY` from 12.4 mm² of dv/dt copper.
+
+### What the deck cannot yet claim — ABT #863
+
+The DM branch is not quantitative yet, and the reason is worth stating because
+it is silent. **645 of 650 vias import onto GND.** The pads are fine — they
+come from the IPC-356 records and spread sensibly over 18 nets — but vias take
+their nets from copper connectivity, and every drill is imported as a THROUGH
+via spanning the whole stack. This board is built with microvias (the padstacks
+are named `MICROVIA`, `STANDARDVIA`, `TENTED/VIA/BOTTOM`) on poured layers, so
+a microvia modelled as through-hole stitches its net to the full-board GND
+plane it merely passes near, the union-find merges them, and the merge
+propagates.
+
+Nothing in the report says so: the netting-coverage note reads a healthy 95%,
+because the copper *is* netted — just to the wrong net. Downstream, no VIN via
+exists, so every capacitor's rail-side mounting distance falls back to the
+search cap and all eleven branches come out at 14–15 nH.
+
+So: the deck exists, its mesh inductance is measured off real copper, and its
+differential-mode branch is waiting on #863.
+
+### What S1 needed, for the record
 
 The deck export gets as far as finding the switch node (`--switch-net SW`) and
 then stops honestly: no commutation loop. Two gaps remain, both properties of
@@ -261,8 +323,8 @@ this export rather than of Faraday:
   plane and every return-path and coupling rule degrades to geometry-only. That
   affects any painted-pour vendor pack, not just this one.
 
-Both are ABT #861. Component **values** are a third input, and they are
-available: the demo manual carries the parts list.
+Both were ABT #861, and both are now closed — see above. Component **values**
+came from the demo manual's parts list.
 
 ## Until then
 

@@ -312,7 +312,7 @@ class Screener {
         // (CriticalMesh.hpp) rather than pattern-matched: the members are
         // the XOR branches, named in the finding
         std::vector<std::string> members;
-        std::string shape;   // "two-device" | "magnetic-clamp" | "" (geometric)
+        std::string shape;   // "two-device" | "magnetic-clamp" | "monolithic" | "" (geometric)
     };
     std::optional<LoopResult> commutation_loop(int sw_net) const {
         return commutation_loop_impl(sw_net);
@@ -628,8 +628,86 @@ class Screener {
             if (open) total += hi - lo;
             return total;
         };
+        // PAINTED pours. A zone polygon is one way to fill copper; the other
+        // is to PAINT it — draw the fill as overlapping strokes and ship no
+        // region primitive at all. PADS does this by default (its ASCII
+        // header carries a HATCHGRID), and Analog Devices' DC3042A pack has
+        // not one G36 region across four layers while each inner layer
+        // carries ~22 metres of "track". Counting only zones read that board
+        // as 0% poured on every layer: no reference plane anywhere, every
+        // return-path and coupling rule degraded to geometry-only, and the
+        // capacitor mounting inductances in the exported deck computed
+        // against no via at all.
+        //
+        // The copper is right there. So the same scanline measures it: a
+        // track is a CAPSULE — a rotated rectangle plus a disc at each end —
+        // and its intersection with a sample row is an interval like any
+        // other. Unioning those beside the zone intervals means overlapping
+        // strokes cannot inflate the figure, which is the whole reason the
+        // zone measurement is a union rather than a sum of shoelaces.
+        auto capsule_row = [this](const Segment& sg, double y,
+                                  std::vector<std::pair<double, double>>& out) {
+            const double r = sg.width / 2.0;
+            if (r <= 0) return;
+            if (y < std::min(sg.y1, sg.y2) - r || y > std::max(sg.y1, sg.y2) + r)
+                return;
+            double lo = 1e30, hi = -1e30;
+            auto add = [&](double a, double b) {
+                lo = std::min(lo, a);
+                hi = std::max(hi, b);
+            };
+            // the two end caps
+            for (int e = 0; e < 2; ++e) {
+                const double px = e ? sg.x2 : sg.x1, py = e ? sg.y2 : sg.y1;
+                const double dy = y - py;
+                if (std::abs(dy) <= r) {
+                    const double half = std::sqrt(r * r - dy * dy);
+                    add(px - half, px + half);
+                }
+            }
+            // the rectangle between them, clipped to this row
+            const double dx = sg.x2 - sg.x1, dyy = sg.y2 - sg.y1;
+            const double len = std::hypot(dx, dyy);
+            if (len > 1e-12) {
+                const double nx = -dyy / len * r, ny = dx / len * r;
+                const Point q[4] = {{sg.x1 + nx, sg.y1 + ny},
+                                    {sg.x2 + nx, sg.y2 + ny},
+                                    {sg.x2 - nx, sg.y2 - ny},
+                                    {sg.x1 - nx, sg.y1 - ny}};
+                for (int k = 0, j = 3; k < 4; j = k++) {
+                    if ((q[k].y > y) != (q[j].y > y)) {
+                        const double x = (q[j].x - q[k].x) * (y - q[k].y) /
+                                             (q[j].y - q[k].y) +
+                                         q[k].x;
+                        add(x, x);
+                    }
+                }
+            }
+            // Clip to the board. A track's half-width and its round end caps
+            // reach past the extent its CENTRELINES define, and the board
+            // area this is a fraction of comes from those centrelines — so
+            // an unclipped fill measures 102% of the board it fills.
+            lo = std::max(lo, b_.bbox_x1);
+            hi = std::min(hi, b_.bbox_x2);
+            if (hi >= lo) out.emplace_back(lo, hi);
+        };
         const int rows = 192;
         const double row_h = (b_.bbox_y2 - b_.bbox_y1) / rows;
+        // segments bucketed by layer, so a row scan touches only its own
+        std::vector<std::vector<const Segment*>> segs_by_cu(n);
+        for (const auto& sg : b_.segments)
+            if (sg.cu >= 0 && sg.cu < (int)n) segs_by_cu[sg.cu].push_back(&sg);
+        // A fill painted as strokes is painted with THOUSANDS of them. A
+        // handful of tracks is routing, however much of the board they seem
+        // to span — and they can seem to span all of it, because a set that
+        // ships no outline has its "board area" taken from the copper extent,
+        // so two parallel traces cover their own bounding box completely.
+        // Counting those as a plane would invent a reference layer on the
+        // smallest boards, which is the direction that silently turns
+        // geometric-only findings into confident dB claims.
+        constexpr size_t PAINTED_MIN_STROKES = 20;
+        for (auto& v : segs_by_cu)
+            if (v.size() < PAINTED_MIN_STROKES) v.clear();
         std::vector<std::map<int, double>> area_by_net(n);  // per-layer UNION
         for (size_t i = 0; i < n; ++i) {
             double covered = 0.0;
@@ -637,6 +715,8 @@ class Screener {
             for (int r = 0; r < rows; ++r) {
                 double y = b_.bbox_y1 + row_h * (r + 0.5);
                 std::map<int, std::vector<std::pair<double, double>>> by_net;
+                for (const Segment* sg : segs_by_cu[i])
+                    capsule_row(*sg, y, by_net[sg->net]);
                 for (const ZSpan& s : zs[i]) {
                     if (y < s.y1 || y > s.y2) continue;
                     xs.clear();

@@ -968,6 +968,7 @@ inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
         // pads and components come straight from the netlist — with PINS
         std::map<std::string, std::pair<double, double>> comp_pos;
         std::map<std::string, int> comp_n;
+        int pins_from_copper = 0, pins_unresolved = 0;
         for (const auto& r : ipc->records) {
             if (r.ref.empty() || r.ref == "VIA") continue;
             const double x = scale * r.x + dx, y = scale * r.y + dy;
@@ -978,7 +979,30 @@ inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
                 else cu = r.access - 1;
             }
             const double w = std::max(scale * r.w, 0.2);
-            b.pads.push_back({r.ref, net_of(r.net), x, y, w,
+            int net = net_of(r.net);
+            // A netlist may name a PIN without naming its NET. It happens
+            // whenever the source only records connectivity for pins a routed
+            // run terminates on: a pin that reaches its net through a plane
+            // has no run, so the record arrives with the pin known and the net
+            // "N/C". Dropping it would lose the component, and inventing a net
+            // for it would be worse — but the copper under the pad has already
+            // been netted by connectivity, and THAT is not a guess. Take it
+            // from there, and count how many pins were resolved that way so
+            // the report can say how much of the netlist the copper supplied.
+            if (net == 0) {
+                double best = 0.6;   // mm; a pad's own flash, not a neighbour
+                for (size_t k = 0; k < flashes.size(); ++k) {
+                    if (cu >= 0 && flashes[k].cu != cu) continue;
+                    const double d = std::hypot(flashes[k].x - x, flashes[k].y - y);
+                    if (d < best) {
+                        const int fn = net_for(NS + k);
+                        if (fn != 0) { best = d; net = fn; }
+                    }
+                }
+                if (net != 0) ++pins_from_copper;
+                else ++pins_unresolved;
+            }
+            b.pads.push_back({r.ref, net, x, y, w,
                               std::max(scale * r.h, 0.2), r.through_hole, cu,
                               r.pin});
             comp_pos[r.ref].first += x;
@@ -989,6 +1013,15 @@ inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
             b.components.push_back({ref, "", "", sum.first / comp_n[ref],
                                     sum.second / comp_n[ref], 0.0});
         b.ipc_net_conflicts = conflicts;
+        if (pins_from_copper || pins_unresolved) {
+            b.plausibility_notes.push_back(
+                "IPC-356 named " + std::to_string(pins_from_copper + pins_unresolved) +
+                " pin(s) without a net; " + std::to_string(pins_from_copper) +
+                " took theirs from the copper under the pad and " +
+                std::to_string(pins_unresolved) +
+                " sit on no netted copper at all (unconnected, or reached only "
+                "through copper this set does not net)");
+        }
     }
 
     // outline from the Profile file, else from the copper extents

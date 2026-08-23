@@ -46,7 +46,7 @@ namespace faraday::mesh {
 struct DerivedMesh {
     std::vector<std::string> members;   // refs of the XOR branches
     std::vector<std::string> chain;     // caps of the Umlauf-1 closing chain
-    std::string shape;                  // "two-device" | "magnetic-clamp"
+    std::string shape;                  // "two-device" | "magnetic-clamp" | "monolithic"
     std::string sw_ref;                 // the switching device
 };
 
@@ -280,6 +280,91 @@ inline double member_hull_area(const Graph& g,
     return std::abs(a) / 2.0;
 }
 
+// ---- shape C: MONOLITHIC ------------------------------------------------
+// A converter whose switches live INSIDE the regulator has no Q or T on the
+// switch node at all. Shapes A and B never even begin: both need a device
+// whose conduction path can be inferred from its pads, and an 18-pin QFN's
+// cannot be. Every integrated buck/boost point-of-load is this — which is
+// most of what gets designed — and until this existed, every one of them
+// produced no mesh and therefore no deck.
+//
+// The commutation loop is still perfectly well defined. It is the loop that
+// carries the PULSED current: a capacitor, the IC's rail pin, the switches
+// inside, the IC's return pin, and back. That is the loop every datasheet's
+// layout section draws, and the one whose area sets the mesh inductance.
+//
+// WHICH rail is the pulsed one is not a guess either, and the inductor
+// answers it for both directions at once: the magnetic is on the CONTINUOUS
+// side by construction. A buck's inductor runs from the switch node to the
+// output, so the hot loop is the input one; a boost's runs from the input to
+// the switch node, so the hot loop is the output one. In both cases the hot
+// rail is the one NOT reachable from the switch node through an inductor —
+// so that is what this excludes, rather than assuming a topology.
+//
+// Among what remains the smallest enclosed area wins, for the same reason as
+// shape A: the commutation current takes the least-inductance path. Ties
+// break on the ref name so pad iteration order can never decide a mesh.
+inline std::optional<DerivedMesh> monolithic(const Graph& g, int sw_net) {
+    auto nit = g.net.find(sw_net);
+    if (nit == g.net.end()) return std::nullopt;
+
+    // nets the switch node reaches through a magnetic — the continuous side
+    std::set<int> through_magnetic;
+    for (const auto& r : nit->second) {
+        if (prefix(r) != "L") continue;
+        auto e = g.two_terminal(r, "|L|");
+        if (!e) continue;
+        through_magnetic.insert(e->first == sw_net ? e->second : e->first);
+    }
+
+    std::optional<DerivedMesh> best;
+    double best_area = 1e30;
+    std::string best_key;
+    for (const auto& ref : nit->second) {
+        auto cit = g.comp.find(ref);
+        if (cit == g.comp.end()) continue;
+        const auto& nets = cit->second;
+        // A regulator, not a two-terminal part. An integrated converter has
+        // at least input, output, return and feedback; the floor is what
+        // keeps a decoupling capacitor — or the inductor itself — from being
+        // read as the switching device.
+        int pads = 0;
+        for (const auto& [n, k] : nets) pads += k;
+        if (nets.size() < 4 || pads < 5) continue;
+        for (const auto& [rail, kr] : nets) {
+            if (rail == sw_net || through_magnetic.count(rail)) continue;
+            for (const auto& [ret, kt] : nets) {
+                // BOTH ends, not just the rail: the pair is unordered, so
+                // excluding only one end lets the same continuous-side loop
+                // back in with its roles swapped — (GND, VIN) is the (VIN,
+                // GND) loop written the other way round.
+                if (ret == sw_net || ret == rail ||
+                    through_magnetic.count(ret))
+                    continue;
+                for (const auto& chain : cap_chains(g, rail, ret)) {
+                    if (chain.empty()) continue;
+                    DerivedMesh m;
+                    m.shape = "monolithic";
+                    m.sw_ref = ref;
+                    m.members = {ref};
+                    m.members.insert(m.members.end(), chain.begin(), chain.end());
+                    m.chain = chain;
+                    const double area = member_hull_area(g, m.members);
+                    std::string key;
+                    for (const auto& r : m.members) key += r + "|";
+                    if (area < best_area - 1e-9 ||
+                        (std::abs(area - best_area) <= 1e-9 && key < best_key)) {
+                        best_area = area;
+                        best_key = key;
+                        best = std::move(m);
+                    }
+                }
+            }
+        }
+    }
+    return best;
+}
+
 }  // namespace detail
 
 // Derive the critical mesh around sw_net. sw_prefix is the board's switching
@@ -343,7 +428,8 @@ inline std::optional<DerivedMesh> derive(const BoardIR& b, int sw_net,
     const Dev* sw = nullptr;
     for (const auto& d : devs)
         if (d.is_switch) { sw = &d; break; }
-    if (!sw) return std::nullopt;
+    // No discrete switch on the node: the switches may be inside a regulator.
+    if (!sw) return detail::monolithic(g, sw_net);
     const Point at = g.pos.count(sw->ref) ? g.pos.at(sw->ref) : Point{0, 0};
 
     // ---- shape A: a second conducting device + a chain between far rails --

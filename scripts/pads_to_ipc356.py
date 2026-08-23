@@ -103,6 +103,115 @@ def read_routes(path):
     return runs
 
 
+DECAL_HEAD = re.compile(r"^(\S+)\s+[IM]\s+(-?\d+)\s+(-?\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$")
+TERMINAL = re.compile(r"^T\s*(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(-?\d+)\s+(\w+)\s*$")
+PARTTYPE_HEAD = re.compile(r"^(\S+)\s+(\S+)\s+\S+\s+\d+\s+\d+\s+\d+\s+\d+\s+[YN]\s*$")
+PART_HEAD = re.compile(r"^(\S+)\s+(\S+)\s+(-?\d+)\s+(-?\d+)\s+(-?[\d.]+)\s+(\w)\s+([YN])\s")
+POUR_HEAD = re.compile(r"^(\S+)\s+POUR\w*\s+(-?\d+)\s+(-?\d+)\s+(\d+)\s+(\d+)\s+(\S+)\s+(\S+)")
+POLY_HEAD = re.compile(r"^(POLY|CIRCLE|COPCLS|COPOPN)\s+(\d+)\s+(\d+)\s+(\d+)\s+(\d+)\s*$")
+
+
+def section(path, name):
+    """Yield the lines of one *NAME* section, minus its *REMARK* preamble."""
+    inside = False
+    for raw in open(path, errors="replace"):
+        line = raw.rstrip("\n")
+        if line.startswith(f"*{name}*"):
+            inside = True
+            continue
+        if not inside:
+            continue
+        if line.startswith("*") and not line.startswith("*REMARK*"):
+            return
+        if line.startswith("*REMARK*"):
+            continue
+        yield line
+
+
+def read_decals(path):
+    """Decal name -> [(pin, dx, dy)], from the T terminal records."""
+    decals, cur = {}, None
+    for line in section(path, "PARTDECAL"):
+        m = DECAL_HEAD.match(line)
+        if m:
+            cur = m.group(1)
+            decals[cur] = []
+            continue
+        m = TERMINAL.match(line)
+        if m and cur:
+            decals[cur].append((m.group(5), int(m.group(1)), int(m.group(2))))
+    return decals
+
+
+def read_parttypes(path):
+    """Part type -> decal. PADS writes alternates as A:B; the first is the one
+    placed unless a part says otherwise, and this export never does."""
+    out = {}
+    for line in section(path, "PARTTYPE"):
+        m = PARTTYPE_HEAD.match(line)
+        if m:
+            out[m.group(1)] = m.group(2).split(":")[0]
+    return out
+
+
+def read_parts(path):
+    """Placed parts: refdes, type, x, y, rotation, mirrored."""
+    out = []
+    for line in section(path, "PART"):
+        m = PART_HEAD.match(line)
+        if m:
+            out.append((m.group(1), m.group(2), int(m.group(3)), int(m.group(4)),
+                        float(m.group(5)), m.group(7) == "Y"))
+    return out
+
+
+def read_pours(path):
+    """Copper pours as (signal, layer, [(x, y)]) — the planes PADS paints.
+
+    These matter twice over: a pin can reach its net through a pour and never
+    appear on a routed run, and the pour is where the plane identity lives."""
+    pours, cur, poly, want = [], None, None, 0
+    for line in section(path, "POUR"):
+        m = POUR_HEAD.match(line)
+        if m:
+            if cur and poly:
+                pours.append((cur[0], cur[1], poly))
+            cur, poly, want = (m.group(7), None, int(m.group(2)), int(m.group(3))), None, 0
+            cur = (m.group(7), None, int(m.group(2)), int(m.group(3)))
+            continue
+        m = POLY_HEAD.match(line)
+        if m and cur:
+            if poly:
+                pours.append((cur[0], cur[1], poly))
+            want = int(m.group(2))
+            cur = (cur[0], int(m.group(5)), cur[2], cur[3])
+            poly = []
+            continue
+        if poly is not None and want:
+            c = re.match(r"^\s*(-?\d+)\s+(-?\d+)", line)
+            if c:
+                poly.append((cur[2] + int(c.group(1)), cur[3] + int(c.group(2))))
+                if len(poly) >= want:
+                    pours.append((cur[0], cur[1], poly))
+                    poly, want = None, 0
+    if cur and poly:
+        pours.append((cur[0], cur[1], poly))
+    return pours
+
+
+def point_in_poly(x, y, poly):
+    inside = False
+    n = len(poly)
+    for i in range(n):
+        x1, y1 = poly[i]
+        x2, y2 = poly[(i + 1) % n]
+        if (y1 > y) != (y2 > y):
+            xi = x1 + (y - y1) * (x2 - x1) / (y2 - y1)
+            if x < xi:
+                inside = not inside
+    return inside
+
+
 def read_apertures(gerber_dir):
     """Circular aperture diameters, in whatever unit the file states."""
     import os
@@ -299,6 +408,12 @@ def main() -> int:
              "P  VER IPC-D-356A"]
     seen = set()
     seeds = 0
+    # Pins a routed run NAMES come first: those carry an authoritative net.
+    named = {}
+    for net, pin_a, pin_b, points in runs:
+        if points:
+            named[pin_a] = net
+            named[pin_b] = net
     for net, pin_a, pin_b, points in runs:
         if not points:
             continue
@@ -327,6 +442,49 @@ def main() -> int:
             seen.add(key)
             lines.append(ipc_record("317", net, "VIA", "", x, y, 0))
             seeds += 1
+    # ...then EVERY placed pin, so the component inventory is complete.
+    #
+    # A pin that reaches its net through a plane is never the end of a routed
+    # run, so *ROUTE* never names it. The BASIC PADS export has no *NET*
+    # section to fall back on, and the pours DO carry signal names — but a pad
+    # sits over whichever pours happen to lie beneath it on other layers, so
+    # reading a net off them would be a guess dressed as data. Emit N/C
+    # instead: the importer takes the net from the copper under the pad, which
+    # it has already netted by connectivity, and reports how many pins were
+    # resolved that way and how many sit on no netted copper at all.
+    decals = read_decals(args.asc)
+    types = read_parttypes(args.asc)
+    parts = read_parts(args.asc)
+    placed = unnamed = 0
+    for ref, ptype, px, py, ori, mirrored in parts:
+        pins = decals.get(types.get(ptype, ptype), [])
+        if not pins:
+            continue
+        a = math.radians(ori)
+        ca, sa = math.cos(a), math.sin(a)
+        for pin, ox_, oy_ in pins:
+            dx_ = -ox_ if mirrored else ox_
+            x = px + dx_ * ca - oy_ * sa
+            y = py + dx_ * sa + oy_ * ca
+            ux, uy = to_um(x, y)
+            key = (ref, pin, ux, uy)
+            if key in seen:
+                continue
+            seen.add(key)
+            net = named.get(f"{ref}.{pin}")
+            if net is None:
+                unnamed += 1
+            # a mirrored part sits on the bottom copper; PADS layer 1 is top,
+            # and access 0 means "both sides", which is what a bottom pad is
+            # from this converter's point of view (the importer clamps it)
+            lines.append(ipc_record("327", net, ref, pin, ux, uy,
+                                    0 if mirrored else 1))
+            placed += 1
+            seeds += 1
+    print(f"parts: {len(parts)} placed, {placed} pin records emitted "
+          f"({unnamed} with no net from *ROUTE* — the importer resolves those "
+          f"from the copper under the pad)", file=sys.stderr)
+
     lines.append("999")
     text = "\n".join(lines) + "\n"
     if args.out:

@@ -98,6 +98,177 @@ TEST_CASE("screener: fixture findings — coupled run, 3W, plane crossings", "[s
     CHECK(report["meta"]["droppedByFindingCap"].get<int>() == 0);
 }
 
+// A converter whose switches are INSIDE the regulator (ABT #861). Every
+// integrated point-of-load buck is this, and until shape C existed none of
+// them produced a mesh: shapes A and B both need a device whose conduction
+// path can be inferred from its pads, and an 18-pin QFN's cannot be.
+TEST_CASE("mesh: a monolithic regulator's input loop is the commutation mesh",
+          "[screener][mesh][monolithic]") {
+    // U1: an 8-pad regulator with the pin set every one of them has — VIN,
+    // GND, SW, feedback and enable. The 4-net floor in shape C is what keeps
+    // a two-terminal part from being read as the switching device, so the
+    // fixture has to be a real regulator rather than a three-net stand-in.
+    // SW goes out to the inductor,
+    // the inductor on to VOUT, capacitors on BOTH rails — and the output cap
+    // C2 placed so its loop is the SMALLER one (it hugs the IC at 12.2 mm
+    // while C1 sits out at 6 mm), because smallest-area is how the shape
+    // picks among candidates and it must not be able to pick this.
+    //
+    // In a BUCK it cannot anyway, and for a reason worth stating: the
+    // regulator has no VOUT pin at all — the inductor owns that node — so
+    // the output loop is never a candidate. The rule that actually decides
+    // this in general is exercised by the boost case below, where the IC
+    // does touch both rails.
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "VIN") (net 2 "GND") (net 3 "SW") (net 4 "VOUT")
+      (net 5 "FB") (net 6 "EN")
+      (footprint "u" (at 10 10) (fp_text reference "U1" (at 0 0))
+        (pad "1" smd rect (at -1 -1) (size 0.6 0.6) (layers "F.Cu") (net 1 "VIN"))
+        (pad "2" smd rect (at -1 0) (size 0.6 0.6) (layers "F.Cu") (net 1 "VIN"))
+        (pad "3" smd rect (at -1 1) (size 0.6 0.6) (layers "F.Cu") (net 2 "GND"))
+        (pad "4" smd rect (at 1 -1) (size 0.6 0.6) (layers "F.Cu") (net 3 "SW"))
+        (pad "5" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net 3 "SW"))
+        (pad "6" smd rect (at 1 1) (size 0.6 0.6) (layers "F.Cu") (net 2 "GND"))
+        (pad "7" smd rect (at 0 -1.5) (size 0.4 0.4) (layers "F.Cu") (net 5 "FB"))
+        (pad "8" smd rect (at 0 1.5) (size 0.4 0.4) (layers "F.Cu") (net 6 "EN")))
+      (footprint "l" (at 14 10) (fp_text reference "L1" (at 0 0))
+        (pad "1" smd rect (at -1 0) (size 0.8 0.8) (layers "F.Cu") (net 3 "SW"))
+        (pad "2" smd rect (at 1 0) (size 0.8 0.8) (layers "F.Cu") (net 4 "VOUT")))
+      (footprint "cin" (at 6 10) (fp_text reference "C1" (at 0 0))
+        (pad "1" smd rect (at -0.5 0) (size 0.6 0.6) (layers "F.Cu") (net 1 "VIN"))
+        (pad "2" smd rect (at 0.5 0) (size 0.6 0.6) (layers "F.Cu") (net 2 "GND")))
+      (footprint "cout" (at 12.2 10) (fp_text reference "C2" (at 0 0))
+        (pad "1" smd rect (at -0.5 0) (size 0.6 0.6) (layers "F.Cu") (net 4 "VOUT"))
+        (pad "2" smd rect (at 0.5 0) (size 0.6 0.6) (layers "F.Cu") (net 2 "GND")))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
+    int sw = -1;
+    for (const auto& n : b.nets)
+        if (n.name == "SW") sw = n.id;
+    REQUIRE(sw >= 0);
+
+    auto dm = mesh::derive(b, sw, "Q");
+    REQUIRE(dm.has_value());
+    CHECK(dm->shape == "monolithic");
+    CHECK(dm->sw_ref == "U1");
+    // The INPUT capacitor, not the output one. The inductor says which side
+    // is continuous — it runs from the switch node to VOUT, so VOUT is the
+    // smooth side and the pulsed loop is the input's. C2 is nearer the IC
+    // and would win any distance-based choice; it must not win this one.
+    CHECK(dm->chain == std::vector<std::string>{"C1"});
+    std::set<std::string> got(dm->members.begin(), dm->members.end());
+    CHECK(got == std::set<std::string>{"U1", "C1"});
+
+    // A two-terminal part on the node is not a regulator, however many
+    // capacitors hang off it: without the pin count floor the inductor
+    // itself would be read as the switching device.
+    CHECK(dm->sw_ref != "L1");
+}
+
+// The boost, where the exclusion earns its keep. Here the regulator DOES
+// touch both rails, so both loops are candidates and only the inductor says
+// which one carries the pulsed current: it is on the continuous side by
+// construction, and in a boost that is the INPUT. Get this backwards and the
+// mesh inductance is measured around the wrong loop entirely.
+TEST_CASE("mesh: a monolithic boost takes its output loop, not the smaller input one",
+          "[screener][mesh][monolithic]") {
+    // L1 runs VIN -> SW (continuous side). C1 is the input cap and is placed
+    // CLOSE, so on area alone it would win; C2 is the output cap, further
+    // out, and is the right answer.
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "VIN") (net 2 "GND") (net 3 "SW") (net 4 "VOUT")
+      (net 5 "FB")
+      (footprint "u" (at 10 10) (fp_text reference "U1" (at 0 0))
+        (pad "1" smd rect (at -1 -1) (size 0.6 0.6) (layers "F.Cu") (net 1 "VIN"))
+        (pad "2" smd rect (at -1 1) (size 0.6 0.6) (layers "F.Cu") (net 2 "GND"))
+        (pad "3" smd rect (at 1 -1) (size 0.6 0.6) (layers "F.Cu") (net 3 "SW"))
+        (pad "4" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net 3 "SW"))
+        (pad "5" smd rect (at 1 1) (size 0.6 0.6) (layers "F.Cu") (net 4 "VOUT"))
+        (pad "6" smd rect (at 0 1.5) (size 0.4 0.4) (layers "F.Cu") (net 5 "FB")))
+      (footprint "l" (at 7 10) (fp_text reference "L1" (at 0 0))
+        (pad "1" smd rect (at -1 0) (size 0.8 0.8) (layers "F.Cu") (net 1 "VIN"))
+        (pad "2" smd rect (at 1 0) (size 0.8 0.8) (layers "F.Cu") (net 3 "SW")))
+      (footprint "cin" (at 11.5 10) (fp_text reference "C1" (at 0 0))
+        (pad "1" smd rect (at -0.3 0) (size 0.4 0.4) (layers "F.Cu") (net 1 "VIN"))
+        (pad "2" smd rect (at 0.3 0) (size 0.4 0.4) (layers "F.Cu") (net 2 "GND")))
+      (footprint "cout" (at 16 10) (fp_text reference "C2" (at 0 0))
+        (pad "1" smd rect (at -0.5 0) (size 0.6 0.6) (layers "F.Cu") (net 4 "VOUT"))
+        (pad "2" smd rect (at 0.5 0) (size 0.6 0.6) (layers "F.Cu") (net 2 "GND")))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
+    int sw = -1;
+    for (const auto& n : b.nets)
+        if (n.name == "SW") sw = n.id;
+    REQUIRE(sw >= 0);
+    auto dm = mesh::derive(b, sw, "Q");
+    REQUIRE(dm.has_value());
+    CHECK(dm->shape == "monolithic");
+    CHECK(dm->sw_ref == "U1");
+    // C1 encloses the smaller loop and is the WRONG answer: its current is
+    // smoothed by the inductor. Only "the magnetic marks the continuous
+    // side" gets this right, and it gets the buck right by the same rule.
+    CHECK(dm->chain == std::vector<std::string>{"C2"});
+}
+
+// PAINTED pours (ABT #861). A fill can be a zone polygon or it can be drawn
+// as overlapping strokes with no region primitive at all — PADS does the
+// latter by default, and Analog Devices' DC3042A pack has not one G36 region
+// across four layers. Counting only zones read that board as 0% poured
+// everywhere: no reference plane, every return-path and coupling rule
+// degraded to geometry-only, and 3126 findings where there are 27.
+TEST_CASE("screener: copper painted as strokes is a plane; a few tracks are not",
+          "[screener][painted]") {
+    auto make = [](int n, double pitch, double width) {
+        std::string segs;
+        for (int i = 0; i < n; ++i) {
+            const double y = 0.5 + i * pitch;
+            segs += "      (segment (start 0 " + std::to_string(y) + ") (end 20 " +
+                    std::to_string(y) + ") (width " + std::to_string(width) +
+                    ") (layer \"F.Cu\") (net 1))\n";
+        }
+        return "(kicad_pcb\n"
+               "      (layers (0 \"F.Cu\" signal) (31 \"B.Cu\" signal))\n"
+               "      (net 0 \"\") (net 1 \"GND\") (net 2 \"SIG\")\n" +
+               segs +
+               "      (segment (start 0 3) (end 20 3) (width 0.3) (layer \"B.Cu\") (net 2))\n"
+               "      (segment (start 0 9) (end 20 9) (width 0.3) (layer \"B.Cu\") (net 2))\n"
+               "    )";
+    };
+
+    // 30 strokes on a 0.5 mm pitch, 0.6 mm wide: they overlap, so this is a
+    // solid fill however it was drawn. The union measurement is what stops
+    // the overlap from inflating the figure past 100%.
+    {
+        BoardIR b = import_kicad(make(30, 0.5, 0.6), builtin_stackup("default-2layer"));
+        nlohmann::json rep = analyze_board(b);
+        const auto& planes = rep["meta"]["planes"];
+        REQUIRE(planes.size() == 2);
+        CHECK(planes[0]["isPlane"].get<bool>());
+        CHECK(planes[0]["zoneCoverage"].get<double>() > 0.9);
+        CHECK(planes[0]["zoneCoverage"].get<double>() <= 1.0);   // union, not sum
+        CHECK_FALSE(planes[1]["isPlane"].get<bool>());
+        // and with a reference plane the board stops shouting about not
+        // having one
+        CHECK(find_rule(rep["findings"], "no-reference-plane") == nullptr);
+    }
+
+    // The same copper drawn with TEN wide strokes is still solid, and still
+    // must not be a plane. A fill painted as strokes is painted with
+    // thousands of them; a handful of tracks is routing — and on a set that
+    // ships no outline the "board area" is the copper extent, so a couple of
+    // parallel tracks cover their own bounding box completely. Inventing a
+    // reference layer there is the direction that turns geometric-only
+    // findings into confident dB claims.
+    {
+        BoardIR b = import_kicad(make(10, 1.5, 1.6), builtin_stackup("default-2layer"));
+        nlohmann::json rep = analyze_board(b);
+        CHECK_FALSE(rep["meta"]["planes"][0]["isPlane"].get<bool>());
+        CHECK(find_rule(rep["findings"], "no-reference-plane") != nullptr);
+    }
+}
+
 TEST_CASE("screener: board without any plane — loud, geometric-only", "[screener]") {
     std::string txt = R"((kicad_pcb
       (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
