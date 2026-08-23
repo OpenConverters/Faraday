@@ -467,7 +467,11 @@ inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
                     throw BoardError("gerber: layer map for " + f.name +
                                      " must be a 1-based copper index or PROFILE, got '" +
                                      it->second + "'");
-                L.side = "Inr";
+                // side is a POSITION, and position is only known once every
+                // stated layer is in and sorted — calling them all "Inr" here
+                // named a 4-layer board In0..In3 with no Top or Bottom, which
+                // then had no outer layer for anything to reference.
+                L.side.clear();
                 coppers.push_back(std::move(L));
                 continue;
             }
@@ -534,6 +538,14 @@ inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
               [](const GerberLayer& a, const GerberLayer& b) {
                   return a.copper_index < b.copper_index;
               });
+    // Layers that arrived without a side (a stated --layer-map states WHICH
+    // layer, not which face) take it from where they landed in the sorted
+    // stack: first is Top, last is Bottom, the rest are inner.
+    for (size_t i = 0; i < coppers.size(); ++i)
+        if (coppers[i].side.empty())
+            coppers[i].side = i == 0                     ? "Top"
+                              : i + 1 == coppers.size()  ? "Bot"
+                                                         : "Inr";
     bool any_nets = false;
     for (const auto& c : coppers) any_nets = any_nets || c.has_net_attrs;
     // No X2 net attributes? An IPC-D-356 member (Altium's standard

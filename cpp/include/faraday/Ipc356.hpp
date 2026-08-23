@@ -122,10 +122,23 @@ inline Netlist parse(const std::string& text) {
             continue;
         }
         auto xv = detail::coord(tail.substr(X + 1, Y - X - 1));
-        // Y runs to the next X (pad size) or field end
         size_t X2 = tail.find('X', Y);
-        auto yv = detail::coord(tail.substr(
-            Y + 1, (X2 == std::string::npos ? tail.find(' ', Y) : X2) - Y - 1));
+        // The Y value runs to the end of its own NUMBER. It used to be
+        // delimited by the next 'X' (assuming a pad-size field follows) or
+        // failing that by the next space — which assumes the sign is written
+        // as '+'/'-' rather than as the leading blank the format also allows.
+        // A record with NEITHER a size field NOR an explicit sign satisfied
+        // both fallbacks wrongly: the "next space" was the sign blank itself,
+        // one character in, so the field came out empty and the whole record
+        // was skipped. Every record of such a netlist was dropped, and the set
+        // then read as "no IPC-D-356 netlist" rather than as a parse failure.
+        // Scanning the number itself has no such assumption.
+        size_t ye = Y + 1;
+        if (ye < tail.size() &&
+            (tail[ye] == '+' || tail[ye] == '-' || tail[ye] == ' '))
+            ++ye;
+        while (ye < tail.size() && std::isdigit((unsigned char)tail[ye])) ++ye;
+        auto yv = detail::coord(tail.substr(Y + 1, ye - (Y + 1)));
         if (!xv || !yv) { ++out.skipped; continue; }
         r.x = *xv * unit;
         // y stays y-up: the Gerber importer (this reader's consumer) keeps

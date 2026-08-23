@@ -238,6 +238,40 @@ TEST_CASE("fixed-format excellon is refused, not misplaced", "[gerber]") {
                       Catch::Matchers::ContainsSubstring("decimal"));
 }
 
+// IPC-D-356 records need not carry the pad-size fields, and the sign of a
+// coordinate may be written as a leading BLANK. A record with neither was
+// silently skipped: the Y field was delimited by "the next space", which for
+// a blank-signed value is the sign itself one character in, so the field came
+// out empty. Every record of such a netlist dropped, and the set then reported
+// as "no IPC-D-356 netlist" rather than as a parse failure — a wrong diagnosis
+// pointing at the wrong file. Found generating a netlist from a PADS layout
+// (ABT #858).
+TEST_CASE("ipc356: a record with no pad-size field and a blank sign still parses",
+          "[gerber][ipc356]") {
+    const std::string sized =
+        "P  JOB\nP  UNITS CUST 1\n"
+        "327NET1              R1    -1         A01X 010000Y 020000X0100Y0100R000 S0\n"
+        "999\n";
+    const std::string sizeless =
+        "P  JOB\nP  UNITS CUST 1\n"
+        "327NET1              R1    -1         A01X 010000Y 020000 S0\n"
+        "999\n";
+    auto a = ipc356::parse(sized);
+    auto b = ipc356::parse(sizeless);
+    REQUIRE(a.records.size() == 1);
+    REQUIRE(b.records.size() == 1);
+    CHECK(b.skipped == 0);
+    // same position either way — the size field must not be load-bearing for it
+    CHECK_THAT(b.records[0].x, Catch::Matchers::WithinAbs(a.records[0].x, 1e-9));
+    CHECK_THAT(b.records[0].y, Catch::Matchers::WithinAbs(a.records[0].y, 1e-9));
+    CHECK_THAT(b.records[0].y, Catch::Matchers::WithinAbs(20.0, 1e-9));
+    // explicit signs work too, with and without the size field
+    auto c = ipc356::parse("P  JOB\nP  UNITS CUST 1\n"
+                           "327NET1              R1    -1         A01X+010000Y+020000 S0\n999\n");
+    REQUIRE(c.records.size() == 1);
+    CHECK_THAT(c.records[0].y, Catch::Matchers::WithinAbs(20.0, 1e-9));
+}
+
 // Pre-X2 vendor packs (ABT #810). PADS, Allegro and older Altium CAM outputs
 // carry neither X2 FileFunction attributes nor Protel extensions: the layer
 // identity lives in a file NAME that means nothing outside the tool that wrote
@@ -286,8 +320,13 @@ TEST_CASE("gerber: a pre-X2 set imports from a STATED layer map, never a guessed
     CHECK(b.pads[0].component == "R7");
     CHECK(b.net_name(b.pads[0].net) == "SWX");
     REQUIRE(!b.zones.empty());
-    // the stated index decides the stack position: two coppers, in order
-    CHECK(b.stackup.layers.size() >= 2);
+    // The stated index decides the stack POSITION, and position decides the
+    // face. A map says which layer a file is, not which side it faces, so
+    // naming them all "inner" would leave a board with no Top and no Bottom —
+    // and then nothing for a reference-plane or outer-layer rule to find.
+    REQUIRE(b.copper_names.size() == 2);
+    CHECK(b.copper_names[0] == "Top");
+    CHECK(b.copper_names[1] == "Bottom");
 
     // A value that is neither a 1-based index nor PROFILE is an error, not a
     // silent skip — a typo in a mapping must not quietly drop a copper layer.

@@ -202,11 +202,67 @@ about why rather than picking one:
   scale factor. A wrong one puts every parasitic out by a constant nobody would
   see, because the board would still look like a board.
 
-So it is refused rather than assumed, which is the same rule as everywhere else
-here. The way to settle it is geometric, not arithmetic: fit the `*ROUTE*`
-polylines onto the Gerber copper and let the alignment report the scale, with
-the residual as the check that it is right. That is the next piece of work
-(ABT #858), and it is the only thing between this board and S1–S4.
+So it was refused rather than assumed, and then **settled by measurement**
+(`scripts/pads_to_ipc356.py`, ABT #858). Two independent bodies of evidence,
+neither of them a default:
+
+1. **The trace widths.** Every PADS segment width must equal some Gerber
+   aperture diameter, because they are the same traces. Each pairing proposes
+   a scale; the true one is proposed by many widths at once and the rest are
+   coincidences. Here **6 of 6 widths agree** on 2.624672e-08 inch per count —
+   which is 1/38,100,000 inch, i.e. the `38100 = 1 mil` the header constants
+   suggested.
+2. **The drills, which had no part in choosing it.** Every PADS via must land
+   on a hole in the Excellon file. It does: **median residual 0.0000 mil over
+   611 vias, maximum 0.0001** — and the fit also recovered a **CAM origin
+   offset of exactly +1.000 inch in both axes**, which no amount of arithmetic
+   on header constants would ever have revealed. That offset is why "check the
+   scale" and "check the alignment" are the same operation.
+
+A residual above the bound is a refusal, not a warning, because a wrong scale
+is invisible: the board still looks like a board.
+
+### It imports
+
+    faraday_cli <gerber-dir> --stackup default-4layer \
+        --layer-map L1=1,L2=2,L3=3,L4=4
+
+with the generated `.ipc` alongside, gives real nets — `GND`, `SW`, `VFB` —
+and **IPC-356 netting reaching 95% of routed copper** (90,729 of 95,669 mm).
+The DC3042A is inside Faraday.
+
+Two things surfaced on the way in, both fixed:
+
+* The IPC-D-356 reader **silently dropped every record** of a netlist whose
+  records carry no pad-size field and write the coordinate sign as a leading
+  blank — the Y field was delimited by "the next space", which for a
+  blank-signed value is the sign itself. The set then reported as "no IPC-D-356
+  netlist", a wrong diagnosis pointing at the wrong file.
+* `--layer-map` states which layer a file *is*, not which face it *faces*.
+  Calling them all inner named a 4-layer board `In0..In3`, with no Top and no
+  Bottom for an outer-layer or reference-plane rule to find. Position in the
+  sorted stack decides the face.
+
+### What S1 still needs
+
+The deck export gets as far as finding the switch node (`--switch-net SW`) and
+then stops honestly: no commutation loop. Two gaps remain, both properties of
+this export rather than of Faraday:
+
+* **Pin inventory.** The `*ROUTE*` section names the pins at the ENDS of routed
+  runs, and that is all this converter can seed. A pin that reaches its net
+  through a pour has no run and therefore no seed. The BASIC PADS export has no
+  `*NET*` section, so the rest has to be reconstructed geometrically from
+  `*PART*` + `*PARTDECAL*` pin positions against the copper.
+* **Pour identity.** PADS *paints* its planes — `HATCHGRID` in the header, and
+  not one `G36` region in any of the four Gerbers. The copper is all there
+  (each inner layer reads ~22,000 mm of "routed" track), but with no region
+  primitive the plane test sees 0% coverage, so the board has no reference
+  plane and every return-path and coupling rule degrades to geometry-only. That
+  affects any painted-pour vendor pack, not just this one.
+
+Both are ABT #861. Component **values** are a third input, and they are
+available: the demo manual carries the parts list.
 
 ## Until then
 
