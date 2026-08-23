@@ -193,9 +193,22 @@ inline GerberLayer parse_gerber(const std::string& text) {
             else if (!dark && region.pts.size() >= 3) ++L.clear_skipped;
             continue;
         }
-        if (w == "G01") { interp = 1; continue; }
-        if (w == "G02") { interp = 2; continue; }
-        if (w == "G03") { interp = 3; continue; }
+        // An interpolation code may be a block of its own OR the prefix of a
+        // coordinate block — "G03X103200Y103000I200J0D01*" is one command,
+        // and PADS writes every arc that way. Matching only the standalone
+        // form dropped the whole block: the arc never drew, and the current
+        // point was left at the move that preceded it, so the NEXT draw ran
+        // from there to wherever it ended. On Analog Devices' DC3042A that
+        // produced 1,497 segments longer than 20 mm on a 74 mm board — the
+        // longest 96.78 mm, corner to corner — and those swept across every
+        // net they crossed, merging the whole board into one island. The
+        // symptom was a net map where 90,658 mm of 90,658 mm was GND.
+        if (w.rfind("G0", 0) == 0 && w.size() > 2 &&
+            (w[2] == '1' || w[2] == '2' || w[2] == '3')) {
+            interp = w[2] - '0';
+            w = w.substr(3);
+            if (w.empty()) continue;
+        }
         if (w == "G75" || w == "G74" || w == "G71" || w == "G70" ||
             w == "G90" || w == "G91")
             continue;
@@ -891,6 +904,22 @@ inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
                     for (size_t s : it->second) join(node, s);
                 }
         };
+        // The same walk, but reporting what it WOULD join instead of joining
+        // it — a via has to know which islands it is about to bridge before
+        // it bridges any of them (ABT #863).
+        auto join_at_collect = [&](std::vector<size_t>& out, int cu, double x,
+                                   double y, double hw, double hh) {
+            for (long long bx = (long long)std::llround((x - hw) * 20.0);
+                 bx <= (long long)std::llround((x + hw) * 20.0); ++bx)
+                for (long long by = (long long)std::llround((y - hh) * 20.0);
+                     by <= (long long)std::llround((y + hh) * 20.0); ++by) {
+                    auto it = bucket.find(std::to_string(cu) + ":" +
+                                          std::to_string(bx) + ":" +
+                                          std::to_string(by));
+                    if (it == bucket.end()) continue;
+                    for (size_t s : it->second) out.push_back(s);
+                }
+        };
         for (size_t kf = 0; kf < NF; ++kf) {
             const auto& f = flashes[kf];
             join_at(NS + kf, f.cu, f.x, f.y,
@@ -904,49 +933,127 @@ inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
                     zp.contains(flashes[kf].x, flashes[kf].y))
                     join(NS + NF + z, NS + kf);
         }
-        // vias stitch all layers at their point
+        // ---- seeds, BEFORE the vias are allowed to stitch anything -------
+        // Order matters here, and it is the whole of ABT #863. Every drill is
+        // imported as a THROUGH via spanning the stack, because a plain
+        // Gerber set states no blind/buried spans. On most boards that is a
+        // harmless simplification. On a board built with MICROVIAS over
+        // poured layers it is not: a microvia modelled as through-hole
+        // stitches its own net to whatever plane it merely passes near, the
+        // union-find merges the two, and the merge propagates. Measured on
+        // Analog Devices' DC3042A: 645 of 650 vias came out on GND, including
+        // every VIN stitching via on a board with three VIN pours.
+        //
+        // The worst part was the silence. Coverage still read 95%, because
+        // the copper WAS netted — just to the wrong net — and nothing said
+        // two nets had been merged.
+        //
+        // So: resolve what the netlist says about each island first, and then
+        // let a via join only islands that agree with it. A via carries ONE
+        // net; if it would bridge two islands the netlist names differently,
+        // the via's span is wrong, and the honest answer is to refuse the
+        // join and count it rather than average two nets into one.
+        auto collect_votes = [&]() {
+            std::map<size_t, std::map<std::string, int>> v;
+            auto seed = [&](double x, double y, int cu, const std::string& net) {
+                if (net.empty()) return;
+                // nearest flash on that layer within 0.3 mm, else bucket segs
+                for (size_t kf = 0; kf < NF; ++kf)
+                    if ((cu < 0 || flashes[kf].cu == cu) &&
+                        std::hypot(flashes[kf].x - x, flashes[kf].y - y) < 0.3) {
+                        v[find(NS + kf)][net]++;
+                        return;
+                    }
+                auto it = bucket.find(key(cu < 0 ? 0 : cu, x, y));
+                if (it != bucket.end() && !it->second.empty())
+                    v[find(it->second[0])][net]++;
+            };
+            for (const auto& r : ipc->records) {
+                const double x = scale * r.x + dx, y = scale * r.y + dy;
+                int cu = -1;
+                if (!r.through_hole) {
+                    if (r.access <= 1) cu = 0;
+                    else if (r.access >= (int)coppers.size()) cu = last_cu;
+                    else cu = r.access - 1;
+                }
+                seed(x, y, cu, r.net);
+            }
+            return v;
+        };
+        auto majority = [](const std::map<std::string, int>& vv) {
+            std::string best;
+            int bn = 0;
+            for (const auto& [nm, k2] : vv)
+                if (k2 > bn) { bn = k2; best = nm; }
+            return best;
+        };
+        std::map<size_t, std::string> pre_net;      // island -> net, pre-via
+        for (const auto& [root, vv] : collect_votes()) pre_net[root] = majority(vv);
+        auto named = [&](size_t node) {
+            auto it = pre_net.find(find(node));
+            return it == pre_net.end() ? std::string() : it->second;
+        };
+        // The name has to travel with the island. Keying it on the root and
+        // then merging without carrying it over means the lookup misses as
+        // soon as anything joins, and the guard below silently stops
+        // guarding — which is exactly what the first version of this did:
+        // one via refused on a board where 645 of 650 had collapsed.
+        auto join_named = [&](size_t a, size_t bn) {
+            const size_t ra = find(a), rb = find(bn);
+            if (ra == rb) return;
+            std::string name = pre_net.count(ra) ? pre_net[ra] : std::string();
+            if (name.empty() && pre_net.count(rb)) name = pre_net[rb];
+            join(a, bn);
+            if (!name.empty()) pre_net[find(a)] = name;
+        };
+
+        // vias stitch all layers at their point — where the netlist agrees
+        int via_span_refused = 0;
         for (size_t v = 0; v < NV; ++v) {
             const auto& via = b.vias[v];
+            // Candidate targets first, then the decision, then the joins:
+            // deciding while joining would let the first join change the
+            // answer for the second.
+            std::vector<size_t> targets;
             for (int cu = 0; cu < (int)coppers.size(); ++cu)
-                join_at(NS + NF + NZ + v, cu, via.x, via.y, 0.05, 0.05);
+                join_at_collect(targets, cu, via.x, via.y, 0.05, 0.05);
             for (size_t kf = 0; kf < NF; ++kf)
                 if (std::hypot(flashes[kf].x - via.x, flashes[kf].y - via.y) <
                     0.05)
-                    join(NS + NF + NZ + v, NS + kf);
+                    targets.push_back(NS + kf);
             for (size_t z = 0; z < NZ; ++z) {
                 ZonePoly zp{0, b.zones[z].cu, b.zones[z].pts, {}};
-                if (zp.contains(via.x, via.y)) join(NS + NF + NZ + v, NS + NF + z);
+                if (zp.contains(via.x, via.y)) targets.push_back(NS + NF + z);
             }
-        }
-
-        // seeds vote per island
-        std::map<size_t, std::map<std::string, int>> votes;
-        auto seed = [&](double x, double y, int cu, const std::string& net) {
-            if (net.empty()) return;
-            // nearest flash on that layer within 0.3 mm, else bucket segs
-            for (size_t kf = 0; kf < NF; ++kf)
-                if ((cu < 0 || flashes[kf].cu == cu) &&
-                    std::hypot(flashes[kf].x - x, flashes[kf].y - y) < 0.3) {
-                    votes[find(NS + kf)][net]++;
-                    return;
+            // the via's OWN net: what the copper coincident with it is called
+            std::string own;
+            for (size_t t : targets) {
+                const std::string n = named(t);
+                if (!n.empty()) { own = n; break; }
+            }
+            bool refused = false;
+            for (size_t t : targets) {
+                const std::string n = named(t);
+                if (!own.empty() && !n.empty() && n != own) {
+                    refused = true;
+                    continue;   // this island belongs to another net
                 }
-            auto it = bucket.find(key(cu < 0 ? 0 : cu, x, y));
-            if (it != bucket.end() && !it->second.empty())
-                votes[find(it->second[0])][net]++;
-        };
-        for (const auto& r : ipc->records) {
-            const double x = scale * r.x + dx, y = scale * r.y + dy;
-            int cu = -1;
-            if (!r.through_hole) {
-                if (r.access <= 1) cu = 0;
-                else if (r.access >= (int)coppers.size()) cu = last_cu;
-                else cu = r.access - 1;
+                join_named(NS + NF + NZ + v, t);
             }
-            seed(x, y, cu, r.net);
+            if (refused) ++via_span_refused;
         }
+        if (via_span_refused)
+            b.plausibility_notes.push_back(
+                std::to_string(via_span_refused) +
+                " via(s) would have bridged two DIFFERENT netlist nets and were "
+                "not allowed to: a plain Gerber set states no blind/buried "
+                "spans, so every drill is imported as a through via, and on a "
+                "microvia board that reaches layers the real via never touched. "
+                "The copper each one does reach is netted normally (ABT #863)");
+
         std::map<size_t, int> island_net;
         int conflicts = 0;
-        for (auto& [root, vv] : votes) {
+        for (auto& [root, vv] : collect_votes()) {
             std::string best;
             int bn = 0, total = 0;
             for (auto& [nm, k2] : vv) {

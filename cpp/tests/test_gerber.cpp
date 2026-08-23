@@ -272,6 +272,61 @@ TEST_CASE("ipc356: a record with no pad-size field and a blank sign still parses
     CHECK_THAT(c.records[0].y, Catch::Matchers::WithinAbs(20.0, 1e-9));
 }
 
+// An interpolation code may be a BLOCK of its own or the PREFIX of a
+// coordinate block, and the second form is not exotic: PADS writes every
+// single arc that way. Matching only the standalone form dropped the whole
+// block — the arc never drew, and worse, the current point stayed at the move
+// that preceded it, so the next draw ran from there to wherever it ended.
+//
+// On Analog Devices' DC3042A that made 1,497 segments longer than 20 mm on a
+// 74 mm board, the longest 96.78 mm corner to corner. Long strokes sweeping
+// across a board short every net they cross, and the union-find dutifully
+// merged them: 90,658 mm of 90,658 mm of netted copper came out as GND, on a
+// board with three separate VIN pours. ABT #863.
+TEST_CASE("gerber: an interpolation code prefixed to a coordinate block still draws",
+          "[gerber][arc]") {
+    // 4.4 format, mm. Move to (1,1), then a G03 semicircle about (4,1)
+    // written as ONE block, then a short draw to (9,1).
+    //
+    // Drop the arc block and two things go wrong at once: the curve is
+    // missing, and the current point is still (1,1) when the next draw
+    // happens — so a 2 mm trace is imported as an 8 mm one, straight across
+    // whatever lies between.
+    const char* gtl =
+        "%FSAX44Y44*%\n%MOMM*%\n%ADD10C,0.2*%\nD10*\n"
+        "X00010000Y00010000D02*\n"
+        "G75*\n"
+        "G03X00070000Y00010000I00030000J0D01*\n"
+        "X00090000Y00010000D01*\n"
+        "D03*\n"
+        "M02*\n";
+    const char* gbl = "%FSAX44Y44*%\n%MOMM*%\n%ADD10C,0.2*%\nD10*\n"
+                      "X00010000Y00050000D02*\nX00090000D01*\nM02*\n";
+    const char* ipc =
+        "P  JOB\nP  UNITS CUST 1\nP  VER IPC-D-356A\n"
+        "327N1               R1    -1         A01X 009000Y 001000X0100Y0100R000 S0\n"
+        "999\n";
+    std::vector<gerber::NamedFile> files{
+        {"b.GTL", gtl}, {"b.GBL", gbl}, {"b.ipc", ipc}};
+    BoardIR b = import_board_set(files, builtin_stackup("default-2layer"));
+
+    int arc_chords = 0;
+    double longest_top = 0;
+    for (const auto& s2 : b.segments) {
+        if (s2.cu != 0) continue;
+        longest_top = std::max(longest_top,
+                               std::hypot(s2.x2 - s2.x1, s2.y2 - s2.y1));
+        const double mx = (s2.x1 + s2.x2) / 2, my = (s2.y1 + s2.y2) / 2;
+        if (std::hypot(mx - 4.0, my - 1.0) < 3.1) ++arc_chords;
+    }
+    // the arc DREW — a dropped block leaves no chords at all
+    CHECK(arc_chords >= 6);
+    CHECK(b.approximated_arcs >= 1);
+    // and the trace after it is the 2 mm it should be. 8 mm here is the
+    // stale-current-point artefact: the draw starting where the arc did.
+    CHECK(longest_top < 4.0);
+}
+
 // Pre-X2 vendor packs (ABT #810). PADS, Allegro and older Altium CAM outputs
 // carry neither X2 FileFunction attributes nor Protel extensions: the layer
 // identity lives in a file NAME that means nothing outside the tool that wrote
