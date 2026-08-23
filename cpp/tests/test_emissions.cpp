@@ -424,6 +424,49 @@ TEST_CASE("C_stray comes off the copper, and refuses to be invented",
     CHECK_THROWS_AS(chassis_stray_c_f(400.0, 5.0, 0.5), std::invalid_argument);
 }
 
+TEST_CASE("CISPR 25 Class 5 limits reproduce an accredited lab's own receiver trace",
+          "[emc][conducted][cispr25][measured]") {
+    // Everything else about this table is checked against the STANDARD, which
+    // means against my reading of it. This case checks it against a receiver.
+    //
+    // TI's TIDA-01492 design guide (TIDUDA4, Figure 47) is a Rohde & Schwarz
+    // screenshot from a CISPR 25 conducted-emissions run, with the Class 5
+    // limit lines drawn on it by the instrument. Reading the red pixels back
+    // out (scripts/digitize_ce_screenshot.py) recovers the levels the lab's
+    // own limit table produced — an independent implementation, on real
+    // equipment, by people who do this for a living.
+    //
+    // The digitisation is trustworthy because the same screenshot carries the
+    // instrument's marker readout as a control: 13.42 dBuV at 30 MHz, against
+    // 13.27 recovered. 0.15 dB on the axis mapping, so a decibel of
+    // disagreement HERE would be the limit table, not the picture.
+    //
+    // Recovered, per band, peak and average (see docs/validation-tida01492.md):
+    //     MW 0.53-1.8 MHz   54.04 / 34.09 dBuV
+    //     LW 0.15-0.30 MHz     -- / 50.05          (peak sits on the graticule)
+    //     SW 5.9-6.2 MHz    53.1  / 33.1           (short band, fewer pixels)
+    //     CB 26-28 MHz      44.1  / 24.1
+    const ConductedLimit pk = cispr25_conducted(5, "peak");
+    const ConductedLimit av = cispr25_conducted(5, "average");
+    const double tol = 0.25;   // digitisation, not physics: ~1 px is 0.125 dB
+    CHECK_THAT(*conducted_limit_at(pk, 1e6), WithinAbs(54.04, tol));
+    CHECK_THAT(*conducted_limit_at(av, 1e6), WithinAbs(34.09, tol));
+    CHECK_THAT(*conducted_limit_at(av, 200e3), WithinAbs(50.05, tol));
+    CHECK_THAT(*conducted_limit_at(pk, 6e6), WithinAbs(53.1, tol));
+    CHECK_THAT(*conducted_limit_at(av, 6e6), WithinAbs(33.1, tol));
+    CHECK_THAT(*conducted_limit_at(pk, 27e6), WithinAbs(44.1, tol));
+    CHECK_THAT(*conducted_limit_at(av, 27e6), WithinAbs(24.1, tol));
+
+    // The band EDGES have to agree too, or the levels agreeing is luck. The
+    // lab's MW line runs 0.5263-1.7830 MHz against a nominal 0.53-1.8: the
+    // instrument drew it to the pixel it could, so the test is that our band
+    // contains the drawn extent's interior and excludes what lies outside.
+    CHECK(conducted_limit_at(pk, 0.54e6).has_value());
+    CHECK(conducted_limit_at(pk, 1.75e6).has_value());
+    CHECK_FALSE(conducted_limit_at(pk, 0.45e6).has_value());
+    CHECK_FALSE(conducted_limit_at(pk, 2.0e6).has_value());
+}
+
 TEST_CASE("CISPR 25 conducted: per-band class steps, and gaps that stay gaps",
           "[emc][conducted][cispr25]") {
     const ConductedLimit c5 = cispr25_conducted(5, "quasi-peak");
