@@ -792,7 +792,34 @@ inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
             while (uf[i] != i) { uf[i] = uf[uf[i]]; i = uf[i]; }
             return i;
         };
-        auto join = [&](size_t a, size_t bnode) { uf[find(a)] = find(bnode); };
+        // Two kinds of join, and the difference is the whole of ABT #863.
+        //
+        // An EXACT join is two pieces of copper sharing a coordinate: the
+        // file says they are one conductor and there is nothing to doubt.
+        // A FUZZY join is an inference — this endpoint lands inside that
+        // stroke, this flash sits over that pour, this drill is a through
+        // via. Inferences are usually right and occasionally catastrophic:
+        // one over-long stroke or one over-deep via merges two nets, the
+        // merge propagates, and the result is a board whose every net is
+        // the biggest pour. It happened here on 90,658 mm of 90,658 mm.
+        //
+        // So the exact joins run first, the NETLIST names the islands they
+        // make, and only then are the inferences allowed — and an inference
+        // may not contradict a name. Geometry proposes; the netlist decides.
+        // Inferences also differ in STRENGTH, and the difference decides the
+        // order they get to speak in. Copper overlapping copper ON ONE LAYER
+        // is strong: the plot says the two shapes share metal. A drill
+        // stitching LAYERS is weak, because a plain Gerber set states no
+        // blind or buried spans at all — every drill is imported as though it
+        // went all the way through, which on a microvia board reaches layers
+        // the real via never touched. So same-layer evidence is heard first
+        // and gets to name things; vias are heard last and must agree.
+        bool collecting = false, via_pass = false;
+        std::vector<std::tuple<size_t, size_t, bool>> fuzzy;
+        auto join = [&](size_t a, size_t bnode) {
+            if (collecting) { fuzzy.emplace_back(a, bnode, via_pass); return; }
+            uf[find(a)] = find(bnode);
+        };
 
         // endpoint buckets per layer, 0.05 mm grid
         auto key = [](int cu, double x, double y) {
@@ -808,6 +835,10 @@ inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
         }
         for (auto& [k, v] : bucket)
             for (size_t i = 1; i < v.size(); ++i) join(v[0], v[i]);
+        // Everything past this point is an INFERENCE, so it is collected
+        // rather than applied — see the note on `join` above. The netlist
+        // gets to name the exact-join islands first.
+        collecting = true;
         // T-junctions, pour landings and mid-run vias. Endpoint buckets only
         // join tracks that MEET at a shared coordinate — but a track
         // routinely ENDS on the interior of another (a T-junction), lands
@@ -904,22 +935,6 @@ inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
                     for (size_t s : it->second) join(node, s);
                 }
         };
-        // The same walk, but reporting what it WOULD join instead of joining
-        // it — a via has to know which islands it is about to bridge before
-        // it bridges any of them (ABT #863).
-        auto join_at_collect = [&](std::vector<size_t>& out, int cu, double x,
-                                   double y, double hw, double hh) {
-            for (long long bx = (long long)std::llround((x - hw) * 20.0);
-                 bx <= (long long)std::llround((x + hw) * 20.0); ++bx)
-                for (long long by = (long long)std::llround((y - hh) * 20.0);
-                     by <= (long long)std::llround((y + hh) * 20.0); ++by) {
-                    auto it = bucket.find(std::to_string(cu) + ":" +
-                                          std::to_string(bx) + ":" +
-                                          std::to_string(by));
-                    if (it == bucket.end()) continue;
-                    for (size_t s : it->second) out.push_back(s);
-                }
-        };
         for (size_t kf = 0; kf < NF; ++kf) {
             const auto& f = flashes[kf];
             join_at(NS + kf, f.cu, f.x, f.y,
@@ -987,69 +1002,137 @@ inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
                 if (k2 > bn) { bn = k2; best = nm; }
             return best;
         };
-        std::map<size_t, std::string> pre_net;      // island -> net, pre-via
+        std::map<size_t, std::string> pre_net;   // island -> net, exact joins only
         for (const auto& [root, vv] : collect_votes()) pre_net[root] = majority(vv);
         auto named = [&](size_t node) {
             auto it = pre_net.find(find(node));
             return it == pre_net.end() ? std::string() : it->second;
         };
-        // The name has to travel with the island. Keying it on the root and
-        // then merging without carrying it over means the lookup misses as
-        // soon as anything joins, and the guard below silently stops
-        // guarding — which is exactly what the first version of this did:
-        // one via refused on a board where 645 of 650 had collapsed.
-        auto join_named = [&](size_t a, size_t bn) {
-            const size_t ra = find(a), rb = find(bn);
-            if (ra == rb) return;
-            std::string name = pre_net.count(ra) ? pre_net[ra] : std::string();
-            if (name.empty() && pre_net.count(rb)) name = pre_net[rb];
-            join(a, bn);
-            if (!name.empty()) pre_net[find(a)] = name;
-        };
 
-        // vias stitch all layers at their point — where the netlist agrees
-        int via_span_refused = 0;
+        // vias stitch all layers at their point — the weak inference
+        via_pass = true;
         for (size_t v = 0; v < NV; ++v) {
             const auto& via = b.vias[v];
-            // Candidate targets first, then the decision, then the joins:
-            // deciding while joining would let the first join change the
-            // answer for the second.
-            std::vector<size_t> targets;
             for (int cu = 0; cu < (int)coppers.size(); ++cu)
-                join_at_collect(targets, cu, via.x, via.y, 0.05, 0.05);
+                join_at(NS + NF + NZ + v, cu, via.x, via.y, 0.05, 0.05);
             for (size_t kf = 0; kf < NF; ++kf)
                 if (std::hypot(flashes[kf].x - via.x, flashes[kf].y - via.y) <
                     0.05)
-                    targets.push_back(NS + kf);
+                    join(NS + NF + NZ + v, NS + kf);
             for (size_t z = 0; z < NZ; ++z) {
                 ZonePoly zp{0, b.zones[z].cu, b.zones[z].pts, {}};
-                if (zp.contains(via.x, via.y)) targets.push_back(NS + NF + z);
+                if (zp.contains(via.x, via.y)) join(NS + NF + NZ + v, NS + NF + z);
             }
-            // the via's OWN net: what the copper coincident with it is called
-            std::string own;
-            for (size_t t : targets) {
-                const std::string n = named(t);
-                if (!n.empty()) { own = n; break; }
-            }
-            bool refused = false;
-            for (size_t t : targets) {
-                const std::string n = named(t);
-                if (!own.empty() && !n.empty() && n != own) {
-                    refused = true;
-                    continue;   // this island belongs to another net
-                }
-                join_named(NS + NF + NZ + v, t);
-            }
-            if (refused) ++via_span_refused;
         }
-        if (via_span_refused)
+
+        // ---- resolve the inferences against the names --------------------
+        // Three passes, in this order for a reason.
+        //
+        // 1. Edges between two UNNAMED islands are safe: that is how a pour's
+        //    own strokes coalesce, and it has to happen first so a pour is ONE
+        //    island before anything tries to name it.
+        // 2. Edges between two NAMED islands are taken when the names agree
+        //    and refused when they do not. A single inference cannot be worth
+        //    more than two netlist facts.
+        // 3. An unnamed island adjacent to exactly ONE name takes it.
+        //    Adjacent to more than one it takes none — because letting
+        //    whichever edge happened to run first decide is exactly the
+        //    iteration-order dependence this codebase refuses everywhere
+        //    else, and a pour that appears to touch two nets is evidence of
+        //    bad geometry, not of a net to pick.
+        collecting = false;
+        int refused_edges = 0;
+        std::set<size_t> refused_islands;
+        // Pass 1, SAME-LAYER only: two unnamed islands that overlap are one
+        // conductor. This is how a pour's own strokes coalesce, and it has to
+        // finish before anything is named — a pour must be ONE island before
+        // a pad can name it. Vias are excluded here precisely because they
+        // are the inference whose span is not stated.
+        std::vector<char> state(fuzzy.size(), 0);   // 0 pending, 1 done, 2 refused
+        for (size_t e = 0; e < fuzzy.size(); ++e) {
+            const auto& [a, bn, is_via] = fuzzy[e];
+            if (!is_via && named(a).empty() && named(bn).empty()) {
+                join(a, bn);
+                state[e] = 1;
+            }
+        }
+        // Passes 2 and 3: the same rule, same-layer edges first and via edges
+        // after, so names come from the strong evidence and the weak evidence
+        // has to agree with them.
+        //
+        // Each pass runs to a FIXED POINT. Naming an island changes the
+        // answer for every other edge touching it, so a single sweep would
+        // resolve an edge against an adjacency map that its own neighbours
+        // had already invalidated — and which edges won would depend on the
+        // order they were collected in. Iterating until nothing changes
+        // removes the order from the answer.
+        auto settle = [&](bool vias_now) {
+            for (;;) {
+                std::map<size_t, std::set<std::string>> adj;
+                for (size_t e = 0; e < fuzzy.size(); ++e) {
+                    if (state[e] || std::get<2>(fuzzy[e]) != vias_now) continue;
+                    const auto& [a, bn, iv] = fuzzy[e];
+                    const std::string na = named(a), nb = named(bn);
+                    if (na.empty() && !nb.empty()) adj[find(a)].insert(nb);
+                    else if (nb.empty() && !na.empty()) adj[find(bn)].insert(na);
+                }
+                bool changed = false;
+                for (size_t e = 0; e < fuzzy.size(); ++e) {
+                    if (state[e] || std::get<2>(fuzzy[e]) != vias_now) continue;
+                    const auto& [a, bn, iv] = fuzzy[e];
+                    const std::string na = named(a), nb = named(bn);
+                    if (!na.empty() && !nb.empty()) {
+                        if (na == nb) join(a, bn);
+                        else { refused_islands.insert(find(a)); state[e] = 2; continue; }
+                        state[e] = 1;
+                        changed = true;
+                        continue;
+                    }
+                    if (na.empty() && nb.empty()) continue;   // undecidable yet
+                    const size_t un = na.empty() ? find(a) : find(bn);
+                    auto it = adj.find(un);
+                    if (it == adj.end() || it->second.size() != 1) continue;
+                    join(a, bn);
+                    pre_net[find(a)] = *it->second.begin();
+                    state[e] = 1;
+                    changed = true;
+                }
+                if (!changed) break;
+            }
+        };
+        settle(false);
+        // A via between two islands NEITHER of which the netlist names is the
+        // one case where the weak inference is all there is — take it, then
+        // settle again in case the merge lets a name through.
+        settle(true);
+        for (size_t e = 0; e < fuzzy.size(); ++e) {
+            if (state[e] || !std::get<2>(fuzzy[e])) continue;
+            const auto& [a, bn, iv] = fuzzy[e];
+            if (named(a).empty() && named(bn).empty()) { join(a, bn); state[e] = 1; }
+        }
+        settle(false);
+        settle(true);
+        // An edge whose ends are already in one island asked for nothing and
+        // got it — it is satisfied, not refused. Only a genuine contradiction
+        // counts: two named islands that disagree, or a region adjacent to
+        // more than one name.
+        for (size_t e = 0; e < fuzzy.size(); ++e) {
+            if (state[e] == 1) continue;
+            const auto& [a, bn, iv] = fuzzy[e];
+            if (find(a) == find(bn)) continue;
+            ++refused_edges;
+            refused_islands.insert(find(a));
+        }
+        if (refused_edges)
             b.plausibility_notes.push_back(
-                std::to_string(via_span_refused) +
-                " via(s) would have bridged two DIFFERENT netlist nets and were "
-                "not allowed to: a plain Gerber set states no blind/buried "
-                "spans, so every drill is imported as a through via, and on a "
-                "microvia board that reaches layers the real via never touched. "
-                "The copper each one does reach is netted normally (ABT #863)");
+                std::to_string(refused_edges) +
+                " inferred connection(s) across " +
+                std::to_string(refused_islands.size()) +
+                " region(s) contradicted the netlist and were NOT taken — "
+                "copper that appears to touch two different nets, or a drill "
+                "imported as a through via reaching a layer the real via never "
+                "did. The netlist decides; the geometry is reported, not "
+                "applied (ABT #863)");
 
         std::map<size_t, int> island_net;
         int conflicts = 0;
