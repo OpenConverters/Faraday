@@ -404,8 +404,36 @@ inline bool looks_gerber(const std::string& t) {
            head.find("G04") != std::string::npos;
 }
 
+// A layer mapping the CALLER states, for Gerber sets that carry neither X2
+// FileFunction attributes nor Protel extensions. Pre-X2 CAM outputs are
+// common in vendor design packs (PADS, Allegro, older Altium) and their layer
+// identity lives only in a file NAME that means nothing outside the tool that
+// wrote it — "L1.pho" is a copper layer here and a legend layer somewhere
+// else.
+//
+// So Faraday does not GUESS it. It refuses, names what it needs, and accepts
+// the mapping as an assertion the user makes and the provenance records. That
+// keeps the no-silent-defaults rule intact — the difference between a stated
+// fact and an inferred one is exactly the difference between an import you can
+// defend and one you cannot — while making a vendor pack that cannot be
+// re-exported usable at all.
+//
+// Keys are file stems, upper-cased, without extension. Values: a 1-based
+// copper index, or "PROFILE" for the board outline.
+using LayerMap = std::map<std::string, std::string>;
+
+inline std::string file_stem_upper(const std::string& name) {
+    size_t slash = name.find_last_of("/\\");
+    std::string base = slash == std::string::npos ? name : name.substr(slash + 1);
+    const size_t dot = base.rfind('.');
+    if (dot != std::string::npos) base = base.substr(0, dot);
+    for (char& c : base) c = (char)std::toupper((unsigned char)c);
+    return base;
+}
+
 inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
-                                 std::optional<Stackup> user_stackup) {
+                                 std::optional<Stackup> user_stackup,
+                                 const LayerMap& stated_layers = {}) {
     std::vector<GerberLayer> coppers;
     std::optional<GerberLayer> profile;
     std::vector<Drill> drills;
@@ -423,6 +451,27 @@ inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
         GerberLayer L = parse_gerber(f.text);
         clear_skipped += L.clear_skipped;
         arcs += L.arcs_approximated;
+        if (L.function.empty() && !stated_layers.empty()) {
+            // The caller stated what this file is. Honour it ahead of the
+            // extension heuristic — a stated fact outranks an inferred one.
+            const auto it = stated_layers.find(file_stem_upper(f.name));
+            if (it != stated_layers.end()) {
+                if (it->second == "PROFILE") {
+                    L.function = "Profile";
+                    if (!profile) profile = std::move(L);
+                    continue;
+                }
+                L.function = "Copper";
+                L.copper_index = std::atoi(it->second.c_str());
+                if (L.copper_index <= 0)
+                    throw BoardError("gerber: layer map for " + f.name +
+                                     " must be a 1-based copper index or PROFILE, got '" +
+                                     it->second + "'");
+                L.side = "Inr";
+                coppers.push_back(std::move(L));
+                continue;
+            }
+        }
         if (L.function.empty()) {
             // No X2 FileFunction (Altium classic RS-274X): the layer's
             // identity lives in the Protel EXTENSION. GTL/G<n>/GBL are the
@@ -478,7 +527,9 @@ inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
             "gerber: no copper layer with an X2 FileFunction attribute found — "
             "a set needs %TF.FileFunction,Copper,L<n>,... on each copper file. "
             "Enable X2 attributes in the CAM export (KiCad: Plot → 'Use "
-            "extended X2 format').");
+            "extended X2 format'). For a vendor pack that cannot be "
+            "re-exported, state the mapping instead: "
+            "--layer-map L1=1,L2=2,L3=3,L4=4[,OUTLINE=profile].");
     std::sort(coppers.begin(), coppers.end(),
               [](const GerberLayer& a, const GerberLayer& b) {
                   return a.copper_index < b.copper_index;

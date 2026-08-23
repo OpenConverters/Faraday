@@ -112,7 +112,8 @@ inline BoardIR import_board(const std::string& text,
 // drop with no Gerber in it is an error, not a guess.
 inline BoardIR import_board_set(const std::vector<gerber::NamedFile>& files,
                                 std::optional<Stackup> user_stackup = std::nullopt,
-                                BoardFormat* detected = nullptr) {
+                                BoardFormat* detected = nullptr,
+                                const gerber::LayerMap& stated_layers = {}) {
     if (files.empty()) throw BoardError("import_board_set: no files");
     if (odb::is_odb_set(files)) {
         if (detected) *detected = BoardFormat::Odb;
@@ -140,7 +141,7 @@ inline BoardIR import_board_set(const std::vector<gerber::NamedFile>& files,
             "Faraday takes one KiCad/HyperLynx/IPC-2581 file, a Gerber X2 "
             "set, or an ODB++ job (zip or directory).");
     if (detected) *detected = BoardFormat::GerberSet;
-    BoardIR b = gerber::import_gerber_set(text_files, std::move(user_stackup));
+    BoardIR b = gerber::import_gerber_set(text_files, std::move(user_stackup), stated_layers);
     gate_plausibility(b);
     return b;
 }

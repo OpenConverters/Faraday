@@ -17,5 +17,5 @@ measurements only; no source figure or artwork is reproduced here.
   screenshot by `scripts/digitize_ce_screenshot.py` — numbers only
 - Why this board: the strongest public pairing of a machine-readable layout
   (gerbers, schematic, BOM) with a measured CISPR 25 conducted run. See
-  `docs/validation-tida01492.md` for the two checks that make the digitisation
+  `docs/validation-conducted.md` for the two checks that make the digitisation
   trustworthy, and for what remains blocked.

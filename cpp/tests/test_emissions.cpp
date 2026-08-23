@@ -441,7 +441,7 @@ TEST_CASE("CISPR 25 Class 5 limits reproduce an accredited lab's own receiver tr
     // 13.27 recovered. 0.15 dB on the axis mapping, so a decibel of
     // disagreement HERE would be the limit table, not the picture.
     //
-    // Recovered, per band, peak and average (see docs/validation-tida01492.md):
+    // Recovered, per band, peak and average (see docs/validation-conducted.md):
     //     MW 0.53-1.8 MHz   54.04 / 34.09 dBuV
     //     LW 0.15-0.30 MHz     -- / 50.05          (peak sits on the graticule)
     //     SW 5.9-6.2 MHz    53.1  / 33.1           (short band, fewer pixels)

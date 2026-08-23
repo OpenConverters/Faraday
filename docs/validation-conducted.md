@@ -1,4 +1,4 @@
-# Validating the conducted pipeline against a measured board — TIDA-01492
+# Validating the conducted pipeline against a measured board
 
 ABT #810 asks for the thing that decides whether any of the conducted work can
 be shown to an EMC engineer: a real converter, measured on a real LISN, run
@@ -11,10 +11,16 @@ This document is the first half of that, and it is honest about which half.
 
 | | |
 |---|---|
-| Measured reference data | **in hand** — digitised, two independent checks passed |
+| Measured reference data (TIDA-01492) | **in hand** — digitised, two independent checks passed |
 | Faraday's CISPR 25 Class 5 limit table | **validated** against an accredited lab's own receiver |
-| Board through S1–S4 | **blocked** — TI gates the gerbers behind a myTI login |
-| Per-mode (CM/DM) comparison | **not possible from public data** — see below |
+| A real board's full design pack | **in hand** — ADI DC3042A, ungated, and it is the CM/DM one |
+| Pre-X2 Gerber sets | **importable** — `--layer-map`, stated not guessed |
+| Board through S1–S4 | **blocked on nets** — see "the netlist bridge" |
+| Per-mode (CM/DM) comparison | needs the bench, but the board is now settled |
+
+Two boards are in play and they are blocked on different things, which is the
+useful part: TIDA-01492 has the public measurement and a gated layout, and the
+DC3042A has the public layout and a published CM/DM measurement.
 
 ## Why this board
 
@@ -138,6 +144,69 @@ mode only, and the note says outright that DM measurement is not defined in the
 EMC standards — so it is not a validation. But if S1–S4 on a comparable buck
 does not land near 128 dBµV at the fundamental, something is wrong, and finding
 that out costs an afternoon rather than a lab booking.
+
+## The second board: ADI DC3042A — layout in hand
+
+The R&S comparison above is not just a benchmark, it names a board, and that
+board's **full design pack is public and ungated**:
+`analog.com/media/en/evaluation-documentation/evaluation-design-files/dc3042a.zip`
+— 4.2 MB containing the Gerber set, the PADS PowerPCB layout database
+(`.ASC` + `.PCB`), the OrCAD schematic (`.DSN` + PDF), the demo manual and the
+BOM. LTC3310, 5 V → 1.2 V, 2 MHz, four layers.
+
+It is the better candidate of the two, for a reason that has nothing to do with
+convenience: R&S have already published a **CM/DM-separated** measurement of
+it, and it carries an input EMI filter switched in by feeding `VIN EMI` instead
+of `VIN` — so filtered and unfiltered are the same hardware with one lead
+moved. That is the pair that makes a filter prediction mean something rather
+than a single point.
+
+### What it took to get the copper in — and what it did not
+
+The Gerbers are PADS VX.2.6 RS-274X: **no X2 attributes, no Protel extensions**
+(they are `L1.pho` … `L4.pho`). Faraday refused them, correctly — the layer
+identity lives in a file name that means nothing outside PADS, and `L1` is a
+copper layer here and a legend layer in someone else's export.
+
+Guessing from the name would have been the wrong fix. `--layer-map
+L1=1,L2=2,L3=3,L4=4` is the right one: the caller **states** the mapping, the
+importer honours a stated fact over an inferred one, and the refusal message
+now names the way out. That is a general capability, not a workaround for this
+board — every pre-X2 vendor pack becomes importable on the same terms.
+Pinned by `[gerber][layermap]`.
+
+### The netlist bridge — where this stops today
+
+With the layers stated, the import gets one step further and then refuses again,
+also correctly: no `%TO.N` attributes and no IPC-D-356 member, so there are no
+nets. Without nets most of the analysis is meaningless and all of the conducted
+pipeline is.
+
+The connectivity **does** exist in the pack. The PADS `*ROUTE*` section is a
+complete description — signal name, the pin pair it runs between
+(`E15.1` → `U1.1`), then a polyline of (x, y, layer, width, flags) with vias
+marked. Faraday already reads IPC-D-356 and pairs it with a plain Gerber set,
+so the bridge is a converter, not a new importer.
+
+What stopped it here is the **coordinate unit**, and it is worth being precise
+about why rather than picking one:
+
+* the header constants fit `38100 counts = 1 mil` cleanly — `TEXTSIZE 3810000`
+  = 100 mil, `USERGRID 190500` = 5 mil, `DOTGRID` = 100 mil, `REAL WIDTH 38100`
+  = 1 mil, all classic PADS defaults;
+* but the via drills do not confirm it. Under that scale `MICROVIA 457200` = 12
+  mil and matches drill tool `T2C.012` exactly, while `STANDARDVIA` = 15 mil and
+  `TENTED/VIA/BOTTOM` = 10 mil match no tool in the file (the list has .011 and
+  .012). Under a nanometre scale nothing matches at all.
+* The gap is probably drilled-vs-finished diameter, but "probably" is not a
+  scale factor. A wrong one puts every parasitic out by a constant nobody would
+  see, because the board would still look like a board.
+
+So it is refused rather than assumed, which is the same rule as everywhere else
+here. The way to settle it is geometric, not arithmetic: fit the `*ROUTE*`
+polylines onto the Gerber copper and let the alignment report the scale, with
+the residual as the check that it is right. That is the next piece of work
+(ABT #858), and it is the only thing between this board and S1–S4.
 
 ## Until then
 

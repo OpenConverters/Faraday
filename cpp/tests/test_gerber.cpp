@@ -238,6 +238,65 @@ TEST_CASE("fixed-format excellon is refused, not misplaced", "[gerber]") {
                       Catch::Matchers::ContainsSubstring("decimal"));
 }
 
+// Pre-X2 vendor packs (ABT #810). PADS, Allegro and older Altium CAM outputs
+// carry neither X2 FileFunction attributes nor Protel extensions: the layer
+// identity lives in a file NAME that means nothing outside the tool that wrote
+// it. Faraday does not infer it — it refuses, names what it needs, and accepts
+// a mapping the CALLER states. Found on Analog Devices' DC3042A design pack,
+// whose gerbers are L1/L2/L3/L4.pho from PADS VX.2.6.
+TEST_CASE("gerber: a pre-X2 set imports from a STATED layer map, never a guessed one",
+          "[gerber][layermap]") {
+    const char* l1 =
+        "%FSAX44Y44*%\n%MOMM*%\n%ADD10C,1.0*%\n"
+        "D10*\nX00100000Y00100000D02*\nD03*\n"
+        "X00200000Y00100000D02*\nD03*\n"
+        "X00100000Y00100000D02*\nX00200000Y00100000D01*\nM02*\n";
+    const char* l2 =
+        "%FSAX44Y44*%\n%MOMM*%\n%ADD11C,0.6*%\n"
+        "G36*\nX00000000Y00000000D02*\nX00400000Y00000000D01*\n"
+        "X00400000Y00200000D01*\nX00000000Y00200000D01*\n"
+        "X00000000Y00000000D01*\nG37*\nM02*\n";
+    const char* ipc =
+        "P  JOB\nP  UNITS CUST 1\nP  VER IPC-D-356A\n"
+        "327SWX              R7    -1         A01X 010000Y 010000X0100Y0100R000 S0\n"
+        "327SWX              R7    -2         A01X 020000Y 010000X0100Y0100R000 S0\n"
+        "999\n";
+    std::vector<gerber::NamedFile> nameless{{"L1.pho", l1}, {"L2.pho", l2},
+                                            {"net.ipc", ipc}};
+
+    // Without a map the set is REFUSED, and the refusal says how to proceed.
+    // A name-shaped guess ("L1 looks like layer 1") is exactly what must not
+    // happen: the same name is a legend layer in another vendor's export.
+    try {
+        import_board_set(nameless, builtin_stackup("default-2layer"));
+        FAIL("expected a refusal — nothing in this set states which layer is which");
+    } catch (const BoardError& e) {
+        const std::string what = e.what();
+        CHECK(what.find("FileFunction") != std::string::npos);
+        CHECK(what.find("--layer-map") != std::string::npos);
+    }
+
+    // Stated, it imports: the map is keyed on the upper-cased stem, so the
+    // caller's casing and the exporter's do not have to agree.
+    gerber::LayerMap map{{"L1", "1"}, {"L2", "2"}};
+    BoardFormat fmt;
+    BoardIR b = import_board_set(nameless, builtin_stackup("default-2layer"), &fmt, map);
+    CHECK(fmt == BoardFormat::GerberSet);
+    REQUIRE(b.pads.size() == 2);
+    CHECK(b.pads[0].component == "R7");
+    CHECK(b.net_name(b.pads[0].net) == "SWX");
+    REQUIRE(!b.zones.empty());
+    // the stated index decides the stack position: two coppers, in order
+    CHECK(b.stackup.layers.size() >= 2);
+
+    // A value that is neither a 1-based index nor PROFILE is an error, not a
+    // silent skip — a typo in a mapping must not quietly drop a copper layer.
+    gerber::LayerMap bad{{"L1", "TOP"}, {"L2", "2"}};
+    CHECK_THROWS_AS(import_board_set(nameless, builtin_stackup("default-2layer"),
+                                     nullptr, bad),
+                    BoardError);
+}
+
 // The Altium fab-output path (Tier-1 validation pipeline, ABT #420): classic
 // RS-274X named by Protel extensions, standalone D03 flashes, fixed-format
 // Excellon, and the IPC-D-356 netlist supplying nets + refdes + PINS. This

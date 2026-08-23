@@ -3,6 +3,7 @@
 //              [--spice deck.cir] [--manifest deck.json]
 //              [--chassis-gap-mm X] [--chassis-eps-r X] [--return-net NAME]
 //              [--parts-out parts.csv] [--values values.csv]
+//              [--layer-map L1=1,L2=2,...[,OUTLINE=profile]]
 // Screens the board and prints the ranked findings; writes the full report
 // JSON (board geometry + findings + meta) for the web viewer.
 
@@ -35,6 +36,7 @@ int main(int argc, char** argv) {
     // NEW or WORSENED findings — the gate a brownfield board can adopt today
     std::string baseline_path, fail_on_regression;
     std::string fix_out;   // --fix-stitching <out.kicad_pcb>
+    faraday::gerber::LayerMap stated_layers;   // --layer-map (pre-X2 sets)
     // --spice/--manifest: the parasitic-annotated netlist (ABT #805) — the
     // copper's half of a conducted-emissions simulation, written where a
     // simulator can read it. --chassis-gap-mm is the one quantity a layout
@@ -58,6 +60,33 @@ int main(int argc, char** argv) {
         // CI gate: exit 3 when any finding reaches this severity. "high" or
         // "medium"; anything else is refused rather than silently ignored.
         else if (a == "--fail-on" && i + 1 < argc) fail_on = argv[++i];
+        // --layer-map: the caller STATES what each Gerber file is, for a
+        // pre-X2 vendor pack whose layer identity lives only in a file name.
+        // Faraday will not infer it (see GerberImporter's LayerMap).
+        else if (a == "--layer-map" && i + 1 < argc) {
+            std::string spec = argv[++i];
+            size_t at = 0;
+            while (at <= spec.size()) {
+                const size_t comma = spec.find(',', at);
+                std::string item = spec.substr(at, comma == std::string::npos
+                                                       ? std::string::npos
+                                                       : comma - at);
+                if (!item.empty()) {
+                    const size_t eq = item.find('=');
+                    if (eq == std::string::npos) {
+                        std::cerr << "faraday: --layer-map wants STEM=INDEX or "
+                                     "STEM=profile, got '" << item << "'\n";
+                        return 2;
+                    }
+                    std::string key = item.substr(0, eq), val = item.substr(eq + 1);
+                    for (char& c : key) c = (char)std::toupper((unsigned char)c);
+                    for (char& c : val) c = (char)std::toupper((unsigned char)c);
+                    stated_layers[key] = val;
+                }
+                if (comma == std::string::npos) break;
+                at = comma + 1;
+            }
+        }
         else if (a == "--baseline" && i + 1 < argc) baseline_path = argv[++i];
         else if (a == "--fail-on-regression" && i + 1 < argc)
             fail_on_regression = argv[++i];
@@ -117,7 +146,7 @@ int main(int argc, char** argv) {
             faraday::resolve_stackup(stackup_name);
         faraday::BoardFormat fmt;
         faraday::BoardIR board =
-            faraday::import_board_set(files, std::move(user), &fmt);
+            faraday::import_board_set(files, std::move(user), &fmt, stated_layers);
         std::cout << "format: " << faraday::format_name(fmt) << "\n";
 
         // Values the export did not carry, before anything reads them.

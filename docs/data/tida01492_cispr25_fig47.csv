@@ -9,7 +9,7 @@
 # Method:     scripts/digitize_ce_screenshot.py, topmost trace pixel per column
 # Checks:     marker 13.42 dBuV @ 30 MHz -> 13.27 digitised (0.15 dB);
 #             Class 5 limit lines recovered at 54.04/34.09 (MW) and 50.05 (LW AV)
-#             against Faraday's own 54/34/50 - see docs/validation-tida01492.md
+#             against Faraday's own 54/34/50 - see docs/validation-conducted.md
 #
 # Accuracy: about +/-0.5 dB from the pixel grid, worse where the trace is steep
 # or the two traces cross. Fine for a per-decade error band; not for pinning a
