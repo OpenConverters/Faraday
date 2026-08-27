@@ -121,6 +121,16 @@ def _cli() -> Path:
     return path
 
 
+def _document_result(summary: str, *, schema: str, operation: str, document,
+                     subject: str | None = None) -> CallToolResult:
+    """A `document` result — here, part of an engine report read back by handle."""
+    payload = {"mode": "document", "schema": {"name": schema}, "operation": operation,
+               "document": document}
+    if subject:
+        payload["subject"] = subject
+    return _result(summary, payload)
+
+
 def _result(summary: str, payload: dict) -> CallToolResult:
     """Two channels: a digest for the model, the payload for the widget.
 
@@ -350,7 +360,8 @@ def _dropped(meta: dict) -> list[dict]:
 
 
 def _findings_payload(review: str, board: str, report: dict, findings: list[dict],
-                      dropped: list[dict] | None = None) -> dict:
+                      dropped: list[dict] | None = None, held_back: int = 0,
+                      tally: list[dict] | None = None) -> dict:
     """A `findings` result: the contract projection, plus the engine's report for the widget.
 
     `findings` and `subject.document.findings` are the SAME set in the same order — one in the
@@ -368,14 +379,24 @@ def _findings_payload(review: str, board: str, report: dict, findings: list[dict
             "name": display_name(board),
             "reference": str(board),
             "schema": {"name": "faraday.report", "version": str(report.get("faraday") or "")},
-            # The engine's own report, whole. A widget that must DRAW the copper needs it in
-            # hand — the same reason documentResult carries `document` rather than a path.
-            "document": {**report, "findings": findings},
+            # NO `document`. A widget that must DRAW the copper needs the report; the model
+            # does not — and on a real board it is 860,566 characters, which a client refuses
+            # outright: the model then sees nothing, retries, and the turn ends with no answer
+            # while this engine reports success. The widget fetches it for itself with
+            # fetch_report(review), which is what the app bridge's callTool is for, and finds
+            # the id in this payload's own `review` field rather than in a new one — the
+            # contract's subject is closed, and it was right to refuse the field I invented.
         },
         # Geometry screening, never a compliance statement. Explicit for the same reason the
         # contract makes it explicit on a verdict: silence would read as 'established defect'.
         "provisional": True,
-        "counts": _counts(findings),
+        **({"caveat": f"{held_back} further finding(s) are not in this payload — "
+                      f"list_findings(review='{review}') returns them, filtered."}
+           if held_back > 0 else {}),
+        # counts describes the REVIEW; `reported` describes this payload. They differ when a
+        # payload is truncated, and that difference is how the widget knows to draw from the
+        # report rather than from a list that names five findings on a board with two hundred.
+        "counts": _counts(tally if tally is not None else findings),
         "reported": len(findings),
         "dropped": dropped or [],
         "findings": [_contract_finding(f, names, copper) for f in findings],
@@ -510,10 +531,61 @@ def review_board(board: str, stackup: str | None = None,
     listing = "\n".join(_finding_brief(f, names) for f in findings[:max(1, int(top))])
     if len(findings) > top:
         listing += f"\n  … {len(findings) - top} more — list_findings(review='{review}') filters them."
+    # The payload carries the findings the digest NAMES, not all 200 of them. Carrying every
+    # finding put 285,383 characters of geometry into a result the model is then refused —
+    # and nothing was reading it: the widget draws from the engine report it fetches for
+    # itself, and a consumer wanting the rest has list_findings, which is what the digest
+    # already tells it. The set stays in the engine's order so the two agree.
+    shown = findings[:max(1, int(top))]
     return _result(
         f"{head}\n{listing}\n(review {review} — pass it to list_findings / explain_finding)",
-        _findings_payload(review, board, report, findings,
-                          dropped=_dropped(report.get("meta") or {})))
+        _findings_payload(review, board, report, shown,
+                          dropped=_dropped(report.get("meta") or {}),
+                          held_back=len(findings) - len(shown), tally=findings))
+
+
+@mcp.tool(
+    title="Read a review's report",
+    description=(
+        "The engine's own report for a completed review, whole or by dotted path. The board "
+        "widget calls this to draw the copper; a model should ask for a narrow path, since "
+        "the whole report of a real board runs to hundreds of thousands of characters."
+    ),
+    structured_output=False,
+)
+def fetch_report(review: str, path: str = "") -> CallToolResult:
+    """Part of a stored review report.
+
+    Args:
+        review: the id review_board returned.
+        path: dotted path, e.g. `board.stackup` or `findings.0.metrics`. Empty returns the
+            whole report — what the widget wants, and rarely what a model should ask for.
+    """
+    node = _load(review)
+    walked = []
+    for step in [x for x in path.split(".") if x]:
+        walked.append(step)
+        if isinstance(node, list):
+            try:
+                node = node[int(step)]
+            except (ValueError, IndexError):
+                raise ValueError(f"{'.'.join(walked)} does not exist: that level is a list of "
+                                 f"{len(node)} item(s), so the step must be an index.")
+        elif isinstance(node, dict):
+            if step not in node:
+                raise ValueError(f"{'.'.join(walked)} does not exist. Available here: "
+                                 f"{', '.join(sorted(node)[:14]) or '(nothing)'}")
+            node = node[step]
+        else:
+            raise ValueError(f"{'.'.join(walked[:-1])} is a {type(node).__name__}, which has "
+                             f"no {step!r} inside it.")
+    size = len(json.dumps(node, separators=(",", ":")))
+    if not isinstance(node, (dict, list)):
+        node = {path.rsplit(".", 1)[-1] or "value": node}
+    return _document_result(
+        f"{path or 'the whole report'} for review {review}: {size:,} characters"
+        + ("  — large; ask for a narrower path if this is refused" if size > 60_000 else ""),
+        schema="faraday.report", operation="read", document=node)
 
 
 @mcp.tool(

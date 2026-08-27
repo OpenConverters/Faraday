@@ -72,13 +72,44 @@ const Widget = defineComponent({
 
     app.ontoolresult = async (result) => {
       const sc = result?.structuredContent;
-      const document = sc?.subject?.document;
-      if (sc?.mode !== "findings" || !document) {
+      if (sc?.mode !== "findings") {
         error.value = "The tool returned no board for this widget.";
         return;
       }
+      // The report does NOT ride in the payload any more: on a real board it is 860,566
+      // characters, and a tool result that size is refused before the model sees any of it.
+      // The widget is the only party that needs the copper, so the widget asks for it.
+      let document = sc?.subject?.document;
+      if (!document) {
+        const ref = sc.subject?.reviewRef || sc.review;
+        if (!ref) {
+          error.value = "The tool returned no board for this widget.";
+          return;
+        }
+        try {
+          // callServerTool, not callTool: the widget asks its SERVER for a tool; callTool is
+          // the host bridge's own method, and calling it here fails with the unhelpful
+          // "io.callTool is not a function".
+          const got = await app.callServerTool({ name: "fetch_report",
+                                                 arguments: { review: ref } });
+          document = got?.structuredContent?.document;
+        } catch (err) {
+          error.value = `Could not load the board for review ${ref}: ${err.message}`;
+          return;
+        }
+        if (!document) {
+          error.value = `Review ${ref} returned no report to draw.`;
+          return;
+        }
+      }
       report.value = document;
-      findings.value = sc.findings ?? [];
+      // The payload's findings may be the TOP of a longer list — review_board names five on a
+      // board with two hundred, because two hundred will not fit in a result the model can be
+      // given. counts describes the review, `reported` this payload: when they disagree, the
+      // fetched report is the complete set and is what belongs on the copper.
+      const total = Object.values(sc.counts ?? {}).reduce((a, b) => a + b, 0);
+      const truncated = total > (sc.reported ?? (sc.findings ?? []).length);
+      findings.value = truncated ? (document.findings ?? sc.findings ?? []) : (sc.findings ?? []);
       counts.value = sc.counts ?? {};
       review.value = sc.review ?? "";
       dropped.value = sc.dropped ?? [];
