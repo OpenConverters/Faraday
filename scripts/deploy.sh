@@ -80,8 +80,7 @@ live = open("/etc/nginx/sites-available/faraday").read()
 repo = open("/tmp/faraday.repo.nginx").read()
 # every `location <x> {` block the repo defines, by its header line
 blocks = {}
-for m in re.finditer(r"^(    location [^
-]*\{)$", repo, re.M):
+for m in re.finditer(r"^(    location .*\{)$", repo, re.M):
     start = m.start()
     depth, i = 0, m.end() - 1
     while i < len(repo):
@@ -99,11 +98,8 @@ anchor = "    location / {"
 if anchor not in live:
     print("    CANNOT MERGE: no `location / {` to insert before", file=sys.stderr)
     sys.exit(1)
-live = live.replace(anchor, "
-
-".join(missing) + "
-
-" + anchor, 1)
+sep = chr(10) * 2
+live = live.replace(anchor, sep.join(missing) + sep + anchor, 1)
 open("/etc/nginx/sites-available/faraday", "w").write(live)
 print(f"    added {len(missing)} location block(s)")
 PYNGINX'
