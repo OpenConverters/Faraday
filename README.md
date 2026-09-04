@@ -369,6 +369,49 @@ name and the value's unit letter weigh in first, and the remaining families are 
 click away with the download cost stated. A verdict is a catalogue comparison, not a
 qualification: read both datasheets.
 
+**Does it fit? The measured body answers, not the case string.** A catalogue case code
+is genuinely ambiguous and vendors disagree: Murata ships 1.0 × 0.5 mm capacitors whose
+case field reads `0603` — the *metric* code for what everyone else calls an imperial
+0402. Read as an imperial code that part gets offered as fitting a 1.6 mm land it is
+0.6 mm too short for. So where a record carries a mechanical drawing, the part's own
+length and width decide the fit (orientation-agnostic, ±12% per axis, which is wide
+enough for a real 0603 body at 1.60 ±0.15 and narrow enough that neighbours stay
+distinct on both axes); the case code answers only where no drawing exists, and the
+panel says which one spoke. Non-chip packages (TO-220, SOT-23, a can) keep the code
+check: those are families of drawings with real variation, not one standard rectangle.
+
+### The catalogue overlay — which of these parts can I actually source?
+
+The **in catalogue** chip asks the catalogue about *every* part on the board at once
+and recolours the parts layer by the answer: green identified by part number, amber
+candidates to choose from, red nothing in the catalogue fits, and grey **the board never
+named it** — a part the export described with neither a number nor a value, which is a
+gap in the export and not a hole in the catalogue, so it gets its own colour rather than
+being counted as a miss. Work is grouped by catalogue family so each family downloads
+once, progress is reported as it goes, and a second click stops it and keeps what was
+answered. On the MPPT demo board: 139 parts, 2 identified, 91 with candidates, 33
+unmatched, 13 the board never named.
+
+### When the catalogue has never heard of it
+
+A part number the catalogue cannot resolve is a dead end the inspector can get out of:
+**look it up at the distributor** hands the part number to
+[Heaviside](https://heaviside.openconverters.com)'s librarian, which searches the
+distributor, converts the result into the same catalogue record shape, schema-validates
+it, and **stages it for the catalogue**. What comes back renders with exactly the code
+that renders a catalogue record — the vendor's datasheet link, the specs, the curves.
+
+Three outcomes, kept distinct on purpose, because a caller acts on them: the part was
+found and staged; the distributor answered and has no such part; or **the distributor
+could not be asked** (credentials, transport, rate limit). The third is never dressed as
+the second — a reader told "this part does not exist" would go and enter it by hand.
+
+Nothing here writes to the catalogue. A found part lands in Heaviside's `staging/`, a
+librarian applies it into TAS, and the next index build is what puts it in front of you.
+A web button is not a way around that review. Only the part *number* leaves the browser;
+it is a public string printed on the component, and the layout stays where it always
+was.
+
 Serving: the engine (`/kelvin.js`) and the data set (`/kelvin/*`) are same-origin — the
 CSP allows nothing else. Prod nginx serves Kelvin's deployed bundle and the box's shared
 `/cache/kelvin` (`ops/faraday.nginx`); the dev server proxies both from the live Kelvin

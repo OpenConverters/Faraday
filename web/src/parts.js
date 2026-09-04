@@ -15,7 +15,7 @@
 // mean, and real boards mix them), so prefixes only ORDER the families to
 // search — they never exclude one. A part number is matched by string, and
 // the caller is told whether the match was exact or a substring.
-import { browse, fetchRecord } from '@kelvin/engine.js'
+import { browse, ensureShard, fetchRecord } from '@kelvin/engine.js'
 import { runCrossRef } from '@kelvin/crossref.js'
 import { FAMILIES } from '@kelvin/families.js'
 
@@ -111,12 +111,65 @@ export function rowPackage(row) {
   return { code: c.toUpperCase().replace(/[-\s]/g, ''), kind: 'other' }
 }
 
+// ---- the size a chip part actually is --------------------------------------
+// Body length x width in mm for each imperial chip code (EIA / IEC 60384-21).
+// These are the standard's nominal bodies, not one vendor's drawing.
+const CHIP_MM = {
+  '0201': [0.60, 0.30], '0402': [1.00, 0.50], '0603': [1.60, 0.80],
+  '0805': [2.00, 1.25], '1206': [3.20, 1.60], '1210': [3.20, 2.50],
+  '1806': [4.50, 1.60], '1812': [4.50, 3.20], '2010': [5.00, 2.50],
+  '2220': [5.70, 5.00], '2512': [6.30, 3.20],
+}
+// Tolerance on each axis. Wide enough for real drawings (a 0603 body is
+// 1.60 +/- 0.15) and narrow enough that neighbours stay distinct: the closest
+// pair on the long axis is 0603 vs 0805 (1.60 vs 2.00), which +/-12% keeps
+// apart on the SHORT axis (0.80 vs 1.25), and both axes must agree.
+const CHIP_TOL = 0.12
+
+// The standard chip size a row's measured body IS, or null when it is not a
+// standard chip at all. Orientation-agnostic: a drawing may list the axes
+// either way round, so both are sorted before comparing.
+export function rowSize(row) {
+  const l = row?.lengthM, w = row?.widthM
+  if (!(l > 0) || !(w > 0)) return null
+  const [a, b] = [l * 1000, w * 1000].sort((x, y) => y - x)
+  for (const [code, [nl, nw]] of Object.entries(CHIP_MM)) {
+    if (Math.abs(a - nl) <= CHIP_TOL * nl && Math.abs(b - nw) <= CHIP_TOL * nw)
+      return { code, kind: 'chip', lMm: a, wMm: b }
+  }
+  return { code: null, kind: 'other', lMm: a, wMm: b }
+}
+
+// Does this catalogue row fit the land pattern the board drew?
+//
+// For a CHIP part the measured body decides, not the case string, because the
+// case string is genuinely ambiguous and vendors disagree: Murata ships a
+// 1.0 x 0.5 mm capacitor whose case field reads "0603" — the METRIC code for
+// what everyone else calls an imperial 0402. Read as imperial that part is
+// offered as fitting a 1.6 mm land it is 0.6 mm too short for. Measured, it
+// cannot be. So dimensions win where they exist, the case code answers where
+// they do not, and `basis` says which one spoke.
+//
+// For a non-chip package (TO-220, SOT-23, a can) the code string stays the
+// check: those are families of drawings with real variation, not one
+// standardised rectangle, and a dimension window would reject the variants.
+//
+// Returns { verdict: 'match'|'differs'|'unknown', basis: 'size'|'case'|null }.
 export function packageMatches(pkg, row) {
-  if (!pkg) return 'unknown'
+  if (!pkg) return { verdict: 'unknown', basis: null }
+  if (pkg.kind === 'chip') {
+    const size = rowSize(row)
+    if (size) {
+      // a body that is no standard chip cannot sit on a standard chip land
+      return { verdict: size.code === pkg.code ? 'match' : 'differs', basis: 'size' }
+    }
+  }
   const rp = rowPackage(row)
-  if (!rp) return 'unknown'
-  if (pkg.kind === 'chip') return rp.code === pkg.code ? 'match' : 'differs'
-  return rp.code.startsWith(pkg.code) || pkg.code.startsWith(rp.code) ? 'match' : 'differs'
+  if (!rp) return { verdict: 'unknown', basis: null }
+  if (pkg.kind === 'chip')
+    return { verdict: rp.kind === 'chip' && rp.code === pkg.code ? 'match' : 'differs', basis: 'case' }
+  const fits = rp.code.startsWith(pkg.code) || pkg.code.startsWith(rp.code)
+  return { verdict: fits ? 'match' : 'differs', basis: 'case' }
 }
 
 // ---- which families to open, in what order ---------------------------------
@@ -265,15 +318,19 @@ export async function candidatesByValue(value, pkg, { onFamily } = {}) {
   const page = await browse(spec.family, {
     filters, sort: { field: 'lineno', dir: 'asc' }, limit: POOL })
   const rows = [], unknownCase = [], differs = []
+  let bySize = 0, byCase = 0
   for (const r of page.rows) {
-    const m = packageMatches(pkg, r)
-    if (m === 'match') rows.push(r)
-    else if (m === 'unknown') unknownCase.push(r)
+    const { verdict, basis } = packageMatches(pkg, r)
+    if (verdict === 'match') {
+      rows.push(r)
+      if (basis === 'size') bySize++
+      else if (basis === 'case') byCase++
+    } else if (verdict === 'unknown') unknownCase.push(r)
     else differs.push(r)
   }
   return { family: spec.family, field: spec.field, tol: spec.tol,
            total: page.total, scanned: page.rows.length,
-           rows, unknownCase, differs }
+           rows, unknownCase, differs, bySize, byCase }
 }
 
 // ---- the manufacturers a cross-reference can target -------------------------
@@ -299,6 +356,135 @@ export function recordOf(family, row) {
     }))
   }
   return _records.get(key)
+}
+
+// ---- the whole board at once: what can the catalogue actually resolve? -----
+// The parts overlay draws every component. This answers a different question —
+// which of them the catalogue can say anything about — and it is a question
+// only the catalogue can answer, so it costs the family shards the board needs.
+//
+// Work is grouped BY FAMILY, not by part, so each shard is downloaded once and
+// every component that might live in it is asked while it is warm. Parts the
+// board describes too poorly to look up (no part number, no parseable value)
+// are settled with no catalogue call at all.
+export const SWEEP_STATES = ['exact', 'candidates', 'none', 'unlookupable']
+
+export async function sweepBoard(parts, { onProgress, signal } = {}) {
+  const out = new Map()
+  const queue = []          // [{ ref, comp, families, value, pkg }]
+
+  for (const comp of parts) {
+    const value = valueOf(comp)
+    const cands = mpnCandidates(comp)
+    const families = familyOrder(comp)
+    if (!cands.length && !value) {
+      // nothing on the board to look up: not a catalogue miss, a board that
+      // never said what the part is. Saying "not found" would blame the
+      // catalogue for the export's silence.
+      out.set(comp.ref, { state: 'unlookupable',
+                          why: 'the board gives neither a part number nor a value' })
+      continue
+    }
+    queue.push({ ref: comp.ref, comp, families, value, pkg: packageOf(comp.footprint), cands })
+  }
+
+  // every family any queued part might belong to, most-wanted first
+  const wanted = new Map()
+  for (const q of queue) {
+    const fams = q.cands.length ? q.families.slice(0, 3)
+      : (q.value ? [VALUE_FIELD[q.value.kind]?.family].filter(Boolean) : [])
+    q.searchIn = fams
+    for (const f of fams) wanted.set(f, (wanted.get(f) ?? 0) + 1)
+  }
+  const order = [...wanted.entries()].sort((a, b) => b[1] - a[1]).map(([f]) => f)
+
+  let done = 0
+  const total = queue.length
+  for (const family of order) {
+    if (signal?.aborted) return out
+    onProgress?.({ phase: 'shard', family, done, total })
+    try {
+      await ensureShard(family)
+    } catch (e) {
+      // a family that will not load is reported, never silently skipped —
+      // otherwise its parts would read as "not in the catalogue"
+      onProgress?.({ phase: 'shardError', family, message: String(e.message || e) })
+      continue
+    }
+    for (const q of queue) {
+      if (signal?.aborted) return out
+      if (out.get(q.ref)?.state === 'exact') continue
+      if (!q.searchIn.includes(family)) continue
+      try {
+        if (q.cands.length) {
+          const r = await identify(q.comp, [family])
+          if (r.exact) { out.set(q.ref, { state: 'exact', hit: r.exact }); continue }
+          if (r.near.length && !out.has(q.ref))
+            out.set(q.ref, { state: 'candidates', count: r.near.length, by: 'mpn' })
+        }
+        if (q.value && !out.has(q.ref) && VALUE_FIELD[q.value.kind]?.family === family) {
+          const v = await candidatesByValue(q.value, q.pkg)
+          if (v?.rows.length)
+            out.set(q.ref, { state: 'candidates', count: v.rows.length, by: 'value' })
+        }
+      } catch (e) {
+        onProgress?.({ phase: 'partError', ref: q.ref, message: String(e.message || e) })
+      }
+    }
+    done = queue.filter(q => out.has(q.ref)).length
+    onProgress?.({ phase: 'family', family, done, total })
+  }
+
+  for (const q of queue)
+    if (!out.has(q.ref))
+      out.set(q.ref, { state: 'none',
+                       why: q.cands.length
+                         ? 'no catalogue part carries this number'
+                         : 'no catalogue part of this value fits this footprint' })
+  onProgress?.({ phase: 'done', done: total, total })
+  return out
+}
+
+// ---- the end of the catalogue: ask Heaviside to source the part ------------
+// When Kelvin has never heard of a part number, the catalogue is not the last
+// word — Heaviside's librarian can look it up at the distributor, convert it
+// to the same TAS envelope the catalogue serves, schema-validate it, and park
+// it in staging for review. What comes back is therefore rendered by exactly
+// the code that renders a catalogue record.
+//
+// Same-origin (/heaviside/…, proxied by nginx to the librarian on the box), so
+// the page's connect-src 'self' CSP is untouched and the board still never
+// leaves the machine — only the part NUMBER is sent, which is a public string
+// printed on the part itself.
+export const SOURCE_ENDPOINT = '/heaviside/librarian/lookup'
+
+export async function sourcePart(mpn, category = null, { signal } = {}) {
+  let res
+  try {
+    res = await fetch(SOURCE_ENDPOINT, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ mpn, category }),
+      signal,
+    })
+  } catch (e) {
+    // A transport failure is not "no such part": say which it was, or the
+    // reader goes off to hand-enter a part that exists.
+    throw new Error(`could not reach the librarian: ${e.message || e}`)
+  }
+  let body = null
+  try { body = await res.json() } catch { /* handled below */ }
+  if (!res.ok) {
+    const detail = body?.detail || `HTTP ${res.status}`
+    if (res.status === 404) {
+      throw new Error(
+        'the librarian is not reachable from this site — the part-sourcing ' +
+        'route is not configured on this deployment')
+    }
+    throw new Error(String(detail))
+  }
+  if (!body || typeof body !== 'object') throw new Error('the librarian returned no answer')
+  return body
 }
 
 // A value string Faraday's own parser reads back ("100nF 50V"), for a part

@@ -14,7 +14,7 @@ import { si } from '@kelvin/units.js'
 import CurveChart from '@kelvin/components/CurveChart.vue'
 import { ALL_FAMILIES, familyOrder, mpnCandidates, valueOf, packageOf, footprintName,
          identify, searchMpn, candidatesByValue, manufacturersOf, crossReference,
-         recordOf, valueStringFor, packageMatches } from '../parts.js'
+         recordOf, valueStringFor, packageMatches, rowSize, sourcePart } from '../parts.js'
 
 const props = defineProps({
   report: { type: Object, required: true },
@@ -71,6 +71,11 @@ const xrefErr = ref('')
 const xrefBusy = ref(false)
 const sameType = ref(true)
 const searchedAll = ref(false)
+// Sourcing: the catalogue is not the last word. Heaviside's librarian can look
+// an unknown part number up at the distributor and stage it for the catalogue.
+const sourcing = ref(false)
+const sourced = ref(null)      // the librarian's answer, hit or honest miss
+const sourceErr = ref('')
 
 const familyLabel = k => familyByKey(k)?.label?.toLowerCase() ?? k
 const onShard = e => {
@@ -89,6 +94,7 @@ function reset() {
   record.value = null; recordErr.value = ''; query.value = candidates.value[0] ?? ''
   searchHits.value = null; mfrs.value = []; marked.value = new Set()
   xref.value = null; xrefErr.value = ''; xrefBusy.value = false; searchedAll.value = false
+  sourcing.value = false; sourced.value = null; sourceErr.value = ''
 }
 
 async function start() {
@@ -188,6 +194,42 @@ async function runXref() {
 
 function view(hit) { viewing.value = hit; loadRecord(hit) }
 
+// ---- sourcing an unknown part through Heaviside -----------------------------
+// Only the part NUMBER leaves the browser. It is a public string printed on
+// the component; the layout stays here, as it does for everything else.
+async function askLibrarian(mpn) {
+  sourcing.value = true; sourceErr.value = ''; sourced.value = null
+  try {
+    // The board's family guess travels as a HINT and the librarian may
+    // overrule it from the distributor's own taxonomy — which is right: a
+    // refdes and a footprint are weaker evidence than a product family.
+    const hint = SOURCE_HINT[families.value[0]] ?? null
+    const out = await sourcePart(mpn, hint)
+    sourced.value = out
+    if (out.found && out.component) {
+      // What comes back is the catalogue's own envelope, so the record pane
+      // renders it with the code it already has. It is NOT in the catalogue
+      // yet, so it never becomes the cross-reference's original: ranking
+      // against a part the ranker cannot see would be a different answer
+      // from the one Kelvin gives.
+      record.value = out.component
+      recordErr.value = ''
+    }
+  } catch (e) {
+    sourceErr.value = String(e.message || e)
+  } finally {
+    sourcing.value = false
+  }
+}
+
+// Faraday's family keys -> the librarian's category vocabulary. Only the ones
+// that mean the same thing on both sides; anything else travels as no hint at
+// all rather than as a wrong one.
+const SOURCE_HINT = {
+  mosfet: 'mosfet', diode: 'diode', capacitor: 'capacitor', resistor: 'resistor',
+  igbt: 'igbt', magnetic: 'magnetic', connector: 'connector', timing: 'timeBase',
+}
+
 // ---- record rendering (the same reading Kelvin's drawer gives) -------------
 const info = computed(() => familyNode(record.value)?.manufacturerInfo ?? null)
 const curves = computed(() => record.value ? extractCurves(record.value) : [])
@@ -245,7 +287,8 @@ const adoptable = computed(() => {
   return valueStringFor(original.value.family, original.value.row)
 })
 
-const pkgOf = r => packageMatches(pkg.value, r)
+const pkgOf = r => packageMatches(pkg.value, r).verdict
+const pkgBasis = r => packageMatches(pkg.value, r).basis
 
 watch(() => props.refdes, start, { immediate: true })
 </script>
@@ -342,9 +385,12 @@ watch(() => props.refdes, start, { immediate: true })
               <template v-if="pkg"> in <b class="mono">{{ pkg.code }}</b></template>
               <span class="dim"> (±{{ (valueHits.tol * 100).toFixed(1) }}% of the value;
                 {{ valueHits.scanned }} of {{ valueHits.total }} value matches scanned<template
-                v-if="valueHits.unknownCase.length">, {{ valueHits.unknownCase.length }} carry no case
-                code and are not shown</template><template v-if="valueHits.differs.length">,
-                {{ valueHits.differs.length }} are in another package</template>).</span>
+                v-if="valueHits.bySize">, {{ valueHits.bySize }} checked against the part's own
+                measured body and {{ valueHits.byCase }} against its case code</template><template
+                v-if="valueHits.unknownCase.length">, {{ valueHits.unknownCase.length }} state
+                neither a size nor a case code and are not shown</template><template
+                v-if="valueHits.differs.length">, {{ valueHits.differs.length }} are a different
+                size</template>).</span>
               Pick one to read its record and cross-reference from it — the board does not say which part it is.
             </p>
             <ul class="hits">
@@ -359,8 +405,9 @@ watch(() => props.refdes, start, { immediate: true })
             </ul>
             <p v-if="valueHits.rows.length > 25" class="dim">
               first 25 of {{ valueHits.rows.length }} shown — narrow it with the part-number search below</p>
-            <p v-if="!valueHits.rows.length && valueHits.unknownCase.length" class="dim">
-              {{ valueHits.unknownCase.length }} value match(es) carry no case code, so the package could not be checked:
+            <p v-if="valueHits.unknownCase.length" class="dim">
+              {{ valueHits.unknownCase.length }} value match(es) publish neither a body size nor a case
+              code, so nothing could be checked against the footprint:
               <button class="lnk" @click="valueHits.rows = valueHits.unknownCase">show them anyway</button>
             </p>
           </div>
@@ -380,15 +427,72 @@ watch(() => props.refdes, start, { immediate: true })
             </li>
           </ul>
 
+          <!-- ================= sourcing an unknown part ================= -->
+          <div v-if="!original && candidates.length" class="source" data-testid="part-source">
+            <p v-if="!sourced">
+              <button class="chip real" data-testid="part-source-btn" :disabled="sourcing"
+                      @click="askLibrarian(candidates[0])">
+                {{ sourcing ? 'asking the librarian…' : `look ${candidates[0]} up at the distributor` }}</button>
+              <span class="dim"> — Heaviside's librarian searches the distributor, converts the
+                result to a catalogue record, schema-validates it, and stages it for the
+                catalogue. Only the part number is sent.</span>
+            </p>
+            <p v-if="sourceErr" class="err" data-testid="part-source-error">{{ sourceErr }}</p>
+            <template v-if="sourced">
+              <p v-if="sourced.found" data-testid="part-sourced">
+                <b class="mono">{{ sourced.mpn }}</b> found at the distributor and read as a
+                <b>{{ sourced.category }}</b> record.
+                <span class="tag ok">schema-valid</span>
+                <span class="dim">{{ sourced.storedReason }}</span>
+                It is <b>not in the catalogue yet</b>, so it cannot be cross-referenced here —
+                that needs the index rebuilt.
+              </p>
+              <p v-else data-testid="part-sourced-miss">
+                The librarian could not source <b class="mono">{{ sourced.mpn }}</b>:
+                {{ sourced.reason }}
+              </p>
+            </template>
+          </div>
+
           <!-- ================= the record ================= -->
+          <div v-if="sourced?.found && !original" class="record" data-testid="part-record">
+            <div class="rhead">
+              <h4 class="mono">{{ sourced.mpn }}</h4>
+              <span class="dim">{{ info?.name ?? 'sourced from the distributor' }}</span>
+              <span v-if="info?.status" class="tag" :class="{ ok: info.status === 'production' }">{{ info.status }}</span>
+              <div class="sp" />
+              <a v-if="info?.datasheetUrl" :href="info.datasheetUrl" target="_blank" rel="noopener"
+                 class="chip ds" data-testid="part-datasheet">manufacturer datasheet ↗</a>
+            </div>
+            <div v-if="curves.length" class="curves">
+              <CurveChart v-for="c in curves" :key="c.key + c.title" :curve="c" :height="180" />
+            </div>
+            <details class="specs" open>
+              <summary>spec sheet · {{ specGroups.reduce((n, [, r]) => n + r.length, 0) }} entries</summary>
+              <section v-for="[group, rows] in specGroups" :key="group">
+                <p class="glabel">{{ group }}</p>
+                <table class="spec"><tbody>
+                  <tr v-for="row in rows" :key="group + row.key">
+                    <td class="dim">{{ row.key }}</td><td class="mono r">{{ fmtSpec(row) }}</td>
+                  </tr>
+                </tbody></table>
+              </section>
+            </details>
+          </div>
+
           <div v-if="viewing" class="record" data-testid="part-record">
             <div class="rhead">
               <h4 class="mono">{{ viewing.row.mpn }}</h4>
               <span class="dim">{{ viewing.row.manufacturer }}</span>
               <span v-if="info?.status" class="tag" :class="{ ok: info.status === 'production' }">{{ info.status }}</span>
-              <span v-if="viewing.row.caseCode" class="tag" :class="{ ok: pkgOf(viewing.row) === 'match', warn: pkgOf(viewing.row) === 'differs' }"
-                    :title="pkg ? `board footprint reads as ${pkg.code}` : 'no package could be read from the footprint name'">
-                case {{ viewing.row.caseCode }}</span>
+              <span v-if="viewing.row.caseCode || rowSize(viewing.row)" class="tag"
+                    :class="{ ok: pkgOf(viewing.row) === 'match', warn: pkgOf(viewing.row) === 'differs' }"
+                    :title="pkg
+                      ? `the board's footprint reads as ${pkg.code}; this was checked by ${pkgBasis(viewing.row) === 'size' ? 'the part\'s measured body, which outranks its case string' : 'the case code, the only size this record carries'}`
+                      : 'no package could be read from the footprint name'">
+                {{ pkgBasis(viewing.row) === 'size'
+                   ? `${rowSize(viewing.row).lMm.toFixed(2)} × ${rowSize(viewing.row).wMm.toFixed(2)} mm`
+                   : `case ${viewing.row.caseCode}` }}</span>
               <span v-if="viewing !== original" class="dim">
                 — <button class="lnk" @click="view(original)">back to {{ original.row.mpn }}</button></span>
               <div class="sp" />
@@ -609,5 +713,9 @@ h4 { font-size: 15px; color: var(--silk); }
 .legend { font-size: 11px; }
 .caveat { font-size: 11px; border-top: 1px solid var(--resin-edge); padding-top: 8px; }
 .adopt { font-size: 12px; }
+.source {
+  border: 1px dashed var(--resin-edge); border-radius: 6px; padding: 10px 12px;
+  display: flex; flex-direction: column; gap: 6px; font-size: 12.5px;
+}
 .more { font-size: 12px; }
 </style>

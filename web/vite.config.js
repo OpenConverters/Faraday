@@ -29,6 +29,14 @@ if (!existsSync(path.join(kelvinSrc, 'crossref.js'))) {
 }
 const kelvinOrigin = process.env.FARADAY_KELVIN_ORIGIN ||
   'https://kelvin.openconverters.com'
+// The librarian: Heaviside's part-sourcing endpoint, reached same-origin under
+// /heaviside/ for the same CSP reason as Kelvin. In production nginx maps that
+// prefix to the librarian on the box; in development it is proxied to whatever
+// Heaviside you point it at (a local `heaviside serve` on 8000, or the
+// deployed one). Note this spends a real distributor API call per lookup, so
+// the e2e suite stubs the route rather than pointing here.
+const heavisideOrigin = process.env.FARADAY_HEAVISIDE_ORIGIN ||
+  'https://heaviside.openconverters.com'
 
 export default {
   plugins: [vue()],
@@ -38,6 +46,11 @@ export default {
     proxy: {
       '/kelvin.js': { target: kelvinOrigin, changeOrigin: true },
       '/kelvin/': { target: kelvinOrigin, changeOrigin: true },
+      '/heaviside/': {
+        target: heavisideOrigin,
+        changeOrigin: true,
+        rewrite: (p) => p.replace(/^\/heaviside/, ''),
+      },
     },
   },
 }

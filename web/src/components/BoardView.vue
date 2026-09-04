@@ -21,8 +21,13 @@ const props = defineProps({
   selectedId: { type: String, default: '' },
   // the part whose inspector is open, drawn brighter than the rest
   selectedPart: { type: String, default: '' },
+  // ref -> {state} from the catalogue sweep, or null when it has not been run.
+  // Turning this on recolours the parts by what the catalogue can resolve.
+  partIndex: { type: Object, default: null },
+  sweeping: { type: Boolean, default: false },
 })
-const emit = defineEmits(['select', 'toggleReturnPath', 'nearField', 'shield', 'pdn', 'part'])
+const emit = defineEmits(['select', 'toggleReturnPath', 'nearField', 'shield', 'pdn', 'part',
+                          'sweep'])
 
 // Radiation attribution, decoded once per map into a byte per segment. Null
 // when the map is off, and every draw path checks for that rather than
@@ -111,6 +116,16 @@ const partVisible = p =>
                       : layerVis[board.value.copperNames[0]]
 
 const HEAT = { high: '#ff5d5d', medium: '#ffb454', low: '#58c79a', info: '#9db4ad' }
+// The catalogue overlay's four answers. "unlookupable" is deliberately its own
+// colour and not a failure: a part the EXPORT never described is not a part the
+// catalogue is missing, and colouring them alike would blame the wrong thing.
+const CAT_COLOR = {
+  exact:        { fill: 'rgba(88,199,154,0.30)',  line: '#58c79a' },
+  candidates:   { fill: 'rgba(255,180,84,0.24)',  line: '#ffb454' },
+  none:         { fill: 'rgba(255,93,93,0.16)',   line: 'rgba(255,93,93,0.65)' },
+  unlookupable: { fill: 'rgba(6,9,8,0.62)',       line: 'rgba(120,134,129,0.45)' },
+  pending:      { fill: 'rgba(6,9,8,0.62)',       line: 'rgba(157,180,173,0.35)' },
+}
 // intentional coupling and identified aggressors read as their own thing, not
 // as heat: diff pairs cool blue-grey, switch nodes copper (the board's own hue)
 const RULE_COLOR = { 'diff-pair': '#6f9fc4', 'switch-node': '#d98b5f',
@@ -444,10 +459,19 @@ function draw() {
       const [cx, cy] = toScreen(p.x2, p.y2)
       const w = cx - ax, h = cy - ay
       const sel = p.ref === props.selectedPart
-      ctx.fillStyle = sel ? 'rgba(217,139,95,0.28)' : 'rgba(6,9,8,0.62)'
-      ctx.strokeStyle = sel ? '#e8955c' : (p.side === 'bottom' ? 'rgba(93,158,199,0.75)'
-                                                               : 'rgba(157,180,173,0.6)')
-      ctx.lineWidth = sel ? 2 : 1
+      // In catalogue mode a part is coloured by what the catalogue can say
+      // about it; otherwise by which side it is on.
+      const idx = props.partIndex ? props.partIndex[p.ref] : null
+      let fill = 'rgba(6,9,8,0.62)'
+      let line = p.side === 'bottom' ? 'rgba(93,158,199,0.75)' : 'rgba(157,180,173,0.6)'
+      if (props.partIndex) {
+        const c = CAT_COLOR[idx?.state ?? 'pending']
+        fill = c.fill
+        line = c.line
+      }
+      ctx.fillStyle = sel ? 'rgba(217,139,95,0.28)' : fill
+      ctx.strokeStyle = sel ? '#e8955c' : line
+      ctx.lineWidth = sel ? 2 : (props.partIndex && idx?.state === 'exact' ? 1.6 : 1)
       if (sel) { ctx.shadowColor = '#e8955c'; ctx.shadowBlur = 14 }
       ctx.beginPath()
       ctx.roundRect(ax, ay, w, h, Math.min(3, w / 4, h / 4))
@@ -499,6 +523,16 @@ function draw() {
 }
 
 // ---- hit testing / tooltips ----
+const CAT_SAYS = {
+  exact: i => `in the catalogue as ${i.hit.row.mpn}`,
+  candidates: i => i.by === 'mpn'
+    ? `${i.count} catalogue part number(s) contain this one`
+    : `${i.count} catalogue part(s) of this value fit this footprint`,
+  none: i => i.why,
+  unlookupable: i => i.why,
+  pending: () => 'not looked up yet',
+}
+
 function distToSeg(px, py, x1, y1, x2, y2) {
   const dx = x2 - x1, dy = y2 - y1
   const L2 = dx * dx + dy * dy
@@ -551,11 +585,14 @@ function tooltipFor(hit) {
   }
   if (hit.kind === 'part') {
     const p = hit.p
-    return { part: p.ref, lines: [
+    const lines = [
       `${p.ref} · ${p.value || 'no value in the export'}`,
       `${footprintName(p.footprint) || 'no footprint name'} · ${p.pads.length} pin(s) · ${p.side}`,
-      'click to inspect the part',
-    ] }
+    ]
+    const idx = props.partIndex ? props.partIndex[p.ref] : null
+    if (props.partIndex) lines.push(CAT_SAYS[idx?.state ?? 'pending'](idx))
+    lines.push('click to inspect the part')
+    return { part: p.ref, lines }
   }
   if (hit.kind === 'segment') {
     const s = hit.s
@@ -673,7 +710,7 @@ watch(() => props.selectedId, id => {
   else draw()
 })
 watch([layerVis, overlaysOn, partsOn, () => props.returnPath, () => props.nearField,
-       () => props.selectedPart],
+       () => props.selectedPart, () => props.partIndex, () => props.sweeping],
       () => draw())
 watch(() => props.findings, () => draw())
 // entering draw mode must drop the hover handler's inline cursor, or the
@@ -704,6 +741,12 @@ watch(() => props.drawingShield, on => {
               :style="{ '--c': '#e6ede8' }"
               title="every component as a body over its pads — click one for its board facts, its catalogue record and datasheet, and cross-references"
               @click="partsOn = !partsOn">parts</button>
+      <button class="lchip" :class="{ off: !partIndex, busy: sweeping }"
+              data-testid="catalogue-toggle" :style="{ '--c': '#58c79a' }"
+              :title="partIndex
+                ? 'each part coloured by what the catalogue can resolve — click again to drop back to the plain parts layer'
+                : 'ask the catalogue about every part on this board: green in the catalogue by part number, amber candidates to choose from, red nothing that fits. Downloads the catalogue families this board needs.'"
+              @click="emit('sweep')">{{ sweeping ? 'asking…' : 'in catalogue' }}</button>
       <button class="lchip rad" :class="{ off: !returnPath }" data-testid="rp-toggle"
               :style="{ '--c': '#ffb454' }"
               title="effective loop height of every trace — where the return current really flows. Geometry only, no assumed currents"
@@ -749,6 +792,7 @@ canvas { width: 100%; height: 100%; display: block; touch-action: none; }
 canvas.drawing { cursor: crosshair; }
 .lchip.dis { opacity: 0.35; cursor: not-allowed; }
 .lchip.off { opacity: 0.35; border-style: dashed; }
+.lchip.busy { opacity: 1; border-style: dotted; }
 .lchip.risk { --c: var(--heat-high); }
 
 .tooltip {

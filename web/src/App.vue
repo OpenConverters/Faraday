@@ -11,6 +11,7 @@ import GlossaryPanel from './components/GlossaryPanel.vue'
 import StackupPanel from './components/StackupPanel.vue'
 import PartPanel from './components/PartPanel.vue'
 import { unzip } from './zip.js'
+import { sweepBoard, isPart } from './parts.js'
 
 // ── GUIDED vs ADVANCED ────────────────────────────────────────────────────
 // The same review, two vocabularies. Advanced is everything this tool knows:
@@ -56,6 +57,68 @@ const dragOver = ref(false)
 // the board's facts about the part, its catalogue record and datasheet, and
 // ranked cross-references, all read in the browser.
 const partRef = ref('')
+// ── the catalogue overlay ────────────────────────────────────────────────
+// The parts layer draws every component; this answers which of them the
+// catalogue can resolve, and it is a question only the catalogue can answer —
+// so it costs the family shards this board needs and is never run unasked.
+const partIndex = ref(null)      // { ref: {state, …} } once swept
+const sweeping = ref(false)
+const sweepNote = ref('')
+let sweepAbort = null
+
+const boardParts = computed(() => {
+  const b = report.value?.board
+  if (!b) return []
+  const byRef = new Map()
+  for (const p of b.pads) {
+    if (!byRef.has(p.component)) byRef.set(p.component, [])
+    byRef.get(p.component).push(p)
+  }
+  return (b.components ?? []).filter(c => isPart(c, byRef.get(c.ref)))
+})
+
+async function toggleSweep() {
+  if (sweeping.value) {                      // a second click cancels
+    sweepAbort?.abort()
+    sweeping.value = false
+    sweepNote.value = 'stopped — partial answers are kept'
+    return
+  }
+  if (partIndex.value) {                     // already answered: drop the layer
+    partIndex.value = null
+    sweepNote.value = ''
+    return
+  }
+  const parts = boardParts.value
+  if (!parts.length) { sweepNote.value = 'this board carries no components'; return }
+  sweeping.value = true
+  sweepNote.value = `asking the catalogue about ${parts.length} parts…`
+  sweepAbort = new AbortController()
+  const partial = {}
+  try {
+    const res = await sweepBoard(parts, {
+      signal: sweepAbort.signal,
+      onProgress: p => {
+        if (p.phase === 'shard') sweepNote.value =
+          `opening the ${p.family} catalogue — a one-time download the browser keeps (${p.done}/${p.total} settled)`
+        else if (p.phase === 'family') sweepNote.value = `${p.done} of ${p.total} settled…`
+        else if (p.phase === 'shardError') sweepNote.value =
+          `the ${p.family} catalogue would not load: ${p.message}`
+      },
+    })
+    partIndex.value = Object.fromEntries(res)
+    const n = s => Object.values(partIndex.value).filter(v => v.state === s).length
+    sweepNote.value =
+      `${parts.length} parts: ${n('exact')} identified, ${n('candidates')} with candidates, ` +
+      `${n('none')} unmatched, ${n('unlookupable')} unnamed by the board.`
+  } catch (e) {
+    sweepNote.value = 'the catalogue could not be asked: ' + String(e.message || e)
+    if (Object.keys(partial).length) partIndex.value = partial
+  } finally {
+    sweeping.value = false
+    sweepAbort = null
+  }
+}
 function gotoFinding(id) {
   partRef.value = ''
   selectedId.value = id
@@ -711,6 +774,9 @@ function toggleRule(rule) {
                    :has-switch-node="hasSwitchNode"
                    :sw-candidate-count="swCandidates.length"
                    :selected-part="partRef"
+                   :part-index="partIndex"
+                   :sweeping="sweeping"
+                   @sweep="toggleSweep"
                    @part="r => partRef = r"
                    @select="id => selectedId = id"
                    @toggle-return-path="toggleReturnPath"
@@ -719,6 +785,18 @@ function toggleRule(rule) {
                    @pdn="pdnOpen = true" />
       <!-- while drawing a shield the bars go click-through and faded — a
            floating card must never steal the drag that draws underneath it -->
+      <div v-if="sweepNote" class="overlaybars">
+        <div class="radbar cat" data-testid="catalogue-bar">
+          <b>Catalogue</b>
+          <span>{{ sweepNote }}</span>
+          <span v-if="partIndex" class="key">
+            <i class="k-exact" /><span>in the catalogue, by part number</span>
+            <i class="k-cand" /><span>candidates to choose from</span>
+            <i class="k-none" /><span>nothing in the catalogue fits</span>
+            <i class="k-unk" /><span>the board never named it</span>
+          </span>
+        </div>
+      </div>
       <div class="overlaybars" :class="{ ghost: drawingShield }"
            v-if="nearField || returnPath">
       <div v-if="nearField" class="radbar nf" data-testid="nf-bar">
@@ -1033,6 +1111,20 @@ function toggleRule(rule) {
   border-radius: 3px; padding: 2px 5px; }
 .radbar .spec select:hover { border-color: var(--copper); }
 .radbar .cav { flex: 1 1 100%; opacity: 0.75; font-family: var(--sans); font-size: 11px; }
+
+.radbar.cat { border-color: #58c79a; }
+.radbar.cat > b { color: #58c79a; }
+.radbar.cat .key {
+  display: grid; grid-template-columns: auto 1fr; gap: 3px 7px;
+  align-items: center; opacity: 0.85; margin-top: 3px; font-size: 11px;
+}
+.radbar.cat .key i {
+  width: 10px; height: 10px; border-radius: 2px; display: block;
+}
+.k-exact { background: rgba(88,199,154,0.5); border: 1px solid #58c79a; }
+.k-cand { background: rgba(255,180,84,0.4); border: 1px solid #ffb454; }
+.k-none { background: rgba(255,93,93,0.3); border: 1px solid rgba(255,93,93,0.65); }
+.k-unk { background: rgba(6,9,8,0.62); border: 1px solid rgba(120,134,129,0.45); }
 
 .metastrip {
   display: flex; gap: 18px; flex-wrap: wrap;
