@@ -32,7 +32,9 @@ cd "$(dirname "$0")/.."
 HOST="${FARADAY_HOST:-root@51.15.253.66}"
 # the local dev server the live-vs-local gate compares against; 5199 may be
 # held by another project's dev server on a shared machine
-DEV_PORT="${FARADAY_DEV_PORT:-5199}"
+# 5199 is a shared-machine collision waiting to happen (another project's dev
+# server has held it since August). The gate needs A port, not that one.
+DEV_PORT="${FARADAY_DEV_PORT:-5198}"
 KEY="${FARADAY_KEY:-$HOME/.ssh/om_scaleway}"
 URL="${FARADAY_URL:-https://faraday.openconverters.com}"
 REMOTE_DIR=/opt/faraday/dist
@@ -59,6 +61,56 @@ echo "==> building WASM engine"
 ./scripts/build_wasm.sh
 echo "==> building SPA"
 (cd web && npm run build)
+
+# The vhost is part of the deployment. It was installed by hand twice, and the
+# second time the hand-edit was the only thing standing between the site and a
+# missing route — so it ships here. certbot OWNS the TLS block in the live
+# file, so the repo's copy is MERGED INTO the live one rather than replacing
+# it: overwriting would drop the certificate lines and take the site off HTTPS.
+echo "==> nginx: merging any missing locations into the live vhost"
+"${SSH[@]}" "$HOST" "test -f /etc/nginx/sites-available/faraday" || {
+    echo "no faraday vhost on $HOST — install ops/faraday.nginx by hand first" >&2
+    exit 1; }
+"${SSH[@]}" "$HOST" "cp /etc/nginx/sites-available/faraday /etc/nginx/sites-available/faraday.bak-$(date +%Y%m%d%H%M%S)"
+scp -q -i "$KEY" -o StrictHostKeyChecking=no ops/faraday.nginx "$HOST:/tmp/faraday.repo.nginx"
+scp -q -i "$KEY" -o StrictHostKeyChecking=no ops/nginx/oc-librarian-limit.conf "$HOST:/etc/nginx/conf.d/oc-librarian-limit.conf"
+"${SSH[@]}" "$HOST" 'python3 - <<'"'"'PYNGINX'"'"'
+import re, sys
+live = open("/etc/nginx/sites-available/faraday").read()
+repo = open("/tmp/faraday.repo.nginx").read()
+# every `location <x> {` block the repo defines, by its header line
+blocks = {}
+for m in re.finditer(r"^(    location [^
+]*\{)$", repo, re.M):
+    start = m.start()
+    depth, i = 0, m.end() - 1
+    while i < len(repo):
+        if repo[i] == "{": depth += 1
+        elif repo[i] == "}":
+            depth -= 1
+            if depth == 0: break
+        i += 1
+    blocks[m.group(1).strip()] = repo[start:i + 1]
+missing = [b for h, b in blocks.items() if h not in live]
+if not missing:
+    print("    vhost already carries every location the repo defines")
+    sys.exit(0)
+anchor = "    location / {"
+if anchor not in live:
+    print("    CANNOT MERGE: no `location / {` to insert before", file=sys.stderr)
+    sys.exit(1)
+live = live.replace(anchor, "
+
+".join(missing) + "
+
+" + anchor, 1)
+open("/etc/nginx/sites-available/faraday", "w").write(live)
+print(f"    added {len(missing)} location block(s)")
+PYNGINX'
+"${SSH[@]}" "$HOST" "nginx -t && systemctl reload nginx" >/dev/null 2>&1 || {
+    echo "nginx refused the merged config — restoring the backup" >&2
+    "${SSH[@]}" "$HOST" 'cp $(ls -t /etc/nginx/sites-available/faraday.bak-* | head -1) /etc/nginx/sites-available/faraday && nginx -t && systemctl reload nginx'
+    exit 1; }
 
 echo "==> rsync to $HOST:$REMOTE_DIR"
 "${SSH[@]}" "$HOST" "mkdir -p $REMOTE_DIR"

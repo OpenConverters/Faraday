@@ -86,6 +86,36 @@ export function footprintName(footprint) {
   return i >= 0 ? footprint.slice(i + 1) : footprint
 }
 
+// ---- the size the BOARD says the part is -----------------------------------
+// A footprint name is not the only evidence of size, and on a part like an
+// inductor it is often the worst: "L_12x12mm_H8mm" or a bare vendor series
+// name tells a regex nothing. The PADS tell the truth — they are where the
+// part physically sits — so the land pattern's own extent is measured and used
+// when the name yields no standard code.
+//
+// A land pattern is LARGER than the body it carries (pads extend past the ends
+// of a chip, and a wound component's pads sit under its footprint), so this is
+// an upper bound on the body, not the body. It is used as a bound: a catalogue
+// part whose own drawing is bigger than the land cannot sit on it.
+export function landSize(pads) {
+  if (!pads?.length) return null
+  let x1 = Infinity, y1 = Infinity, x2 = -Infinity, y2 = -Infinity
+  for (const p of pads) {
+    x1 = Math.min(x1, p.x - p.w / 2); y1 = Math.min(y1, p.y - p.h / 2)
+    x2 = Math.max(x2, p.x + p.w / 2); y2 = Math.max(y2, p.y + p.h / 2)
+  }
+  if (!(x2 > x1) || !(y2 > y1)) return null
+  const [lMm, wMm] = [x2 - x1, y2 - y1].sort((a, b) => b - a)
+  return { lMm, wMm }
+}
+
+// How much bigger than its land a real part may be before the fit is a lie.
+// Pads normally stick OUT past a chip body, so a part bigger than its land in
+// either axis is the suspicious direction; a little slack covers a wound part
+// whose body overhangs its pads and the courtyard conventions that differ by
+// library.
+const LAND_SLACK = 1.25
+
 export function packageOf(footprint) {
   const name = footprintName(footprint)
   if (!name) return null
@@ -130,9 +160,9 @@ const CHIP_TOL = 0.12
 // standard chip at all. Orientation-agnostic: a drawing may list the axes
 // either way round, so both are sorted before comparing.
 export function rowSize(row) {
-  const l = row?.lengthM, w = row?.widthM
-  if (!(l > 0) || !(w > 0)) return null
-  const [a, b] = [l * 1000, w * 1000].sort((x, y) => y - x)
+  const d = dimsOf(row)
+  if (!d) return null
+  const [a, b] = [d.lMm, d.wMm]
   for (const [code, [nl, nw]] of Object.entries(CHIP_MM)) {
     if (Math.abs(a - nl) <= CHIP_TOL * nl && Math.abs(b - nw) <= CHIP_TOL * nw)
       return { code, kind: 'chip', lMm: a, wMm: b }
@@ -155,21 +185,42 @@ export function rowSize(row) {
 // standardised rectangle, and a dimension window would reject the variants.
 //
 // Returns { verdict: 'match'|'differs'|'unknown', basis: 'size'|'case'|null }.
-export function packageMatches(pkg, row) {
-  if (!pkg) return { verdict: 'unknown', basis: null }
-  if (pkg.kind === 'chip') {
+export function packageMatches(pkg, row, land = null) {
+  if (pkg?.kind === 'chip') {
     const size = rowSize(row)
     if (size) {
       // a body that is no standard chip cannot sit on a standard chip land
       return { verdict: size.code === pkg.code ? 'match' : 'differs', basis: 'size' }
     }
   }
-  const rp = rowPackage(row)
-  if (!rp) return { verdict: 'unknown', basis: null }
-  if (pkg.kind === 'chip')
-    return { verdict: rp.kind === 'chip' && rp.code === pkg.code ? 'match' : 'differs', basis: 'case' }
-  const fits = rp.code.startsWith(pkg.code) || pkg.code.startsWith(rp.code)
-  return { verdict: fits ? 'match' : 'differs', basis: 'case' }
+  const rp = pkg ? rowPackage(row) : null
+  if (rp) {
+    if (pkg.kind === 'chip')
+      return { verdict: rp.kind === 'chip' && rp.code === pkg.code ? 'match' : 'differs', basis: 'case' }
+    const fits = rp.code.startsWith(pkg.code) || pkg.code.startsWith(rp.code)
+    return { verdict: fits ? 'match' : 'differs', basis: 'case' }
+  }
+  // Neither a standard code on the row nor one readable from the footprint
+  // name — which is the ordinary case for inductors, transformers and every
+  // vendor-specific outline. The board still knows how much room the part has,
+  // and the catalogue row still carries the part's own drawing, so the two can
+  // be compared directly instead of giving up.
+  const l = landSize(land)
+  const dims = dimsOf(row)
+  if (l && dims) {
+    const fits = dims.lMm <= l.lMm * LAND_SLACK && dims.wMm <= l.wMm * LAND_SLACK
+    return { verdict: fits ? 'match' : 'differs', basis: 'land',
+             land: l, part: dims }
+  }
+  return { verdict: 'unknown', basis: null }
+}
+
+// A catalogue row's own body, longest axis first, in mm.
+export function dimsOf(row) {
+  const l = row?.lengthM, w = row?.widthM
+  if (!(l > 0) || !(w > 0)) return null
+  const [lMm, wMm] = [l * 1000, w * 1000].sort((a, b) => b - a)
+  return { lMm, wMm }
 }
 
 // ---- which families to open, in what order ---------------------------------
@@ -309,7 +360,7 @@ const VALUE_FIELD = { C: { family: 'capacitor', field: 'capacitance', tol: 0.02 
                       L: { family: 'magnetic', field: 'inductance', tol: 0.02 } }
 export const POOL = 800
 
-export async function candidatesByValue(value, pkg, { onFamily } = {}) {
+export async function candidatesByValue(value, pkg, { onFamily, land = null } = {}) {
   const spec = VALUE_FIELD[value.kind]
   if (!spec) return null
   onFamily?.(spec.family)
@@ -318,19 +369,21 @@ export async function candidatesByValue(value, pkg, { onFamily } = {}) {
   const page = await browse(spec.family, {
     filters, sort: { field: 'lineno', dir: 'asc' }, limit: POOL })
   const rows = [], unknownCase = [], differs = []
-  let bySize = 0, byCase = 0
+  let bySize = 0, byCase = 0, byLand = 0
   for (const r of page.rows) {
-    const { verdict, basis } = packageMatches(pkg, r)
+    const { verdict, basis } = packageMatches(pkg, r, land)
     if (verdict === 'match') {
       rows.push(r)
       if (basis === 'size') bySize++
       else if (basis === 'case') byCase++
+      else if (basis === 'land') byLand++
     } else if (verdict === 'unknown') unknownCase.push(r)
     else differs.push(r)
   }
   return { family: spec.family, field: spec.field, tol: spec.tol,
            total: page.total, scanned: page.rows.length,
-           rows, unknownCase, differs, bySize, byCase }
+           rows, unknownCase, differs, bySize, byCase, byLand,
+           land: landSize(land) }
 }
 
 // ---- the manufacturers a cross-reference can target -------------------------

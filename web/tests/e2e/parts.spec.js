@@ -345,7 +345,7 @@ test('a part whose measured body is a different size is not offered as a fit',
     const byValue = page.getByTestId('part-by-value')
     await expect(byValue).toBeVisible({ timeout: CATALOGUE_MS })
     // the excluded ones are counted and named as a size difference, not hidden
-    await expect(byValue).toContainText('a different size')
+    await expect(byValue).toContainText('do not fit')
   })
 
 
@@ -409,3 +409,45 @@ test('a part the board never named is not counted as a catalogue miss', async ({
   expect(out.X1.state).toBe('unlookupable')
   expect(out.X1.why).toContain('neither a part number nor a value')
 })
+
+
+test('a footprint with no standard code is checked against the room its pads leave',
+  async ({ page }) => {
+    // The case that prompted it: L1 on the demo board. Neither the footprint
+    // name nor most magnetics rows carry a standard code, so the panel used to
+    // say "nothing could be checked" while the board knew exactly how much
+    // room the part has.
+    await page.goto('/')
+    const out = await page.evaluate(async () => {
+      const m = await import('/src/parts.js')
+      // a 12 x 12 mm inductor land: two 4 x 11 mm pads, 8 mm apart
+      const pads = [{ x: 0, y: 6, w: 4, h: 11 }, { x: 8, y: 6, w: 4, h: 11 }]
+      const land = m.landSize(pads)
+      const noCode = null                       // nothing readable from the name
+      const fits    = { lengthM: 12.0e-3, widthM: 12.0e-3 }
+      const tooBig  = { lengthM: 22.0e-3, widthM: 20.0e-3 }
+      const tiny    = { lengthM: 3.0e-3,  widthM: 3.0e-3 }
+      const noDims  = { caseCode: '' }
+      return {
+        land,
+        fits: m.packageMatches(noCode, fits, pads),
+        tooBig: m.packageMatches(noCode, tooBig, pads),
+        tiny: m.packageMatches(noCode, tiny, pads),
+        noDims: m.packageMatches(noCode, noDims, pads),
+        noPads: m.packageMatches(noCode, fits, []),
+      }
+    })
+    // measured off the pad extents: x spans -2..10 (12 mm), y spans 0.5..11.5
+    // (11 mm), longest axis first
+    expect(out.land.lMm).toBeCloseTo(12, 5)
+    expect(out.land.wMm).toBeCloseTo(11, 5)
+    // a part that fits the room is a match, and says the land decided
+    expect(out.fits).toMatchObject({ verdict: 'match', basis: 'land' })
+    // one that does not fit is rejected rather than shrugged at
+    expect(out.tooBig).toMatchObject({ verdict: 'differs', basis: 'land' })
+    // a smaller part still fits a bigger land
+    expect(out.tiny).toMatchObject({ verdict: 'match', basis: 'land' })
+    // and with nothing to compare, nothing is claimed
+    expect(out.noDims).toMatchObject({ verdict: 'unknown', basis: null })
+    expect(out.noPads).toMatchObject({ verdict: 'unknown', basis: null })
+  })

@@ -14,7 +14,8 @@ import { si } from '@kelvin/units.js'
 import CurveChart from '@kelvin/components/CurveChart.vue'
 import { ALL_FAMILIES, familyOrder, mpnCandidates, valueOf, packageOf, footprintName,
          identify, searchMpn, candidatesByValue, manufacturersOf, crossReference,
-         recordOf, valueStringFor, packageMatches, rowSize, sourcePart } from '../parts.js'
+         recordOf, valueStringFor, packageMatches, rowSize, dimsOf, landSize,
+         sourcePart } from '../parts.js'
 
 const props = defineProps({
   report: { type: Object, required: true },
@@ -116,7 +117,7 @@ async function start() {
     }
     if (!original.value && value.value) {
       status.value = `matching ${si(value.value.si, value.value.unit)}${pkg.value ? ' in ' + pkg.value.code : ''}…`
-      valueHits.value = await candidatesByValue(value.value, pkg.value)
+      valueHits.value = await candidatesByValue(value.value, pkg.value, { land: pads.value })
       status.value = ''
     }
   } catch (e) {
@@ -198,6 +199,7 @@ function view(hit) { viewing.value = hit; loadRecord(hit) }
 // Only the part NUMBER leaves the browser. It is a public string printed on
 // the component; the layout stays here, as it does for everything else.
 async function askLibrarian(mpn) {
+  if (!mpn) return
   sourcing.value = true; sourceErr.value = ''; sourced.value = null
   try {
     // The board's family guess travels as a HINT and the librarian may
@@ -225,6 +227,16 @@ async function askLibrarian(mpn) {
 // Faraday's family keys -> the librarian's category vocabulary. Only the ones
 // that mean the same thing on both sides; anything else travels as no hint at
 // all rather than as a wrong one.
+// what each source is called in the trail
+const BASIS_TITLE = {
+  size: "checked against the part's own measured body, which outranks its case string",
+  case: 'checked against the case code, the only size this record states',
+  land: "no standard code on either side, so this was checked against the room "
+        + "the footprint's own pads leave on the board",
+}
+
+const SOURCE_LABEL = { digikey: 'Digi-Key', mouser: 'Mouser', datasheet: 'its datasheet' }
+
 const SOURCE_HINT = {
   mosfet: 'mosfet', diode: 'diode', capacitor: 'capacitor', resistor: 'resistor',
   igbt: 'igbt', magnetic: 'magnetic', connector: 'connector', timing: 'timeBase',
@@ -282,13 +294,17 @@ const FIT = { same: 'fits', smaller: 'smaller', larger: 'larger', different_land
               unknown: '—' }
 const mfrTop = computed(() => mfrs.value.slice(0, 18))
 
+// The box is a part-number field, so what it holds is what gets sourced.
+// Falling back to the board's own number keeps the one-click case.
+const sourceTarget = computed(() => (query.value || '').trim() || candidates.value[0] || '')
+
 const adoptable = computed(() => {
   if (!comp.value || comp.value.value || !original.value) return null
   return valueStringFor(original.value.family, original.value.row)
 })
 
-const pkgOf = r => packageMatches(pkg.value, r).verdict
-const pkgBasis = r => packageMatches(pkg.value, r).basis
+const pkgOf = r => packageMatches(pkg.value, r, pads.value).verdict
+const pkgBasis = r => packageMatches(pkg.value, r, pads.value).basis
 
 watch(() => props.refdes, start, { immediate: true })
 </script>
@@ -386,11 +402,15 @@ watch(() => props.refdes, start, { immediate: true })
               <span class="dim"> (±{{ (valueHits.tol * 100).toFixed(1) }}% of the value;
                 {{ valueHits.scanned }} of {{ valueHits.total }} value matches scanned<template
                 v-if="valueHits.bySize">, {{ valueHits.bySize }} checked against the part's own
-                measured body and {{ valueHits.byCase }} against its case code</template><template
-                v-if="valueHits.unknownCase.length">, {{ valueHits.unknownCase.length }} state
-                neither a size nor a case code and are not shown</template><template
-                v-if="valueHits.differs.length">, {{ valueHits.differs.length }} are a different
-                size</template>).</span>
+                measured body</template><template
+                v-if="valueHits.byCase">, {{ valueHits.byCase }} against its case code</template><template
+                v-if="valueHits.byLand">, {{ valueHits.byLand }} against the room this
+                footprint's pads actually leave ({{ valueHits.land.lMm.toFixed(1) }} ×
+                {{ valueHits.land.wMm.toFixed(1) }} mm)</template><template
+                v-if="valueHits.unknownCase.length">, {{ valueHits.unknownCase.length }} publish
+                no size at all and are not shown</template><template
+                v-if="valueHits.differs.length">, {{ valueHits.differs.length }} do not
+                fit</template>).</span>
               Pick one to read its record and cross-reference from it — the board does not say which part it is.
             </p>
             <ul class="hits">
@@ -406,8 +426,8 @@ watch(() => props.refdes, start, { immediate: true })
             <p v-if="valueHits.rows.length > 25" class="dim">
               first 25 of {{ valueHits.rows.length }} shown — narrow it with the part-number search below</p>
             <p v-if="valueHits.unknownCase.length" class="dim">
-              {{ valueHits.unknownCase.length }} value match(es) publish neither a body size nor a case
-              code, so nothing could be checked against the footprint:
+              {{ valueHits.unknownCase.length }} value match(es) publish no body size and no case
+              code, so there is nothing to compare against this footprint:
               <button class="lnk" @click="valueHits.rows = valueHits.unknownCase">show them anyway</button>
             </p>
           </div>
@@ -430,12 +450,12 @@ watch(() => props.refdes, start, { immediate: true })
           <!-- ================= sourcing an unknown part ================= -->
           <div v-if="!original && candidates.length" class="source" data-testid="part-source">
             <p v-if="!sourced">
-              <button class="chip real" data-testid="part-source-btn" :disabled="sourcing"
-                      @click="askLibrarian(candidates[0])">
-                {{ sourcing ? 'asking the librarian…' : `look ${candidates[0]} up at the distributor` }}</button>
-              <span class="dim"> — Heaviside's librarian searches the distributor, converts the
-                result to a catalogue record, schema-validates it, and stages it for the
-                catalogue. Only the part number is sent.</span>
+              <button class="chip real" data-testid="part-source-btn" :disabled="sourcing || !sourceTarget"
+                      @click="askLibrarian(sourceTarget)">
+                {{ sourcing ? 'sourcing…' : `source ${sourceTarget} from the web` }}</button>
+              <span class="dim"> — the librarian asks Digi-Key, then Mouser, then goes and reads
+                the part's own datasheet. What it finds is schema-checked, physics-checked and
+                staged for a librarian to apply. Only the part number is sent.</span>
             </p>
             <p v-if="sourceErr" class="err" data-testid="part-source-error">{{ sourceErr }}</p>
             <template v-if="sourced">
@@ -444,6 +464,11 @@ watch(() => props.refdes, start, { immediate: true })
                 <b>{{ sourced.category }}</b> record.
                 <span class="tag ok">schema-valid</span>
                 <span class="dim">{{ sourced.storedReason }}</span>
+                <template v-if="sourced.readFrom">
+                  Read from <a :href="sourced.readFrom" target="_blank" rel="noopener"
+                     class="mono ds-link">the datasheet itself</a> — the numbers were extracted
+                  from that document, so check them there before trusting them.
+                </template>
                 It is <b>not in the catalogue yet</b>, so it cannot be cross-referenced here —
                 that needs the index rebuilt.
               </p>
@@ -451,6 +476,12 @@ watch(() => props.refdes, start, { immediate: true })
                 The librarian could not source <b class="mono">{{ sourced.mpn }}</b>:
                 {{ sourced.reason }}
               </p>
+              <ul v-if="sourced.attempts?.length" class="trail" data-testid="part-source-trail">
+                <li v-for="a in sourced.attempts" :key="a.source">
+                  <b>{{ SOURCE_LABEL[a.source] ?? a.source }}</b>
+                  <span :class="a.outcome === 'found' ? 'ok' : 'dim'">{{ a.outcome }}</span>
+                </li>
+              </ul>
             </template>
           </div>
 
@@ -485,14 +516,12 @@ watch(() => props.refdes, start, { immediate: true })
               <h4 class="mono">{{ viewing.row.mpn }}</h4>
               <span class="dim">{{ viewing.row.manufacturer }}</span>
               <span v-if="info?.status" class="tag" :class="{ ok: info.status === 'production' }">{{ info.status }}</span>
-              <span v-if="viewing.row.caseCode || rowSize(viewing.row)" class="tag"
+              <span v-if="viewing.row.caseCode || dimsOf(viewing.row)" class="tag"
                     :class="{ ok: pkgOf(viewing.row) === 'match', warn: pkgOf(viewing.row) === 'differs' }"
-                    :title="pkg
-                      ? `the board's footprint reads as ${pkg.code}; this was checked by ${pkgBasis(viewing.row) === 'size' ? 'the part\'s measured body, which outranks its case string' : 'the case code, the only size this record carries'}`
-                      : 'no package could be read from the footprint name'">
-                {{ pkgBasis(viewing.row) === 'size'
-                   ? `${rowSize(viewing.row).lMm.toFixed(2)} × ${rowSize(viewing.row).wMm.toFixed(2)} mm`
-                   : `case ${viewing.row.caseCode}` }}</span>
+                    :title="BASIS_TITLE[pkgBasis(viewing.row)] ?? 'nothing could be compared against this footprint'">
+                {{ pkgBasis(viewing.row) === 'case'
+                   ? `case ${viewing.row.caseCode}`
+                   : `${dimsOf(viewing.row).lMm.toFixed(2)} × ${dimsOf(viewing.row).wMm.toFixed(2)} mm` }}</span>
               <span v-if="viewing !== original" class="dim">
                 — <button class="lnk" @click="view(original)">back to {{ original.row.mpn }}</button></span>
               <div class="sp" />
@@ -713,6 +742,11 @@ h4 { font-size: 15px; color: var(--silk); }
 .legend { font-size: 11px; }
 .caveat { font-size: 11px; border-top: 1px solid var(--resin-edge); padding-top: 8px; }
 .adopt { font-size: 12px; }
+.trail { list-style: none; display: flex; flex-direction: column; gap: 2px; font-size: 11.5px; }
+.trail li { display: flex; gap: 8px; }
+.trail b { min-width: 92px; color: var(--tin); font-weight: normal; }
+.trail .ok { color: var(--heat-low); }
+.ds-link { color: var(--copper); }
 .source {
   border: 1px dashed var(--resin-edge); border-radius: 6px; padding: 10px 12px;
   display: flex; flex-direction: column; gap: 6px; font-size: 12.5px;
