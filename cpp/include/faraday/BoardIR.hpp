@@ -297,6 +297,18 @@ inline nlohmann::json to_json(const BoardIR& b) {
                              {"net", p.net},
                              {"x", p.x}, {"y", p.y}, {"w", p.w}, {"h", p.h},
                              {"th", p.through_hole}, {"cu", p.cu}});
+    // The parts themselves. Pads already name their component, but the
+    // viewer needs the part's own facts — value, footprint, placement — to
+    // draw it as a body and to ask a parts catalogue about it. What the
+    // export did not carry stays empty here (an Altium ODB++ job writes the
+    // part number in the footprint slot and no value): the viewer says so
+    // rather than inventing one.
+    j["components"] = nlohmann::json::array();
+    for (const auto& c : b.components)
+        j["components"].push_back({{"ref", c.reference},
+                                   {"footprint", c.footprint},
+                                   {"value", c.value},
+                                   {"x", c.x}, {"y", c.y}, {"rot", c.rot_deg}});
     j["bbox"] = {b.bbox_x1, b.bbox_y1, b.bbox_x2, b.bbox_y2};
     j["bboxFromOutline"] = b.bbox_from_outline;
     j["approximatedArcs"] = b.approximated_arcs;

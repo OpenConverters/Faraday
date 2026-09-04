@@ -329,6 +329,52 @@ instead and tin-plated steel beats brass by ~49 dB. Same can, opposite lever.
 It carries no dBµV/m, no limit line and no pass/fail: there is no reliable near-field to
 far-field transform. See [docs/near-field-map-design.md](docs/near-field-map-design.md).
 
+## The parts — click one, read the datasheet, get a cross-reference
+
+Every component is drawn on the board as a body over its pads (the IR carries no
+courtyard, so a part is a black box in the literal sense: the union of its pads and
+a margin), with its reference on it once there is room. The **parts** chip turns the
+layer off. Hovering says reference, value, footprint, pin count and side; **clicking
+opens the part inspector**, which is what a PCB explorer shows and then what only this
+one can:
+
+- **On the board**: every pin and the net it is on, the layer, the placement, and the
+  review's findings that touch the part's nets — one click jumps to the finding.
+- **In the catalogue** — [Kelvin](https://kelvin.openconverters.com), the OpenConverters
+  parts librarian, read *in the browser* (same-origin shards, one record per HTTP Range
+  read; the board never leaves the machine). A part number on the board is looked up as
+  an exact string, and the inspector says which catalogue families it searched and
+  whether the hit was exact or a substring. The record comes back with the
+  manufacturer's own **datasheet link**, the headline specs, every curve the datasheet
+  carries, and the flattened spec sheet. When the export carried a part number and no
+  value (Altium's ODB++), the record's value can be **adopted onto the board** in one
+  click, so the PDN and the conducted models get the capacitance they refuse to guess.
+- **No part number?** A KiCad board says `100n` in a `C_0603` — a value, not a part. The
+  inspector matches the value (inside an E-series step) and the package read off the
+  footprint name against the catalogue and lists what fits, stating how many value
+  matches it scanned, how many carry no case code, and how many sit in another package.
+  Pick one and it becomes the original for the record and the cross-reference.
+- **Cross-references**: Kelvin's own deterministic ranker (the C++ `CrossRef` behind
+  kelvin.openconverters.com, imported from the sibling checkout — never a second
+  implementation) scores every candidate from the manufacturers you mark against the
+  original's datasheet numbers: per-parameter pass/warn/fail, a grade (drop-in · minor
+  review · major review · redesign · no substitute), the direction (upgrade/downgrade),
+  physical fit, mount type, AEC-Q grade and lifecycle. Default question: *any other
+  manufacturer*. When the original's own gating parameter is not in the catalogue, no
+  candidate can grade better than partial, and the table says so.
+
+A refdes prefix is a convention, not a contract — ANSI, DIN and IEC disagree on what
+`T`, `Q` and `L` mean — so prefixes only *order* the families searched; the footprint
+name and the value's unit letter weigh in first, and the remaining families are one
+click away with the download cost stated. A verdict is a catalogue comparison, not a
+qualification: read both datasheets.
+
+Serving: the engine (`/kelvin.js`) and the data set (`/kelvin/*`) are same-origin — the
+CSP allows nothing else. Prod nginx serves Kelvin's deployed bundle and the box's shared
+`/cache/kelvin` (`ops/faraday.nginx`); the dev server proxies both from the live Kelvin
+site, so a local board talks to the real catalogue. Kelvin's web sources are imported at
+build time from `../../Kelvin/web/src` (`KELVIN_WEB_SRC` to override).
+
 ## PDN impedance — measured off the board
 
 The **pdn** chip turns every decoupling capacitor into a series R-L-C branch whose

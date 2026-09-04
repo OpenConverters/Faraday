@@ -79,6 +79,31 @@ TEST_CASE("importer: fixture 2-layer board round-trips into the IR", "[importer]
     CHECK(b.approximated_arcs == 0);
 }
 
+TEST_CASE("board json carries the components the viewer draws and looks up",
+          "[importer][json]") {
+    BoardIR b = import_kicad(read_fixture("fixture_2layer.kicad_pcb"));
+    REQUIRE(!b.components.empty());
+    const nlohmann::json j = to_json(b);
+    REQUIRE(j.contains("components"));
+    REQUIRE(j["components"].size() == b.components.size());
+    const auto& c0 = j["components"][0];
+    CHECK(c0.at("ref").get<std::string>() == b.components[0].reference);
+    CHECK(c0.at("footprint").get<std::string>() == b.components[0].footprint);
+    CHECK(c0.at("value").get<std::string>() == b.components[0].value);
+    CHECK(c0.at("x").get<double>() == Approx(b.components[0].x));
+    CHECK(c0.at("y").get<double>() == Approx(b.components[0].y));
+    CHECK(c0.at("rot").get<double>() == Approx(b.components[0].rot_deg));
+    // every pad's component names a component the list carries — the viewer
+    // builds each part's body from its pads by that name
+    for (const auto& p : j["pads"]) {
+        const std::string ref = p.at("component").get<std::string>();
+        bool found = false;
+        for (const auto& c : j["components"])
+            if (c.at("ref").get<std::string>() == ref) found = true;
+        CHECK(found);
+    }
+}
+
 TEST_CASE("importer: no stackup and no user stackup -> loud refusal", "[importer]") {
     std::string txt = R"((kicad_pcb (version 20221018)
       (layers (0 "F.Cu" signal) (31 "B.Cu" signal))

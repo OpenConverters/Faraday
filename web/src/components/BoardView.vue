@@ -1,5 +1,6 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
+import { isPart, footprintName } from '../parts.js'
 
 const props = defineProps({
   report: { type: Object, required: true },
@@ -18,8 +19,10 @@ const props = defineProps({
   // already filtered by the rule chips — the board shows exactly what the list shows
   findings: { type: Array, required: true },
   selectedId: { type: String, default: '' },
+  // the part whose inspector is open, drawn brighter than the rest
+  selectedPart: { type: String, default: '' },
 })
-const emit = defineEmits(['select', 'toggleReturnPath', 'nearField', 'shield', 'pdn'])
+const emit = defineEmits(['select', 'toggleReturnPath', 'nearField', 'shield', 'pdn', 'part'])
 
 // Radiation attribution, decoded once per map into a byte per segment. Null
 // when the map is off, and every draw path checks for that rather than
@@ -58,6 +61,11 @@ const canvas = ref(null)
 const view = reactive({ scale: 1, ox: 0, oy: 0 })
 const layerVis = reactive({})
 const overlaysOn = ref(true)
+// The parts layer: every component as a body over its pads. The IR carries
+// no courtyard (no importer reads one), so a body is the union of the part's
+// pads plus a small margin — a black box in the literal sense, and enough to
+// be pointed at. Parts with no pads (holes, fiducials, logos) are not parts.
+const partsOn = ref(true)
 // Shield-can rubber band. Declared with the rest of the reactive state rather
 // than beside its handlers, because draw() reads it and a `const` further down
 // the file is in the temporal dead zone when the first draw fires.
@@ -66,6 +74,41 @@ const hover = ref(null) // { x, y, kind, lines: [...] , findingId? }
 
 const board = computed(() => props.report.board)
 const findings = computed(() => props.findings)
+
+const parts = computed(() => {
+  const b = board.value
+  const byRef = new Map()
+  for (const p of b.pads) {
+    if (!byRef.has(p.component)) byRef.set(p.component, [])
+    byRef.get(p.component).push(p)
+  }
+  const out = []
+  const last = b.copperNames.length - 1
+  for (const c of b.components ?? []) {
+    const pads = byRef.get(c.ref) ?? []
+    if (!isPart(c, pads)) continue
+    let x1 = 1e30, y1 = 1e30, x2 = -1e30, y2 = -1e30
+    let top = 0, bottom = 0, th = 0
+    for (const p of pads) {
+      x1 = Math.min(x1, p.x - p.w / 2); y1 = Math.min(y1, p.y - p.h / 2)
+      x2 = Math.max(x2, p.x + p.w / 2); y2 = Math.max(y2, p.y + p.h / 2)
+      if (p.th) th++
+      else if (p.cu === 0) top++
+      else if (p.cu === last) bottom++
+    }
+    const m = 0.15
+    const side = th && !top && !bottom ? 'through' : bottom > top ? 'bottom' : 'top'
+    out.push({ ...c, pads, side, x1: x1 - m, y1: y1 - m, x2: x2 + m, y2: y2 + m,
+               area: (x2 - x1 + 2 * m) * (y2 - y1 + 2 * m) })
+  }
+  // smallest first, so a capacitor sitting inside a connector's box is the
+  // one under the pointer, not the connector
+  out.sort((a, b) => a.area - b.area)
+  return out
+})
+const partVisible = p =>
+  p.side === 'bottom' ? layerVis[board.value.copperNames[board.value.copperNames.length - 1]]
+                      : layerVis[board.value.copperNames[0]]
 
 const HEAT = { high: '#ff5d5d', medium: '#ffb454', low: '#58c79a', info: '#9db4ad' }
 // intentional coupling and identified aggressors read as their own thing, not
@@ -389,6 +432,39 @@ function draw() {
     ctx.beginPath(); ctx.arc(vx, vy, (v.drill / 2) * view.scale, 0, 7); ctx.fill()
   }
 
+  // parts: a body over the pads, the reference on it once there is room
+  let drawn = 0
+  if (partsOn.value) {
+    ctx.font = '10px ' + getComputedStyle(el).getPropertyValue('--mono')
+    ctx.textAlign = 'center'
+    ctx.textBaseline = 'middle'
+    for (const p of parts.value) {
+      if (!partVisible(p)) continue
+      const [ax, ay] = toScreen(p.x1, p.y1)
+      const [cx, cy] = toScreen(p.x2, p.y2)
+      const w = cx - ax, h = cy - ay
+      const sel = p.ref === props.selectedPart
+      ctx.fillStyle = sel ? 'rgba(217,139,95,0.28)' : 'rgba(6,9,8,0.62)'
+      ctx.strokeStyle = sel ? '#e8955c' : (p.side === 'bottom' ? 'rgba(93,158,199,0.75)'
+                                                               : 'rgba(157,180,173,0.6)')
+      ctx.lineWidth = sel ? 2 : 1
+      if (sel) { ctx.shadowColor = '#e8955c'; ctx.shadowBlur = 14 }
+      ctx.beginPath()
+      ctx.roundRect(ax, ay, w, h, Math.min(3, w / 4, h / 4))
+      ctx.fill(); ctx.stroke()
+      ctx.shadowBlur = 0
+      if (w >= 22 && h >= 11) {
+        ctx.fillStyle = sel ? '#fff1e6' : 'rgba(230,237,232,0.85)'
+        ctx.save()
+        ctx.beginPath(); ctx.rect(ax, ay, w, h); ctx.clip()
+        ctx.fillText(p.ref, ax + w / 2, ay + h / 2)
+        ctx.restore()
+      }
+      drawn++
+    }
+  }
+  el.dataset.parts = String(drawn)
+
   paintShields()
 
   // risk overlays: heat on copper (the signature)
@@ -444,6 +520,11 @@ function hitTest(sx, sy) {
     }
   }
   const b = board.value
+  if (partsOn.value) {
+    for (const p of parts.value)
+      if (partVisible(p) && wx >= p.x1 && wx <= p.x2 && wy >= p.y1 && wy <= p.y2)
+        return { kind: 'part', p }
+  }
   for (let cu = 0; cu < b.copperNames.length; ++cu) {
     if (!layerVis[b.copperNames[cu]]) continue
     for (const s of b.segments)
@@ -467,6 +548,14 @@ function tooltipFor(hit) {
     else if (f.coupledLenMm) lines.push(`${f.coupledLenMm.toFixed(1)} mm`)
     lines.push('click to inspect')
     return { findingId: f.id, lines }
+  }
+  if (hit.kind === 'part') {
+    const p = hit.p
+    return { part: p.ref, lines: [
+      `${p.ref} · ${p.value || 'no value in the export'}`,
+      `${footprintName(p.footprint) || 'no footprint name'} · ${p.pads.length} pin(s) · ${p.side}`,
+      'click to inspect the part',
+    ] }
   }
   if (hit.kind === 'segment') {
     const s = hit.s
@@ -506,7 +595,9 @@ function onPointerMove(e) {
   // looks like a hand and it is weird")
   const hit = hitTest(sx, sy)
   hover.value = hit ? { x: sx, y: sy, ...tooltipFor(hit) } : null
-  canvas.value.style.cursor = hit?.findingId !== undefined || (hit && hit.kind === 'finding') ? 'pointer' : 'grab'
+  canvas.value.style.cursor =
+    hit?.findingId !== undefined || (hit && (hit.kind === 'finding' || hit.kind === 'part'))
+      ? 'pointer' : 'grab'
 }
 function onPointerUp(e) {
   const wasPan = panning?.moved
@@ -514,6 +605,7 @@ function onPointerUp(e) {
   if (wasPan) return
   const rect = canvas.value.getBoundingClientRect()
   const hit = hitTest(e.clientX - rect.left, e.clientY - rect.top)
+  if (hit?.kind === 'part') { emit('part', hit.p.ref); return }
   emit('select', hit?.kind === 'finding' ? hit.f.id : '')
 }
 function onWheel(e) {
@@ -580,7 +672,8 @@ watch(() => props.selectedId, id => {
   if (f) zoomTo(f)
   else draw()
 })
-watch([layerVis, overlaysOn, () => props.returnPath, () => props.nearField],
+watch([layerVis, overlaysOn, partsOn, () => props.returnPath, () => props.nearField,
+       () => props.selectedPart],
       () => draw())
 watch(() => props.findings, () => draw())
 // entering draw mode must drop the hover handler's inline cursor, or the
@@ -607,6 +700,10 @@ watch(() => props.drawingShield, on => {
               @click="layerVis[name] = !layerVis[name]">{{ name }}</button>
       <button class="lchip risk" :class="{ off: !overlaysOn }" data-testid="overlay-toggle"
               @click="overlaysOn = !overlaysOn">risk overlay</button>
+      <button class="lchip" :class="{ off: !partsOn }" data-testid="parts-toggle"
+              :style="{ '--c': '#e6ede8' }"
+              title="every component as a body over its pads — click one for its board facts, its catalogue record and datasheet, and cross-references"
+              @click="partsOn = !partsOn">parts</button>
       <button class="lchip rad" :class="{ off: !returnPath }" data-testid="rp-toggle"
               :style="{ '--c': '#ffb454' }"
               title="effective loop height of every trace — where the return current really flows. Geometry only, no assumed currents"

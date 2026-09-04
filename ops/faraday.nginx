@@ -33,6 +33,33 @@ server {
         types { application/wasm wasm; }
     }
 
+    # The parts inspector reads the Kelvin catalogue SAME-ORIGIN (the CSP allows
+    # no other host): Kelvin's own deployed engine bundle, and the data set
+    # (manifest + .kidx shards + the NDJSON catalogs the records are Range-read
+    # from) off the shared /cache volume — the SAME self-consistent set
+    # kelvin.openconverters.com and kirchhoff.openconverters.com serve. Not a
+    # backend; static files. The engine must be the one the shards were built
+    # for, which is why it is Kelvin's dist, never a copy kept here.
+    location = /kelvin.js {
+        include /etc/nginx/snippets/oc-security-headers.conf;
+        root /opt/kelvin/dist;
+        gzip_static on;
+        add_header Cache-Control "no-cache";
+    }
+    location ~ ^/kelvin/.+\.kidx$ {
+        include /etc/nginx/snippets/oc-security-headers.conf;
+        root /cache;
+        gzip_static on;
+        expires 1y;
+        add_header Cache-Control "public, immutable";
+    }
+    location /kelvin/ {
+        include /etc/nginx/snippets/oc-security-headers.conf;
+        root /cache;
+        gzip_static on;
+        add_header Cache-Control "no-cache";
+    }
+
     # Umami analytics — same-box OM instance, same-origin first-party tracker.
     location = /stats { return 308 /stats/; }
     location /stats/ {

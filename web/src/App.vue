@@ -9,6 +9,7 @@ import PdnPanel from './components/PdnPanel.vue'
 import ImpedancePanel from './components/ImpedancePanel.vue'
 import GlossaryPanel from './components/GlossaryPanel.vue'
 import StackupPanel from './components/StackupPanel.vue'
+import PartPanel from './components/PartPanel.vue'
 import { unzip } from './zip.js'
 
 // ── GUIDED vs ADVANCED ────────────────────────────────────────────────────
@@ -51,6 +52,28 @@ const stackupAssumed = ref(false)
 const stackupChoice = ref('')   // '' = from board file
 const selectedId = ref('')
 const dragOver = ref(false)
+// The part inspector: clicking a component's body on the board opens it —
+// the board's facts about the part, its catalogue record and datasheet, and
+// ranked cross-references, all read in the browser.
+const partRef = ref('')
+function gotoFinding(id) {
+  partRef.value = ''
+  selectedId.value = id
+}
+// A part the export left nameless (Altium's ODB++ writes part numbers, not
+// values) can take its value from the catalogue record the inspector found.
+// Same path as the CSV round trip: applyValues never overwrites a value the
+// board already carries, and the board is re-screened with it.
+async function adoptValue({ refdes, value }) {
+  if (!engine.value) return
+  const out = JSON.parse(engine.value.applyValues(`refdes,value\n${refdes},${value}\n`))
+  if (out.error) { valuesNote.value = out.error; return }
+  valuesNote.value = out.applied
+    ? `${refdes} takes ${value} from its catalogue record`
+    : `${refdes} already carries a value on the board — the layout outranks the catalogue`
+  partRef.value = ''
+  await reanalyze()
+}
 
 // The engine is a 650 kB WASM download and compile. On a fast local connection
 // it is ready before anyone can pick a file; on a real one it is not, and a
@@ -687,6 +710,8 @@ function toggleRule(rule) {
                    :shields="shields" :drawing-shield="drawingShield"
                    :has-switch-node="hasSwitchNode"
                    :sw-candidate-count="swCandidates.length"
+                   :selected-part="partRef"
+                   @part="r => partRef = r"
                    @select="id => selectedId = id"
                    @toggle-return-path="toggleReturnPath"
                    @near-field="toggleNearField"
@@ -833,6 +858,10 @@ function toggleRule(rule) {
     <GlossaryPanel v-if="glossaryOpen" :rule-counts="ruleCountMap"
                    :hidden-rules="hiddenRules"
                    @toggle-rule="toggleRule" @close="glossaryOpen = false" />
+
+    <PartPanel v-if="partRef && report" :report="report" :refdes="partRef"
+               :findings="findings"
+               @close="partRef = ''" @adopt="adoptValue" @goto="gotoFinding" />
 
     <StackupPanel v-if="stackupOpen" :initial="customStackup"
                   :copper-hint="suggestCopper"
