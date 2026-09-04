@@ -30,6 +30,9 @@ set -euo pipefail
 cd "$(dirname "$0")/.."
 
 HOST="${FARADAY_HOST:-root@51.15.253.66}"
+# the local dev server the live-vs-local gate compares against; 5199 may be
+# held by another project's dev server on a shared machine
+DEV_PORT="${FARADAY_DEV_PORT:-5199}"
 KEY="${FARADAY_KEY:-$HOME/.ssh/om_scaleway}"
 URL="${FARADAY_URL:-https://faraday.openconverters.com}"
 REMOTE_DIR=/opt/faraday/dist
@@ -102,10 +105,11 @@ echo "==> live engine vs a clean-HEAD build, and the app end to end"
 # the gate failed for a reason that had nothing to do with the deployment.
 # And never pipe this script through grep or tail — the pipeline's exit status
 # is the LAST command's, so a failing gate would report success.
-(cd web && nohup npx vite --port 5199 --strictPort >/tmp/faraday-deploy-dev.log 2>&1 &)
-trap 'pkill -f "vite --port 5199" 2>/dev/null || true' EXIT
+(cd web && nohup npx vite --port "$DEV_PORT" --strictPort >/tmp/faraday-deploy-dev.log 2>&1 &)
+trap 'pkill -f "vite --port $DEV_PORT" 2>/dev/null || true' EXIT
 sleep 8
-(cd web && FARADAY_E2E_BASE="$URL" npx playwright test deployed.spec.js --reporter=line)
+(cd web && FARADAY_E2E_BASE="$URL" FARADAY_LOCAL_BASE="http://localhost:$DEV_PORT" \
+    npx playwright test deployed.spec.js --reporter=line)
 (cd web && FARADAY_E2E_BASE="$URL" npx playwright test --grep "board loads" --reporter=line)
 
 echo "==> deployed and verified: $URL"
