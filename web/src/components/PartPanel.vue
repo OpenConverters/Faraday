@@ -182,9 +182,21 @@ function toggleMfr(m) {
 function markAllOthers() {
   marked.value = new Set(mfrs.value.map(([m]) => m).filter(m => m !== original.value?.row.manufacturer))
 }
+// Clearing is the fast way to ask about ONE vendor: the default marks every
+// other manufacturer, and un-ticking forty of them to leave one is not a
+// filter, it is a chore.
+function clearMfrs() {
+  marked.value = new Set()
+  xref.value = null
+  xrefErr.value = ''
+}
+const allOthersMarked = computed(() =>
+  mfrs.value.length > 0 &&
+  marked.value.size >= mfrs.value.filter(([m]) => m !== original.value?.row.manufacturer).length)
 
 async function runXref() {
-  if (!original.value || !marked.value.size) return
+  if (!original.value) return
+  if (!marked.value.size) { xref.value = null; xrefErr.value = ''; return }
   xrefBusy.value = true; xrefErr.value = ''; xref.value = null
   try {
     xref.value = await crossReference({
@@ -563,8 +575,11 @@ watch(() => props.refdes, start, { immediate: true })
           <div v-if="original" class="xref" data-testid="part-xref">
             <h3>Cross-references <span class="dim">— substitutes for {{ original.row.mpn }}, ranked by Kelvin</span></h3>
             <div class="mfrs">
-              <button class="chip" :class="{ on: marked.size === mfrs.length - 1 || marked.size === mfrs.length }"
+              <button class="chip" :class="{ on: allOthersMarked }" data-testid="mfr-all"
                       @click="markAllOthers(); runXref()">any other manufacturer</button>
+              <button class="chip" data-testid="mfr-none" :disabled="!marked.size"
+                      title="clear the selection, then pick the one manufacturer you want"
+                      @click="clearMfrs()">none</button>
               <button v-for="[m, n] in mfrTop" :key="m" class="chip mfr" :class="{ on: marked.has(m) }"
                       :disabled="m === original.row.manufacturer" :title="`${n} ${familyLabel(original.family)} parts`"
                       @click="toggleMfr(m); runXref()">{{ m }}</button>
@@ -572,6 +587,9 @@ watch(() => props.refdes, start, { immediate: true })
                 <input type="checkbox" v-model="sameType" @change="runXref" />
                 same {{ xfam.sameFacet.label }} only</label>
             </div>
+            <p v-if="!marked.size" class="dim" data-testid="part-xref-empty">
+              No manufacturer selected — pick one above, or take
+              <button class="lnk" @click="markAllOthers(); runXref()">any other manufacturer</button>.</p>
             <p v-if="xrefBusy" class="dim" data-testid="part-xref-busy">ranking…</p>
             <p v-if="xrefErr" class="err" data-testid="part-xref-error">{{ xrefErr }}</p>
             <template v-if="xref">

@@ -451,3 +451,31 @@ test('a footprint with no standard code is checked against the room its pads lea
     expect(out.noDims).toMatchObject({ verdict: 'unknown', basis: null })
     expect(out.noPads).toMatchObject({ verdict: 'unknown', basis: null })
   })
+
+
+test('the manufacturer filter can be cleared, so asking about one vendor is two clicks',
+  async ({ page }) => {
+    // The default marks every other manufacturer. Un-ticking forty of them to
+    // leave one is not a filter, it is a chore.
+    test.setTimeout(CATALOGUE_MS + LOAD_MS)
+    await loadFixture(page, PARTS)
+    await clickWorld(page, 25, 20)                 // Q1 = EPC2019, a catalogue part
+    await expect(page.getByTestId('part-xref-table')).toBeVisible({ timeout: CATALOGUE_MS })
+
+    // clearing empties the selection and says so, rather than silently
+    // leaving the previous ranking on screen
+    await page.getByTestId('mfr-none').click()
+    await expect(page.getByTestId('part-xref-empty')).toBeVisible()
+    await expect(page.getByTestId('part-xref-table')).toHaveCount(0)
+    await expect(page.getByTestId('mfr-none')).toBeDisabled()
+
+    // one click picks the single vendor, and the ranking is only that vendor's
+    const one = page.locator('[data-testid=part-xref] button.chip.mfr:not([disabled])').first()
+    const name = (await one.textContent()).trim()
+    await one.click()
+    await expect(page.getByTestId('part-xref-table')).toBeVisible({ timeout: CATALOGUE_MS })
+    const makers = await page.getByTestId('part-xref-table')
+      .locator('tbody tr:not(.notes) td:nth-child(3)').allTextContents()
+    expect(makers.length).toBeGreaterThan(0)
+    for (const m of makers) expect(m.trim()).toBe(name)
+  })
