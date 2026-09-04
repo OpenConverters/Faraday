@@ -265,6 +265,20 @@ test('a deployment without the librarian route says that, rather than failing si
       .toContainText('not configured on this deployment')
   })
 
+test('being rate limited is said in words, not as a bare status code', async ({ page }) => {
+  // The limiter answers with a status and no JSON body, so the naive path
+  // showed "HTTP 503" — which reads as the librarian being broken.
+  test.setTimeout(CATALOGUE_MS + LOAD_MS)
+  await stubLibrarian(page, route =>
+    route.fulfill({ status: 503, contentType: 'text/html', body: '<html>503</html>' }))
+  await loadFixture(page, PARTS)
+  await clickWorld(page, 25, 6)
+  await page.getByTestId('part-source-btn').click({ timeout: CATALOGUE_MS })
+  const err = page.getByTestId('part-source-error')
+  await expect(err).toContainText('rate limited')
+  await expect(err).not.toContainText('503')
+})
+
 test('a part the catalogue already has is never offered for sourcing', async ({ page }) => {
   test.setTimeout(CATALOGUE_MS + LOAD_MS)
   await loadFixture(page, PARTS)

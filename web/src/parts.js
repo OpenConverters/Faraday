@@ -481,6 +481,14 @@ export async function sourcePart(mpn, category = null, { signal } = {}) {
         'the librarian is not reachable from this site — the part-sourcing ' +
         'route is not configured on this deployment')
     }
+    // The limiter answers with a bare status and no JSON, so without this the
+    // message is "HTTP 503" — which reads as the librarian being broken rather
+    // than as you having asked it a lot in one minute.
+    if (res.status === 429 || res.status === 503) {
+      throw new Error(
+        'too many lookups in one minute — each one spends a real distributor ' +
+        'API call, so they are rate limited. Try again shortly.')
+    }
     throw new Error(String(detail))
   }
   if (!body || typeof body !== 'object') throw new Error('the librarian returned no answer')
