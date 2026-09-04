@@ -219,6 +219,138 @@ struct Overlap {
     Segment span_a, span_b;  // the overlapping portions (for the overlay)
 };
 
+// One conductor edge as the coupling search wants it: a straight run, however
+// many vertices the CAD file spent drawing it.
+struct RawEdge {
+    int net, cu;
+    double x1, y1, x2, y2, w;
+    bool pour_edge;
+};
+
+// Join endpoint-connected pieces of the same conductor into single straight
+// edges.
+//
+// WHY THIS EXISTS. Coupling is screened per segment PAIR and the overlap
+// lengths are then summed per net pair, but a piece shorter than min_run_mm is
+// dropped before it can contribute (the caller's floor). The comment there
+// claims the drop is exact because "an overlap can never exceed
+// min(len_a, len_b)" — true of ONE pair, false once lengths are summed: ten
+// collinear 0.5 mm pieces are a 5 mm run, and the floor threw all ten away.
+// So a 50 mm parallel run delivered as sub-millimetre vertices — a dense
+// imported polyline, an arc approximation, a re-routed track with a vertex
+// every few tenths — produced no finding at all.
+//
+// Merging first fixes that without paying for it: the pieces become one long
+// edge, which passes the floor AND leaves fewer, longer segments in the grid
+// than lowering the floor would (that filter took ulx3s from 2.4 s to 0.33 s
+// and is worth keeping).
+//
+// Only a chain that is genuinely STRAIGHT is merged. A chain is followed while
+// each step turns by less than `turn_cos` and the result is accepted only when
+// the pieces stay within `flat_tol_mm` of the straight line between the ends —
+// so a real corner splits the chain and a real curve keeps its pieces rather
+// than being flattened into a run it never was.
+inline std::vector<RawEdge> merge_collinear(const std::vector<RawEdge>& in,
+                                            double turn_cos = 0.999,
+                                            double flat_tol_mm = 0.02) {
+    // quantise endpoints: CAD coordinates are exact but arrive through float
+    // conversions, and "shares an endpoint" must not hinge on the last bit
+    const double q = 1e-4;  // 0.1 um, far below any real feature
+    auto key_of = [&](double x, double y) {
+        return std::make_pair((long long)std::llround(x / q),
+                              (long long)std::llround(y / q));
+    };
+    // group by conductor: net, layer, width, and kind
+    auto group_of = [](const RawEdge& e) {
+        return std::make_tuple(e.net, e.cu, (long long)std::llround(e.w / 1e-4),
+                               e.pour_edge);
+    };
+    std::map<std::tuple<int, int, long long, bool>, std::vector<size_t>> groups;
+    for (size_t i = 0; i < in.size(); ++i) groups[group_of(in[i])].push_back(i);
+
+    std::vector<RawEdge> out;
+    out.reserve(in.size());
+    for (auto& [g, idx] : groups) {
+        // endpoint -> the edges touching it, within this conductor
+        std::map<std::pair<long long, long long>, std::vector<size_t>> at;
+        for (size_t i : idx) {
+            at[key_of(in[i].x1, in[i].y1)].push_back(i);
+            at[key_of(in[i].x2, in[i].y2)].push_back(i);
+        }
+        std::set<size_t> used;
+        auto dir_of = [&](size_t i, bool forward) {
+            const RawEdge& e = in[i];
+            double dx = e.x2 - e.x1, dy = e.y2 - e.y1;
+            double L = std::hypot(dx, dy);
+            if (L <= 0) return std::pair<double, double>{0.0, 0.0};
+            return forward ? std::pair<double, double>{dx / L, dy / L}
+                           : std::pair<double, double>{-dx / L, -dy / L};
+        };
+        for (size_t seed : idx) {
+            if (used.count(seed)) continue;
+            double L0 = std::hypot(in[seed].x2 - in[seed].x1, in[seed].y2 - in[seed].y1);
+            if (!(L0 > 0)) { used.insert(seed); continue; }
+            used.insert(seed);
+            std::vector<size_t> chain{seed};
+            // walk both ways from the seed
+            double ax = in[seed].x1, ay = in[seed].y1;   // free end A
+            double bx = in[seed].x2, by = in[seed].y2;   // free end B
+            for (int side = 0; side < 2; ++side) {
+                double& ex = side == 0 ? bx : ax;
+                double& ey = side == 0 ? by : ay;
+                auto [ux, uy] = dir_of(seed, side == 0);
+                while (true) {
+                    auto it = at.find(key_of(ex, ey));
+                    if (it == at.end()) break;
+                    // a junction (more than two edges meet) ends the chain: the
+                    // conductor branches, and a branch is not this run
+                    std::vector<size_t> here;
+                    for (size_t j : it->second)
+                        if (!used.count(j)) here.push_back(j);
+                    if (it->second.size() != 2 || here.size() != 1) break;
+                    size_t nxt = here.front();
+                    const RawEdge& e = in[nxt];
+                    bool starts_here = key_of(e.x1, e.y1) == key_of(ex, ey);
+                    double nx = starts_here ? e.x2 : e.x1;
+                    double ny = starts_here ? e.y2 : e.y1;
+                    double dx = nx - ex, dy = ny - ey;
+                    double L = std::hypot(dx, dy);
+                    if (!(L > 0)) break;
+                    if ((ux * dx + uy * dy) / L < turn_cos) break;  // it turns
+                    used.insert(nxt);
+                    chain.push_back(nxt);
+                    ex = nx; ey = ny;
+                }
+            }
+            if (chain.size() == 1) { out.push_back(in[seed]); continue; }
+            // accept the merge only if the pieces really lie on the straight
+            // line between the two ends
+            double sx = bx - ax, sy = by - ay;
+            double S = std::hypot(sx, sy);
+            bool flat = S > 0;
+            if (flat) {
+                double nxr = sx / S, nyr = sy / S;
+                for (size_t j : chain) {
+                    for (auto [px, py] : {std::pair<double, double>{in[j].x1, in[j].y1},
+                                          std::pair<double, double>{in[j].x2, in[j].y2}}) {
+                        double off = std::abs(nxr * (py - ay) - nyr * (px - ax));
+                        if (off > flat_tol_mm) { flat = false; break; }
+                    }
+                    if (!flat) break;
+                }
+            }
+            if (!flat) {
+                for (size_t j : chain) out.push_back(in[j]);
+                continue;
+            }
+            RawEdge m = in[chain.front()];
+            m.x1 = ax; m.y1 = ay; m.x2 = bx; m.y2 = by;
+            out.push_back(m);
+        }
+    }
+    return out;
+}
+
 // Parallel-overlap of two near-parallel segments; nullopt when the pair is
 // not parallel within tol or the projected overlap is below min_run.
 inline std::optional<Overlap> parallel_overlap(const SegRef& a, const SegRef& b,
@@ -495,6 +627,7 @@ class Screener {
                 {"bboxFromOutline", b_.bbox_from_outline},
                 {"stackupSource", b_.stackup.source},
                 {"droppedBelowFloorDb", dropped_below_floor_},
+                {"collinearEdgesMerged", collinear_merged_},
                 {"droppedByFindingCap", dropped_by_cap_},
                 {"reportFloorDb", p_.report_floor_db},
                 {"crossingCheckSkippedPlanes", unverifiable},
@@ -1551,6 +1684,13 @@ class Screener {
         bool have_h = false;
         bool involves_pour = false;   // one side is a copper-pour boundary
         FindingGeom geom;
+        // Every overlap's (coupling, length). The headline dB is the WORST
+        // coupling and the headline length is the TOTAL, and on their own those
+        // two numbers cannot tell "50 mm all of it at 0.2 mm" from "5 mm at
+        // 0.2 mm and 45 mm at 2 mm" — the same sentence describes a serious
+        // defect and a non-issue. Keeping the pairs lets the finding say how
+        // much of the length is actually at the worst separation.
+        std::vector<std::pair<double, double>> k_len;
     };
 
     void find_coupled_runs(std::vector<Finding>& out) {
@@ -1584,9 +1724,14 @@ class Screener {
             refs[cu].push_back({net, cu, x1, y1, x2, y2, w, len,
                                 dx / len, dy / len, pour_edge, refs[cu].size()});
         };
+        // Join the pieces of each conductor into straight runs BEFORE the
+        // length floor sees them, or a run drawn with a vertex every few
+        // tenths of a millimetre is dropped piece by piece and never appears.
+        std::vector<detail::RawEdge> raw;
+        raw.reserve(b_.segments.size());
         for (const Segment& s : b_.segments) {
             if (s.net <= 0 || is_pour_net(s.net)) continue;  // pour nets only
-            add_ref(s.net, s.cu, s.x1, s.y1, s.x2, s.y2, s.width, false);
+            raw.push_back({s.net, s.cu, s.x1, s.y1, s.x2, s.y2, s.width, false});
         }
         // A copper pour that is NOT the reference plane is a signal/power
         // conductor, and its BOUNDARY is what couples to a nearby track. On
@@ -1598,9 +1743,14 @@ class Screener {
             for (size_t i = 0, n = z.pts.size(); i < n; ++i) {
                 const Point& a = z.pts[i];
                 const Point& c = z.pts[(i + 1) % n];
-                add_ref(z.net, z.cu, a.x, a.y, c.x, c.y, 0.0, true);
+                raw.push_back({z.net, z.cu, a.x, a.y, c.x, c.y, 0.0, true});
             }
         }
+        const size_t raw_before = raw.size();
+        raw = detail::merge_collinear(raw);
+        collinear_merged_ = raw_before - raw.size();
+        for (const auto& e : raw)
+            add_ref(e.net, e.cu, e.x1, e.y1, e.x2, e.y2, e.w, e.pour_edge);
         for (size_t cu = 0; cu < n_cu; ++cu)
             for (size_t k = 0; k < refs[cu].size(); ++k) grids[cu].insert(refs[cu][k], k);
 
@@ -1634,6 +1784,11 @@ class Screener {
             acc.min_edge_sep = std::min(acc.min_edge_sep, sep);
             acc.max_w = std::max({acc.max_w, w_a, w_b});
             acc.worst_k = std::max(acc.worst_k, k);
+            // bounded: a pathological board must not turn this into memory
+            // pressure. Beyond the cap the tail folds into the last bucket,
+            // which only ever makes the reported hot length larger (safe).
+            if (acc.k_len.size() < 4096) acc.k_len.push_back({k, ov.length});
+            else acc.k_len.back().second += ov.length;
             acc.have_h = acc.have_h || have_h;
             acc.involves_pour = acc.involves_pour || involves_pour;
             Segment ga = ov.span_a; ga.net = net_a; ga.cu = cu_a;
@@ -1727,6 +1882,16 @@ class Screener {
         for (auto& [key, acc] : pairs) {
             double mean_d = acc.len_x_d / acc.len;
             bool broadside = key.cu_a != key.cu_b;
+            // How much of the run is actually at the worst coupling, and what
+            // the whole run couples like in power. "Hot" is within 1 dB of the
+            // peak (k >= 0.891 * worst), which is the band a reader would call
+            // the same separation.
+            double hot_len = 0.0, k2_len = 0.0;
+            for (const auto& [kk, ll] : acc.k_len) {
+                if (kk >= 0.891 * acc.worst_k) hot_len += ll;
+                k2_len += kk * kk * ll;
+            }
+            const double k_rms = acc.len > 0 ? std::sqrt(k2_len / acc.len) : 0.0;
             Finding f;
             f.rule = "coupled-run";
             f.net_a = key.net_lo;
@@ -1736,13 +1901,40 @@ class Screener {
             f.coupled_len_mm = acc.len;
             f.min_sep_mm = acc.min_edge_sep;
             f.geom = std::move(acc.geom);
+            // The deep tier is handed the cross-section at the CLOSEST
+            // approach, so it must be given the length that is actually there.
+            // Pairing min_edge_sep with the total length simulated a coupled
+            // line that does not exist on this board, and overstated FEXT —
+            // which grows with length — by whatever fraction of the run sits
+            // further away.
             f.solve = cross_section_for(key.cu_a, key.cu_b, acc.w_a, acc.w_b,
-                                        acc.min_edge_sep, acc.len);
+                                        acc.min_edge_sep,
+                                        hot_len > 0 ? hot_len : acc.len);
             std::string kind = acc.involves_pour ? "pour-edge"
                              : broadside ? "broadside" : "edge";
             std::string where = broadside
                 ? b_.copper_names[key.cu_a] + "/" + b_.copper_names[key.cu_b]
                 : b_.copper_names[key.cu_a];
+            // Say which of the two shapes this is, because the headline
+            // cannot: the dB is the worst separation and the mm is the total.
+            char hotbuf[240];
+            std::string hot_note;
+            if (acc.have_h && acc.len > 0) {
+                const double frac = hot_len / acc.len;
+                if (frac >= 0.95) {
+                    std::snprintf(hotbuf, sizeof hotbuf,
+                                  "Effectively the whole run sits at that separation.");
+                } else {
+                    std::snprintf(hotbuf, sizeof hotbuf,
+                                  "Only %.1f mm of the %.1f mm is at that separation "
+                                  "(%.0f%%); over the whole run the coupling averages "
+                                  "%.1f dB in power. The headline figure is the worst "
+                                  "spot, not the run.",
+                                  hot_len, acc.len, 100.0 * frac,
+                                  tline::to_db(k_rms));
+                }
+                hot_note = hotbuf;
+            }
             char buf[160];
             if (acc.have_h) {
                 double db = tline::to_db(acc.worst_k);
@@ -1773,7 +1965,8 @@ class Screener {
                        "real coupling here is likelier near " +
                        std::to_string((int)std::lround(*f.next_db + 6.5)) +
                        " dB. Confirm with the field-solver tier. Mean centre "
-                       "separation " + std::to_string(mean_d).substr(0, 5) + " mm.";
+                       "separation " + std::to_string(mean_d).substr(0, 5) + " mm. " +
+                       hot_note;
             f.remediation = broadside
                 ? "Offset the runs laterally, route orthogonally on adjacent "
                   "layers, or move one net to a layer across a plane."
@@ -3351,6 +3544,10 @@ class Screener {
     ScreenerParams p_;
     std::vector<LayerModel> layers_;
     size_t dropped_below_floor_ = 0;
+    // conductor pieces joined into straight runs before the length floor —
+    // reported, because it is the difference between seeing a densely-drawn
+    // parallel run and not seeing it at all
+    size_t collinear_merged_ = 0;
     size_t dropped_by_cap_ = 0;
     size_t diff_pairs_recognized_ = 0;
     std::set<std::string> unverifiable_planes_;

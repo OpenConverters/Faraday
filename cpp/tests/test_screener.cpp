@@ -293,6 +293,136 @@ TEST_CASE("screener: board without any plane — loud, geometric-only", "[screen
     REQUIRE(w3 != nullptr);  // 3W is pure geometry, still checked
 }
 
+TEST_CASE("screener: a run drawn as many short segments is still a run",
+          "[screener][coupled]") {
+    // The defect this pins. Coupling is screened per segment PAIR and the
+    // overlap lengths are summed per net pair, but a piece shorter than
+    // min_run_mm (1 mm) was dropped BEFORE it could contribute. The comment
+    // justifying that called the drop exact, because "an overlap can never
+    // exceed min(len_a, len_b)" — true of one pair, false once lengths are
+    // summed. So a 40 mm parallel run delivered as 0.5 mm vertices, which is
+    // what a dense imported polyline or a re-routed track looks like,
+    // produced NO FINDING AT ALL while the identical geometry drawn as two
+    // long segments produced a high-severity one.
+    auto board = [](double piece_mm) {
+        std::string txt = R"((kicad_pcb
+          (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+          (net 0 "") (net 1 "AGGRESSOR") (net 2 "VICTIM") (net 3 "GND")
+        )";
+        // two parallel 40 mm tracks 0.25 mm apart, chopped into `piece_mm` bits
+        for (int net = 1; net <= 2; ++net) {
+            double y = net == 1 ? 10.0 : 10.25;
+            for (double x = 5.0; x < 45.0 - 1e-9; x += piece_mm) {
+                double x2 = std::min(x + piece_mm, 45.0);
+                char buf[256];
+                std::snprintf(buf, sizeof buf,
+                    "(segment (start %.4f %.4f) (end %.4f %.4f) (width 0.2) "
+                    "(layer \"F.Cu\") (net %d))\n", x, y, x2, y, net);
+                txt += buf;
+            }
+        }
+        txt += R"((zone (net 3) (net_name "GND") (layer "B.Cu")
+                    (filled_polygon (layer "B.Cu")
+                      (pts (xy 0 0) (xy 50 0) (xy 50 30) (xy 0 30)))))";
+        txt += ")";
+        return import_kicad(txt, builtin_stackup("default-2layer"));
+    };
+
+    // drawn as ONE segment per track: the reference answer
+    nlohmann::json whole = analyze_board(board(40.0));
+    const auto* cw = find_rule(whole["findings"], "coupled-run");
+    REQUIRE(cw != nullptr);
+    const double whole_len = (*cw)["coupledLenMm"].get<double>();
+    const double whole_db = (*cw)["nextDb"].get<double>();
+    CHECK(whole_len == Approx(40.0).margin(0.5));
+
+    // drawn as eighty 0.5 mm pieces per track: the SAME copper, so the same
+    // finding, to the same length and the same coupling
+    nlohmann::json diced = analyze_board(board(0.5));
+    const auto* cd = find_rule(diced["findings"], "coupled-run");
+    REQUIRE(cd != nullptr);
+    CHECK((*cd)["coupledLenMm"].get<double>() == Approx(whole_len).margin(0.5));
+    CHECK((*cd)["nextDb"].get<double>() == Approx(whole_db).margin(0.1));
+
+    // and the merge is reported rather than being an invisible rewrite
+    CHECK(diced["meta"]["collinearEdgesMerged"].get<size_t>() > 100);
+    CHECK(whole["meta"]["collinearEdgesMerged"].get<size_t>() == 0);
+}
+
+TEST_CASE("screener: the headline dB is the worst spot, and the finding says so",
+          "[screener][coupled]") {
+    // "12 dB over 50 mm" described both a serious defect and a non-issue,
+    // because the dB is the CLOSEST approach and the mm is the TOTAL. Two
+    // boards with the same headline must now read differently.
+    auto board = [](double far_gap_mm) {
+        char buf[900];
+        std::snprintf(buf, sizeof buf, R"((kicad_pcb
+          (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+          (net 0 "") (net 1 "A") (net 2 "B") (net 3 "GND")
+          (segment (start 5 10) (end 45 10) (width 0.2) (layer "F.Cu") (net 1))
+          (segment (start 5 %.3f) (end 10 %.3f) (width 0.2) (layer "F.Cu") (net 2))
+          (segment (start 10 %.3f) (end 45 %.3f) (width 0.2) (layer "F.Cu") (net 2))
+          (zone (net 3) (net_name "GND") (layer "B.Cu")
+            (filled_polygon (layer "B.Cu")
+              (pts (xy 0 0) (xy 50 0) (xy 50 30) (xy 0 30))))
+        ))", 10.25, 10.25, 10.0 + far_gap_mm, 10.0 + far_gap_mm);
+        return import_kicad(std::string(buf), builtin_stackup("default-2layer"));
+    };
+
+    // (a) close for its whole length. The report is held in a NAMED local:
+    // find_rule returns a pointer INTO it, and taking one into a temporary
+    // reads freed memory the moment the full expression ends.
+    nlohmann::json rep_all = analyze_board(board(0.25));
+    const auto* all_close = find_rule(rep_all["findings"], "coupled-run");
+    REQUIRE(all_close != nullptr);
+    const std::string d_all = (*all_close)["detail"].get<std::string>();
+    CHECK(d_all.find("whole run sits at that separation") != std::string::npos);
+
+    // (b) close for 5 mm, then a millimetre away for the remaining 35
+    nlohmann::json rep_spot = analyze_board(board(1.0));
+    const auto* one_spot = find_rule(rep_spot["findings"], "coupled-run");
+    REQUIRE(one_spot != nullptr);
+    const std::string d_spot = (*one_spot)["detail"].get<std::string>();
+    CHECK(d_spot.find("at that separation") != std::string::npos);
+    CHECK(d_spot.find("averages") != std::string::npos);
+    CHECK(d_spot.find("worst spot, not the run") != std::string::npos);
+
+    // the two are no longer described the same way
+    CHECK(d_all != d_spot);
+
+    // and the deep tier is handed the length that is really at the closest
+    // approach, not the whole run — pairing the two overstated FEXT
+    if (one_spot->contains("solve")) {
+        const double solve_len = (*one_spot)["solve"]["lengthMm"].get<double>();
+        const double total_len = (*one_spot)["coupledLenMm"].get<double>();
+        CHECK(solve_len < total_len);
+        CHECK(solve_len == Approx(5.0).margin(1.5));
+    }
+}
+
+TEST_CASE("screener: a real corner is not merged into a straight run",
+          "[screener][coupled]") {
+    // The merge must not flatten geometry. An L-shaped track is two runs, and
+    // joining them would invent a diagonal that is nowhere on the board.
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "A") (net 2 "B") (net 3 "GND")
+      (segment (start 5 10) (end 25 10) (width 0.2) (layer "F.Cu") (net 1))
+      (segment (start 25 10) (end 25 30) (width 0.2) (layer "F.Cu") (net 1))
+      (segment (start 5 10.25) (end 25 10.25) (width 0.2) (layer "F.Cu") (net 2))
+      (zone (net 3) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu")
+          (pts (xy 0 0) (xy 50 0) (xy 50 40) (xy 0 40))))
+    ))";
+    nlohmann::json rep = analyze_board(import_kicad(txt, builtin_stackup("default-2layer")));
+    // the corner stays a corner: nothing was merged
+    CHECK(rep["meta"]["collinearEdgesMerged"].get<size_t>() == 0);
+    const auto* cr = find_rule(rep["findings"], "coupled-run");
+    REQUIRE(cr != nullptr);
+    // only the horizontal leg runs parallel to net 2, so ~20 mm, not 40
+    CHECK((*cr)["coupledLenMm"].get<double>() == Approx(20.0).margin(1.0));
+}
+
 TEST_CASE("screener: far-apart traces produce no coupled-run finding", "[screener]") {
     std::string txt = R"((kicad_pcb
       (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
