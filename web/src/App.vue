@@ -350,11 +350,14 @@ const dvdtAreaMm2 = computed(() => meta.value?.dvdtCopper?.totalMm2 ?? 0)
 // every model that needs a capacitance — the PDN, the input branch, the Y-cap
 // rule — correctly refuses to invent one. This hands them back.
 const valuesNote = ref('')
-// Dismissing the card hides the ASK, never the consequence: the models that
-// need a capacitance stay quiet either way, so what is left behind is a single
-// line saying so, still carrying the way to fix it. A board whose values are
-// genuinely not coming should not have to scroll past the full card forever.
-const valuesDismissed = ref(false)
+// The values card in three states: the full ask, one line, gone. Dismissing
+// first collapses to the line — the models that need a capacitance stay quiet
+// either way, and that is worth one sentence — and dismissing again removes it
+// for this board. A board whose values are genuinely never coming should not
+// have to scroll past the note forever, and the refusal is still stated where
+// it bites: the PDN, the input branch and the Y-cap rule each say why they are
+// empty when you open them.
+const valuesCard = ref('full')   // 'full' | 'brief' | 'gone'
 const partsMissing = computed(() => {
   if (!engine.value || !report.value) return 0
   try {
@@ -423,48 +426,16 @@ function goHome() {
                       `This review carries ${lose.join(', ')}, which the board file ` +
                       `does not, so re-opening it will not bring them back.`))
     return
-  // the board and everything derived from it
-  report.value = null
-  boardText.value = ''
-  boardFiles.value = []
-  fileName.value = ''
-  error.value = ''
-  needStackup.value = false
-  stackupAssumed.value = false
-  stackupChoice.value = ''
-  stackupSuggest.value = ''
-  customStackup.value = null
-  valuesNote.value = ''
-  valuesDismissed.value = false
-  // what was selected, filtered or dismissed IN those findings
-  selectedId.value = ''
-  hiddenRules.value = new Set()
-  hiddenIds.value = new Set()
-  baselineReport.value = null
-  onlyChanges.value = false
-  sourcedParts.value = {}
-  // the overlays and the panels
-  returnPath.value = null
-  nearField.value = null
-  nfDetail.value = false
-  shields.value = []
-  drawingShield.value = false
-  partRef.value = ''
-  partIndex.value = null
-  sweepNote.value = ''
-  benchId.value = ''
-  emitId.value = ''
-  pdnOpen.value = false
-  calcOpen.value = false
-  glossaryOpen.value = false
-  stackupOpen.value = false
-  // The engine clears its own session promotions when a new board is imported
-  // (wasm.cpp: "new board, new session"), so this is not what protects the next
-  // board — it keeps the UI honest while the start screen is showing.
-  promotedNets.value = []
-  // a file input keeps its last selection, so re-opening the SAME board after
-  // going home would not fire a change event and nothing would happen
-  if (fileInput.value) fileInput.value.value = ''
+  // Navigate to the site's root rather than clearing thirty refs by hand. Two
+  // things this gets that the hand reset did not: the URL's #load= hash goes
+  // with it — leaving it behind meant a reload brought the closed board
+  // straight back — and nothing new can be forgotten here when a later feature
+  // adds state, which is how a "clear everything" list rots.
+  //
+  // The root of THIS origin, not a hardcoded address: in production that is
+  // https://faraday.openconverters.com/, and on a dev server it is the dev
+  // server, which is what anyone running one means by home.
+  window.location.assign(new URL('/', window.location.href).href)
 }
 
 const findings = computed(() => report.value?.findings ?? [])
@@ -515,7 +486,7 @@ function toggleReturnPath() {
 watch(report, () => { returnPath.value = null; rpError.value = '' })
 // A different board is a different question: it must ask again, even if the
 // last one was told to be quiet.
-watch(fileName, () => { valuesDismissed.value = false })
+watch(fileName, () => { valuesCard.value = 'full' })
 
 // The component near-field map: a different regime from the far-field
 // attribution, so it is a separate panel with its own units and its own caveat.
@@ -842,7 +813,7 @@ function toggleRule(rule) {
     <!-- Some exports carry part numbers and no values (Altium's ODB++ does).
          Say so once, where it is actionable, rather than only inside whichever
          panel refuses first. -->
-    <div v-if="report && partsMissing > 0 && !valuesDismissed"
+    <div v-if="report && partsMissing > 0 && valuesCard === 'full'"
          class="banner ask" data-testid="values-card">
       <p><b>{{ partsMissing }} component(s) carry a part number and no value</b> —
          this export wrote part numbers instead. Every model that needs a
@@ -857,13 +828,14 @@ function toggleRule(rule) {
         load component values (refdes, value)…</label>
       <button class="x" data-testid="values-dismiss" aria-label="Dismiss"
               title="Hide this. The models that need a value stay quiet."
-              @click="valuesDismissed = true">✕</button>
+              @click="valuesCard = 'brief'">✕</button>
     </div>
 
-    <!-- Dismissed, but not gone: the count and the way back stay on screen,
-         because the findings those models would have raised are still absent. -->
-    <div v-if="report && partsMissing > 0 && valuesDismissed"
-         class="banner wait" data-testid="values-dismissed">
+    <!-- One line: the count and the way back, for a board that has been told
+         once. Dismissed again it goes entirely — the models still refuse in
+         their own panels, so nothing silently becomes a guess. -->
+    <div v-if="report && partsMissing > 0 && valuesCard === 'brief'"
+         class="banner wait brief" data-testid="values-dismissed">
       {{ partsMissing }} component(s) still have no value — the models that need one
       stay quiet.
       <label class="chip">
@@ -872,7 +844,10 @@ function toggleRule(rule) {
                @change="e => { loadValues(e.target.files[0]); e.target.value = '' }" />
         load component values…</label>
       <button class="chip" data-testid="values-restore"
-              @click="valuesDismissed = false">show the full note</button>
+              @click="valuesCard = 'full'">show the full note</button>
+      <button class="x" data-testid="values-dismiss-fully" aria-label="Dismiss for this board"
+              title="Hide this for this board. The models that need a value still refuse."
+              @click="valuesCard = 'gone'">✕</button>
     </div>
 
     <!-- Outside the card on purpose: filling the values RETIRES the card, and
@@ -1197,9 +1172,11 @@ function toggleRule(rule) {
 .banner.error { background: #3a1a1e; color: #ffb3b8; font-family: var(--mono); }
 .banner.wait { background: var(--resin); color: var(--tin); font-family: var(--mono); }
 .banner.ask { background: #2a2418; color: var(--silk); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
-.banner.ask .x { margin-left: auto; background: none; border: 0; color: var(--tin);
-                 font-size: 15px; cursor: pointer; padding: 2px 6px; line-height: 1; }
-.banner.ask .x:hover { color: var(--silk); }
+.banner.brief { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.banner.ask .x, .banner.brief .x { margin-left: auto; background: none; border: 0;
+                 color: var(--tin); font-size: 15px; cursor: pointer;
+                 padding: 2px 6px; line-height: 1; }
+.banner.ask .x:hover, .banner.brief .x:hover { color: var(--silk); }
 .viewtoggle {
   display: inline-flex; border: 1px solid var(--resin-edge); border-radius: 999px;
   overflow: hidden; margin-right: 4px;

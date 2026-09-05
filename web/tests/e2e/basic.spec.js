@@ -293,6 +293,48 @@ test('the values card can be dismissed, without hiding what stays quiet',
     await expect(page.getByTestId('values-dismissed')).toHaveCount(0)
   })
 
+test('and the one line can be dismissed too, for a board whose values never come',
+  async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('faraday.view', 'advanced'))
+    await page.goto('/')
+    await page.getByTestId('file-input').setInputFiles({
+      name: 'no-values.kicad_pcb', mimeType: 'text/plain',
+      buffer: Buffer.from(NO_VALUES_BOARD),
+    })
+    const card = page.getByTestId('stackup-card')
+    await expect(card.or(page.getByTestId('values-card')).first())
+      .toBeVisible({ timeout: 30000 })
+    if (await card.count()) await card.getByText('Default 2-layer').click()
+    await expect(page.getByTestId('values-card')).toBeVisible({ timeout: 30000 })
+
+    await page.getByTestId('values-dismiss').click()
+    await expect(page.getByTestId('values-dismissed')).toBeVisible()
+    await page.getByTestId('values-dismiss-fully').click()
+    await expect(page.getByTestId('values-dismissed')).toHaveCount(0)
+    await expect(page.getByTestId('values-card')).toHaveCount(0)
+
+    // the board is still screened, and the models that need a value still say
+    // so where they are: nothing became a guess
+    await expect(page.getByTestId('board-canvas')).toBeVisible()
+  })
+
+test('the collapsed line can be expanded back to the full note', async ({ page }) => {
+    await page.addInitScript(() => localStorage.setItem('faraday.view', 'advanced'))
+    await page.goto('/')
+    await page.getByTestId('file-input').setInputFiles({
+      name: 'no-values.kicad_pcb', mimeType: 'text/plain',
+      buffer: Buffer.from(NO_VALUES_BOARD),
+    })
+    const card = page.getByTestId('stackup-card')
+    await expect(card.or(page.getByTestId('values-card')).first())
+      .toBeVisible({ timeout: 30000 })
+    if (await card.count()) await card.getByText('Default 2-layer').click()
+    await page.getByTestId('values-dismiss').click({ timeout: 30000 })
+    await page.getByTestId('values-restore').click()
+    await expect(page.getByTestId('values-card')).toBeVisible()
+    await expect(page.getByTestId('values-card')).toContainText('refuses to guess')
+  })
+
 test('with a simulated run loaded, Hertz gets THAT and not the seed',
   async ({ page, context }) => {
     // Two sources on one chart, and only one of them stands on a transient of

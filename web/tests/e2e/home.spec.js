@@ -50,6 +50,27 @@ test('the wordmark closes the board and returns to the start screen', async ({ p
   await expect(page.getByTestId('go-home')).toHaveCount(0)
 })
 
+test('going home lands on the site root, with no board left in the URL', async ({ page }) => {
+  // The wordmark now navigates rather than clearing thirty refs by hand, which
+  // is also what takes the #load= hash with it. Left behind, a reload brought
+  // the board that was just closed straight back.
+  await page.goto('/')
+  await page.getByTestId('load-demo').click()
+  await expect(page.getByTestId('finding-F-0001')).toBeVisible({ timeout: LOAD_MS })
+  expect(page.url()).toContain('#load=')
+
+  await page.getByTestId('go-home').click()
+
+  await expect(page.getByText('Drop a board here')).toBeVisible()
+  expect(new URL(page.url()).pathname).toBe('/')
+  expect(page.url()).not.toContain('#load=')
+
+  // and it stays gone across a reload — the point of dropping the hash
+  await page.reload()
+  await expect(page.getByText('Drop a board here')).toBeVisible()
+  await expect(page.getByTestId('finding-F-0001')).toHaveCount(0)
+})
+
 test('the SAME board can be opened again after going home', async ({ page }) => {
   // A file input keeps its last selection, so re-picking the same file fires
   // no change event — without clearing it, going home would strand you on the
