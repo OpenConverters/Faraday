@@ -51,6 +51,10 @@ const related = computed(() => {
 // ---- the catalogue's half --------------------------------------------------
 const value = computed(() => comp.value ? valueOf(comp.value) : null)
 const pkg = computed(() => comp.value ? packageOf(comp.value.footprint) : null)
+// An Altium ODB++ job carries an ordering code and no value at all, so saying
+// "no value in the export" there hides the one thing the board did tell us.
+const partTitle = computed(() =>
+  comp.value?.value || comp.value?.partNumber || 'no value in the export')
 const families = computed(() => comp.value ? familyOrder(comp.value) : [])
 const candidates = computed(() => comp.value ? mpnCandidates(comp.value) : [])
 
@@ -326,7 +330,7 @@ watch(() => props.refdes, start, { immediate: true })
     <section class="part" data-testid="part-panel" role="dialog" :aria-label="`Part ${refdes}`">
       <header class="phead">
         <h2>{{ refdes }}</h2>
-        <span class="val" data-testid="part-value">{{ comp?.value || 'no value in the export' }}</span>
+        <span class="val" data-testid="part-value">{{ partTitle }}</span>
         <span class="fp">{{ footprintName(comp?.footprint) || 'no footprint name' }} · {{ side }} ·
           {{ pads.length }} pin(s)</span>
         <div class="sp" />

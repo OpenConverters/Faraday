@@ -12,6 +12,7 @@
 #include <nlohmann/json.hpp>
 #include <optional>
 #include <stdexcept>
+#include <regex>
 #include <string>
 #include <vector>
 
@@ -179,9 +180,17 @@ struct Pad {
 
 struct Component {
     std::string reference;
-    std::string footprint;  // "lib:name"
+    std::string footprint;  // "lib:name", or a bare package ("CC3216-1206")
     std::string value;      // e.g. "100n", "STM32F4..."
     double x, y, rot_deg;
+    // The manufacturer's ordering code, when the export carried one as a
+    // field of its own. Altium's ODB++ does — and writes no value at all —
+    // so for those boards this is the only thing a catalogue can be asked
+    // about. Never a package name and never a placeholder: see the ODB++
+    // importer, which drops Altium's unresolved "=PartNumber" text. Last in
+    // the struct so the five-year-old {ref, fp, value, x, y, rot} aggregate
+    // initialisers in the other importers keep working.
+    std::string part_number;
 };
 
 struct BoardIR {
@@ -237,14 +246,40 @@ inline size_t apply_values(BoardIR& b, values::ValueTable& t) {
     return t.applied;
 }
 
+// Is this name just the part's PACKAGE? A chip code ("0603", "1206") or a
+// standard outline is a shape, not something a catalogue can look up, so it is
+// never offered as a part number. Deliberately narrow — it only has to catch
+// the package names EDA tools actually write; anything it misses is offered
+// and answered with "no such part", which is visible, whereas a package
+// wrongly kept as a part number is a lookup that quietly finds the wrong thing.
+inline bool looks_like_package(const std::string& name) {
+    static const std::regex chip(
+        R"((^|[^0-9])(0201|0402|0603|0805|1206|1210|1218|1806|1812|2010|2512|)"
+        R"(1005|1608|2012|3216|3225|4532)([^0-9]|$))");
+    static const std::regex outline(
+        R"((^|[^A-Za-z])(SOT-?\d+|TO-?\d+|D2?PAK|[SD]?QFN|QFP|TQFP|LQFP|SOIC|)"
+        R"(SOP|TSSOP|MSOP|SSOP|DIP|BGA|MELF|DO-?\d+|SMA|SMB|SMC|TESTPOINT))",
+        std::regex::icase);
+    return std::regex_search(name, chip) || std::regex_search(name, outline);
+}
+
 // Components whose value the export did NOT carry, with the part number it
 // carried instead — the question to ask a parts catalogue.
+//
+// ODB++ has a field of its own for this and the importer vets it, so it is
+// believed outright. A format without one (KiCad) sometimes has the part
+// number typed into the footprint slot, which is worth asking about — but
+// only when the name is not simply the package.
 inline std::vector<std::pair<std::string, std::string>> parts_without_values(
     const BoardIR& b) {
     std::vector<std::pair<std::string, std::string>> out;
-    for (const auto& c : b.components)
-        if (c.value.empty() && !c.footprint.empty())
+    for (const auto& c : b.components) {
+        if (!c.value.empty()) continue;
+        if (!c.part_number.empty())
+            out.push_back({c.reference, c.part_number});
+        else if (!c.footprint.empty() && !looks_like_package(c.footprint))
             out.push_back({c.reference, c.footprint});
+    }
     return out;
 }
 
@@ -300,13 +335,14 @@ inline nlohmann::json to_json(const BoardIR& b) {
     // The parts themselves. Pads already name their component, but the
     // viewer needs the part's own facts — value, footprint, placement — to
     // draw it as a body and to ask a parts catalogue about it. What the
-    // export did not carry stays empty here (an Altium ODB++ job writes the
-    // part number in the footprint slot and no value): the viewer says so
-    // rather than inventing one.
+    // export did not carry stays empty here (an Altium ODB++ job carries a
+    // part number and no value at all): the viewer says so rather than
+    // inventing one.
     j["components"] = nlohmann::json::array();
     for (const auto& c : b.components)
         j["components"].push_back({{"ref", c.reference},
                                    {"footprint", c.footprint},
+                                   {"partNumber", c.part_number},
                                    {"value", c.value},
                                    {"x", c.x}, {"y", c.y}, {"rot", c.rot_deg}});
     j["bbox"] = {b.bbox_x1, b.bbox_y1, b.bbox_x2, b.bbox_y2};

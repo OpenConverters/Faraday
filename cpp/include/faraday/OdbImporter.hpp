@@ -6,7 +6,7 @@
 //   matrix/matrix                     layer list: order, type, drill spans
 //   steps/<s>/layers/<l>/features     copper geometry (lines, pads, surfaces)
 //   steps/<s>/layers/<l>/components   CMP/TOP records: refdes, values, pins
-//   steps/<s>/eda/data                nets, and the feature-to-net mapping
+//   steps/<s>/eda/data                nets, feature-to-net mapping, packages
 //   steps/<s>/profile                 the board outline
 //
 // Net identity is EXACT here — eda/data's FID records name the net of every
@@ -369,6 +369,7 @@ inline BoardIR import_odb(const std::vector<NamedFile>& files,
             "a net, and netless analysis is meaningless for the net-aware "
             "rules. Export with EDA data included.");
     std::vector<std::string> eda_lyrs;             // FID layer index → name
+    std::vector<std::string> eda_pkgs;             // CMP pkg index → name
     struct FeatNet { int net = 0; char subnet = 0; int comp = -1, pin = -1; char side = 0; };
     std::map<std::pair<int, int>, FeatNet> feat_net;  // (lyr idx, feat idx)
     int n_nets = 0;
@@ -384,7 +385,14 @@ inline BoardIR import_odb(const std::vector<NamedFile>& files,
             if (line.empty() || line[0] == '#') continue;
             const auto t = detail::tokens(line);
             if (t.empty()) continue;
-            if (t[0] == "LYR") {
+            if (t[0] == "PKG" && t.size() >= 2) {
+                // The step's package table, in file order. A CMP record names
+                // its footprint only by index into THIS list, so without it a
+                // part has no package at all — and Altium, which writes no
+                // value, then offers nothing that could be checked against a
+                // catalogue's case code.
+                eda_pkgs.push_back(t[1]);
+            } else if (t[0] == "LYR") {
                 eda_lyrs.assign(t.begin() + 1, t.end());
             } else if (t[0] == "NET" && t.size() >= 2) {
                 cur_net = n_nets++;
@@ -497,11 +505,35 @@ inline BoardIR import_odb(const std::vector<NamedFile>& files,
             if (t[0] == "CMP" && t.size() >= 7) {
                 ++cmp_idx;
                 cur_ref = t[6];
-                b.components.push_back({cur_ref,
-                                        t.size() >= 8 ? t[7] : "", "",
+                // CMP <pkg> <x> <y> <rot> <mirror> <refdes> [<part number>].
+                // The first field is an index into eda/data's PKG table, and
+                // that is where the real footprint lives ("CC3216-1206") —
+                // reading the part number as the footprint instead left every
+                // Altium board without a package to check a candidate against.
+                const long pkg = std::atol(t[1].c_str());
+                std::string fp;
+                if (pkg >= 0 && pkg < static_cast<long>(eda_pkgs.size()))
+                    fp = eda_pkgs[static_cast<size_t>(pkg)];
+                // The trailing field is the component's part name. Altium
+                // puts the manufacturer's ordering code there; kicad-cli puts
+                // the footprint's library name. Only the former is worth
+                // asking a catalogue about, and two rules separate them:
+                std::string part = t.size() >= 8 ? t[7] : "";
+                // Altium writes the literal parameter expression when a
+                // component's Part Number is unbound ("=PartNumber"). It is
+                // absence wearing a value's clothes; passing it on sends a
+                // catalogue looking for a part called "=PartNumber".
+                if (!part.empty() && (part[0] == '=' || part[0] == ';'))
+                    part.clear();
+                // ...and a field that merely repeats the package is the
+                // footprint again ("Resistor_SMD_R_0603_1608Metric" around
+                // package "R_0603_1608Metric"), not an ordering code.
+                if (!fp.empty() && part.find(fp) != std::string::npos)
+                    part.clear();
+                b.components.push_back({cur_ref, fp, "",
                                         std::atof(t[2].c_str()) * cunit,
                                         -std::atof(t[3].c_str()) * cunit,
-                                        std::atof(t[4].c_str())});
+                                        std::atof(t[4].c_str()), part});
                 // rewrite the placeholder component keys on pads
                 const std::string key =
                     "\x01" + std::string(1, top ? 'T' : 'B') +

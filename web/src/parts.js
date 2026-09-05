@@ -122,8 +122,18 @@ export function packageOf(footprint) {
   let m = name.match(/(\d{4})Metric/i) || name.match(/^(?:CAP|RES|IND|LED|DIO)[A-Z]*(\d{4})X/i)
   if (m && METRIC_TO_IMPERIAL[m[1]])
     return { code: METRIC_TO_IMPERIAL[m[1]], kind: 'chip' }
-  m = name.match(/(?:^|[^0-9])(\d{4})(?![0-9])/)
-  if (m && IMPERIAL.has(m[1])) return { code: m[1], kind: 'chip' }
+  // EVERY four-digit run, not just the first: Altium's libraries name a chip
+  // by both codes at once ("CC1608-0603", "CC3216-1206"), and taking only the
+  // leading run found the metric half, failed to recognise it as imperial,
+  // and gave up — so a board full of ordinary 0603s had no package at all.
+  // An imperial code wins where a name carries both; a lone metric run is
+  // converted.
+  let metric = null
+  for (const g of name.matchAll(/(?:^|[^0-9])(\d{4})(?![0-9])/g)) {
+    if (IMPERIAL.has(g[1])) return { code: g[1], kind: 'chip' }
+    if (!metric && METRIC_TO_IMPERIAL[g[1]]) metric = METRIC_TO_IMPERIAL[g[1]]
+  }
+  if (metric) return { code: metric, kind: 'chip' }
   m = name.match(PKG_RE)
   if (m) return { code: m[1].toUpperCase().replace(/[-\s]/g, ''), kind: 'pkg' }
   return null
@@ -254,7 +264,8 @@ export function isPart(comp, pads) {
   if (!pads?.length) return false
   // a mounting hole with a plated pad, a fiducial, a test point, a logo: on
   // the board, but nothing a catalogue could be asked about
-  if (NOT_A_PART.test(comp.value || '') || NOT_A_PART.test(footprintName(comp.footprint)))
+  if (NOT_A_PART.test(comp.value || '') || NOT_A_PART.test(comp.partNumber || '') ||
+      NOT_A_PART.test(footprintName(comp.footprint)))
     return false
   return true
 }
@@ -283,24 +294,32 @@ export function valueOf(comp) {
 }
 
 // ---- what might be a part number ------------------------------------------
-// The value field first ("IPA045N10N3G", "BC846B"); and when the export wrote
-// the part number in the footprint slot and no value at all (Altium's ODB++
-// does), the footprint name. A footprint that is plainly a package
+// The export's own part-number field first, when it has one — an Altium ODB++
+// job carries the ordering code there and no value at all — then the value
+// field ("IPA045N10N3G", "BC846B"). A footprint that is plainly a package
 // ("SOT-23", "C_0603_1608Metric") is never offered as a part number.
 export function mpnCandidates(comp) {
   const out = []
-  const push = s => {
+  // A field the CAD tool labelled "part number" is believed on that say-so,
+  // so an all-digit ordering code (Wurth's 885342208014, Murata's 22105C104)
+  // is kept. A token merely SCRAPED from a value or footprint has to look
+  // like a part number, because there most digit runs are a value.
+  const push = (s, { stated = false } = {}) => {
     const t = String(s || '').trim().split(/\s+/)[0]
     if (!t || t.length < 4) return
-    if (!/\d/.test(t) || !/[A-Za-z]/.test(t)) return
-    // a value-shaped token ("100n", "4u7", "2k2", "50V") is never a part number
-    if (/^\d+(?:\.\d+)?[pnumkKMGR]?\d*[FHRV]?$/i.test(t)) return
-    if (parseValue(t, refdesKind(comp.ref))) return
+    if (!/\d/.test(t)) return
+    if (!stated && !/[A-Za-z]/.test(t)) return
+    if (!stated) {
+      // a value-shaped token ("100n", "4u7", "2k2", "50V") is never a part number
+      if (/^\d+(?:\.\d+)?[pnumkKMGR]?\d*[FHRV]?$/i.test(t)) return
+      if (parseValue(t, refdesKind(comp.ref))) return
+    }
     if (NOT_A_PART.test(t)) return
     if (!out.includes(t)) out.push(t)
   }
+  push(comp.partNumber, { stated: true })
   push(comp.value)
-  if (!comp.value) {
+  if (!comp.value && !comp.partNumber) {
     const fn = footprintName(comp.footprint)
     if (!packageOf(fn) && !/_/.test(fn)) push(fn)
   }

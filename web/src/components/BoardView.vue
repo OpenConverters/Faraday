@@ -586,7 +586,7 @@ function tooltipFor(hit) {
   if (hit.kind === 'part') {
     const p = hit.p
     const lines = [
-      `${p.ref} · ${p.value || 'no value in the export'}`,
+      `${p.ref} · ${p.value || p.partNumber || 'no value in the export'}`,
       `${footprintName(p.footprint) || 'no footprint name'} · ${p.pads.length} pin(s) · ${p.side}`,
     ]
     const idx = props.partIndex ? props.partIndex[p.ref] : null

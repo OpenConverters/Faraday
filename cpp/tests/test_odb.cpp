@@ -113,6 +113,57 @@ TEST_CASE("odb: toeprints carry their component and its VALUE", "[odb]") {
     CHECK(o.components[0].value == "100n");
 }
 
+// A CMP record names its footprint only by INDEX into eda/data's PKG table.
+// Reading the trailing part-name field as the footprint instead — which is
+// what this importer did — left every Altium board with a manufacturer's
+// ordering code where the package belongs, so nothing could be checked
+// against a catalogue's case code, and it put kicad-cli's library name in
+// the part-number slot where a catalogue would be asked to look it up.
+TEST_CASE("odb: the footprint comes from the PKG table, not the part name",
+          "[odb]") {
+    BoardIR o = import_board_set(odb_set(), builtin_stackup("default-2layer"));
+    REQUIRE(o.components.size() == 1);
+    CHECK(o.components[0].footprint == "R_0603_1608Metric");
+    // "Resistor_SMD_R_0603_1608Metric" contains the package: the exporter
+    // repeated the footprint here, so it is not an ordering code.
+    CHECK(o.components[0].part_number.empty());
+}
+
+// The Altium shape: a real ordering code in the part-name field, no PRP Value
+// anywhere, and — for the components whose Part Number parameter was never
+// bound — the literal text "=PartNumber", which must not reach a catalogue.
+TEST_CASE("odb: an altium part number is kept and its placeholder is not",
+          "[odb]") {
+    auto files = odb_set();
+    for (auto& f : files) {
+        if (f.name == "steps/pcb/eda/data")
+            f.text += "\nPKG CC3216-1206 1.0 -1.0 -0.8 1.0 0.8;\n";
+        if (f.name == "steps/pcb/layers/comp_+_top/components")
+            f.text +=
+                "\nCMP 1 12.0 -20.0 0 N C9 885342208014 ;0=0\n"
+                "\nCMP 1 14.0 -20.0 0 N TP3 =PartNumber ;0=0\n";
+    }
+    BoardIR o = import_board_set(files, builtin_stackup("default-2layer"));
+    REQUIRE(o.components.size() == 3);
+    const Component* c9 = nullptr;
+    const Component* tp3 = nullptr;
+    for (const auto& c : o.components) {
+        if (c.reference == "C9") c9 = &c;
+        if (c.reference == "TP3") tp3 = &c;
+    }
+    REQUIRE(c9);
+    REQUIRE(tp3);
+    CHECK(c9->footprint == "CC3216-1206");
+    CHECK(c9->part_number == "885342208014");
+    CHECK(tp3->footprint == "CC3216-1206");
+    CHECK(tp3->part_number.empty());
+    // and the CSV the CLI writes asks about the real code only
+    const auto ask = parts_without_values(o);
+    REQUIRE(ask.size() == 1);
+    CHECK(ask[0].first == "C9");
+    CHECK(ask[0].second == "885342208014");
+}
+
 TEST_CASE("odb: a job without eda/data is refused, with the reason named",
           "[odb]") {
     auto files = odb_set();
