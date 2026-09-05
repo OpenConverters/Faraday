@@ -360,6 +360,80 @@ function downloadParts() {
   a.click()
   URL.revokeObjectURL(a.href)
 }
+// ── back to the start screen ─────────────────────────────────────────────
+// The header is the way out of a review. Everything a session accumulated goes
+// with the board it was about: the report, the findings and what was hidden or
+// dismissed in them, the overlays, the panels, the promoted switch nodes and
+// the shields somebody drew. Leaving any of it behind would decorate the NEXT
+// board with the last one's answers.
+//
+// What survives is what is not about this board: the guided/advanced choice
+// (a preference), and the per-file stackup in localStorage (it belongs to the
+// board, and re-dropping the same file should not ask again).
+//
+// Anything with unsaved work in it asks first. A dropped board is cheap to
+// drop again, but a promoted switch node, a drawn shield or a custom stackup
+// is a decision someone made and cannot get back with a re-drop.
+const unsavedWork = computed(() => {
+  if (!report.value) return []
+  const bits = []
+  if (promotedNets.value.length) bits.push(`${promotedNets.value.length} promoted switch node(s)`)
+  if (shields.value.length) bits.push(`${shields.value.length} shield can(s)`)
+  if (customStackup.value) bits.push('a stackup you entered')
+  if (hiddenIds.value.size) bits.push(`${hiddenIds.value.size} dismissed finding(s)`)
+  if (baselineReport.value) bits.push('a revision comparison')
+  return bits
+})
+
+function goHome() {
+  const lose = unsavedWork.value
+  if (lose.length &&
+      !window.confirm(`Close ${fileName.value || 'this board'}?\n\n` +
+                      `This review carries ${lose.join(', ')}, which the board file ` +
+                      `does not, so re-opening it will not bring them back.`))
+    return
+  // the board and everything derived from it
+  report.value = null
+  boardText.value = ''
+  boardFiles.value = []
+  fileName.value = ''
+  error.value = ''
+  needStackup.value = false
+  stackupAssumed.value = false
+  stackupChoice.value = ''
+  stackupSuggest.value = ''
+  customStackup.value = null
+  valuesNote.value = ''
+  // what was selected, filtered or dismissed IN those findings
+  selectedId.value = ''
+  hiddenRules.value = new Set()
+  hiddenIds.value = new Set()
+  baselineReport.value = null
+  onlyChanges.value = false
+  // the overlays and the panels
+  returnPath.value = null
+  nearField.value = null
+  nfDetail.value = false
+  shields.value = []
+  drawingShield.value = false
+  partRef.value = ''
+  partIndex.value = null
+  sweepNote.value = ''
+  benchId.value = ''
+  emitId.value = ''
+  pdnOpen.value = false
+  calcOpen.value = false
+  glossaryOpen.value = false
+  stackupOpen.value = false
+  // The engine clears its own session promotions when a new board is imported
+  // (wasm.cpp: "new board, new session"), so this is not what protects the next
+  // board — it keeps the UI honest while the start screen is showing.
+  promotedNets.value = []
+  // a file input keeps its last selection, so re-opening the SAME board after
+  // going home would not fire a change event and nothing would happen
+  if (fileInput.value) fileInput.value.value = ''
+}
+
 const findings = computed(() => report.value?.findings ?? [])
 
 // Rule filter: dense boards render 200 overlapping overlays, so let the reader
@@ -515,6 +589,7 @@ const baselineName = ref('')
 const diff = ref(null)
 const onlyChanges = ref(false)
 const baselineInput = ref(null)
+const fileInput = ref(null)
 // stitching-fix result line shown under the return-path bar
 const fixResult = ref('')
 function fixStitching() {
@@ -654,8 +729,20 @@ function toggleRule(rule) {
   <div class="shell" @dragover.prevent="dragOver = true" @dragleave="dragOver = false"
        @drop.prevent="onDrop">
     <header class="topbar">
-      <h1 class="brand">FARADAY</h1>
-      <span class="tagline">EMC design review — runs in your browser, nothing is uploaded</span>
+      <!-- The wordmark is the way back to the start screen once a board is
+           open; with nothing loaded there is nowhere to go, so it is not a
+           button and does not pretend to be one. -->
+      <button v-if="report || needStackup || error || fileName" class="brandbtn"
+              data-testid="go-home"
+              title="Close this board and go back to the start screen"
+              @click="goHome">
+        <span class="brand">FARADAY</span>
+        <span class="tagline">EMC design review — runs in your browser, nothing is uploaded</span>
+      </button>
+      <template v-else>
+        <h1 class="brand">FARADAY</h1>
+        <span class="tagline">EMC design review — runs in your browser, nothing is uploaded</span>
+      </template>
       <div class="spacer" />
       <!-- One switch, always in the same place: the review does not change,
            only how much of its vocabulary is on screen. -->
@@ -671,7 +758,7 @@ function toggleRule(rule) {
           advanced</button>
       </div>
       <label class="filebtn">
-        <input data-testid="file-input" type="file" multiple
+        <input ref="fileInput" data-testid="file-input" type="file" multiple
                accept=".kicad_pcb,.hyp,.HYP,.xml,.zip,.gbr,.gtl,.gbl,.g1,.g2,.g3,.g4,.gm1,.gko,.drl,.xln,.txt"
                @change="e => onFiles(e.target.files)" />
         {{ fileName || 'Open board file' }}
@@ -1019,6 +1106,18 @@ function toggleRule(rule) {
   letter-spacing: 0.14em; color: var(--copper);
 }
 .tagline { color: var(--tin); font-size: 12.5px; }
+/* The wordmark is a button when a board is open, but it should still read as
+   the wordmark: no chrome until you point at it, and the same baseline as the
+   heading it replaces. */
+.brandbtn {
+  display: flex; align-items: baseline; gap: 14px;
+  padding: 2px 8px; margin-left: -8px; border-radius: 5px;
+  border: 1px solid transparent; text-align: left;
+}
+.brandbtn:hover { border-color: var(--resin-edge); background: rgba(217, 139, 95, 0.07); }
+.brandbtn:hover .brand { color: #f0a877; }
+.brandbtn:focus-visible { outline: 2px solid var(--copper); outline-offset: 1px; }
+@media (max-width: 900px) { .brandbtn .tagline { display: none; } }
 .spacer { flex: 1; }
 
 .filebtn {
