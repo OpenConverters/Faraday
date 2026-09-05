@@ -11,7 +11,7 @@ import GlossaryPanel from './components/GlossaryPanel.vue'
 import StackupPanel from './components/StackupPanel.vue'
 import PartPanel from './components/PartPanel.vue'
 import { unzip } from './zip.js'
-import { sweepBoard, isPart, measuredParts } from './parts.js'
+import { sweepBoard, isPart, measuredParts, valueRows } from './parts.js'
 
 // ── GUIDED vs ADVANCED ────────────────────────────────────────────────────
 // The same review, two vocabularies. Advanced is everything this tool knows:
@@ -99,10 +99,25 @@ async function adoptMeasured() {
   try {
     const out = JSON.parse(engine.value.applyPartData(JSON.stringify(parts)))
     if (out.error) { measuredNote.value = out.error; return }
+
+    // …and the VALUE itself, for every model that reads one. The PDN can take a
+    // capacitance straight from the catalogue, but the Y-capacitor rule and the
+    // conducted input branch parse the component's value string, and an Altium
+    // board has none — so a board could be fully identified and still be told
+    // its models were "quiet until the values arrive". applyValues never
+    // overwrites a value the board itself carries, so this fills silence only.
+    const csv = valueRows(partIndex.value)
+    let filled = 0
+    if (csv) {
+      const v = JSON.parse(engine.value.applyValues(csv))
+      if (!v.error) filled = v.applied ?? 0
+    }
     measuredNote.value =
-      `${out.parts} part(s) now carry their datasheet ESR and capacitance ` +
-      `(${out.fields} measured value(s)) instead of Faraday's assumptions — ` +
-      `the PDN, the input branch and the emissions estimate are re-run with them.`
+      `${out.parts} part(s) now carry their datasheet figures ` +
+      `(${out.fields} measured value(s))` +
+      (filled ? `, and ${filled} took their value from the catalogue` : '') +
+      ` instead of Faraday's assumptions — the PDN, the input branch and the ` +
+      `emissions estimate are re-run with them.`
     await reanalyze()
   } catch (e) {
     measuredNote.value = 'the catalogue values could not be applied: ' + String(e.message || e)

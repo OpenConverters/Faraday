@@ -244,23 +244,43 @@ inline Result discover(const BoardIR& board, const Screener& screener,
         auto ci = comps.find(ref);
         const std::string value = ci != comps.end() ? ci->second->value : "";
         const std::string fp = ci != comps.end() ? ci->second->footprint : "";
+        // The catalogue is consulted BEFORE the gate below, because it can open
+        // it. An Altium export carries part numbers and no values, so every one
+        // of a board's capacitors used to be dropped here as "unparseable" —
+        // and stayed dropped even after Kelvin had identified all 73 of them
+        // and knew their capacitance. The identification was worth nothing to
+        // the PDN, which is the opposite of the point.
+        const values::PartData* pd = nullptr;
+        if (auto it = board.part_data.find(ref); it != board.part_data.end())
+            pd = &it->second;
+
+        // The BOARD's own value wins where it has one: it is the designer's
+        // stated intent, and it is the same rule apply_values follows ("a value
+        // the board itself carries always beats the side file"). The catalogue
+        // fills the silence rather than overriding speech.
         auto c = parse_capacitance(value);
-        if (!c || !(*c > 0)) { ++rail.skipped_unparsed; continue; }
+        double c_f = (c && *c > 0) ? *c : 0.0;
+        bool c_from_catalogue = false;
+        if (!(c_f > 0) && pd && values::has(pd->c_f)) {
+            c_f = pd->c_f;
+            c_from_catalogue = true;
+        }
+        if (!(c_f > 0)) { ++rail.skipped_unparsed; continue; }
 
         CapBranch b;
         b.ref = ref;
-        b.c_f = *c;
+        b.c_f = c_f;
+        b.c_measured = c_from_catalogue;
         b.esl_h = esl_from_footprint(fp);
         b.package = fp;
         // The catalogue's measured figures REPLACE the guesses, field by field:
         // a part may publish an ESR and no ESL, and taking the pair together
         // would throw away the half that is real. Nothing here defaults — an
         // absent figure leaves the estimate in place and says so.
-        if (auto pd = board.part_data.find(ref); pd != board.part_data.end()) {
-            b.mpn = pd->second.mpn;
-            if (values::has(pd->second.c_f))   { b.c_f = pd->second.c_f;     b.c_measured = true; }
-            if (values::has(pd->second.esr_ohm)) { b.esr_ohm = pd->second.esr_ohm; b.esr_measured = true; }
-            if (values::has(pd->second.esl_h)) { b.esl_h = pd->second.esl_h; b.esl_measured = true; }
+        if (pd) {
+            b.mpn = pd->mpn;
+            if (values::has(pd->esr_ohm)) { b.esr_ohm = pd->esr_ohm; b.esr_measured = true; }
+            if (values::has(pd->esl_h))   { b.esl_h = pd->esl_h;     b.esl_measured = true; }
         }
         // the mounting loop, measured: each terminal's escape to its via
         b.via_d1_mm = nearest_via_mm(rail_net, rail_pad->x, rail_pad->y);
@@ -352,9 +372,26 @@ inline Result discover(const BoardIR& board, const Screener& screener,
             ++caps_unparsed;
             if (value.empty()) {
                 ++caps_empty;
-                if (part_example.empty() && ci != comps.end() &&
-                    !ci->second->footprint.empty())
-                    part_example = ref + " -> '" + ci->second->footprint + "'";
+                // The PART NUMBER, which is a field of its own. This used to
+                // read the footprint, because an Altium ODB++ import put the
+                // ordering code there — it no longer does, so the message was
+                // offering a package name ("CC3225-1210") as the part number to
+                // go and resolve. A board with no part number either is a
+                // different problem and must not be described as this one.
+                if (part_example.empty() && ci != comps.end()) {
+                    // Same rule as parts_without_values, and for the same
+                    // reason: ODB++ has a part-number field, KiCad does not and
+                    // people type the ordering code into the footprint slot. A
+                    // footprint that is merely a PACKAGE is not an answer —
+                    // offering "CC3225-1210" as the number to go and resolve
+                    // sends someone looking up a case size.
+                    const std::string& pn = ci->second->part_number;
+                    const std::string& fp2 = ci->second->footprint;
+                    if (!pn.empty())
+                        part_example = ref + " -> '" + pn + "'";
+                    else if (!fp2.empty() && !looks_like_package(fp2))
+                        part_example = ref + " -> '" + fp2 + "'";
+                }
             }
             if (caps_unparsed <= 3)
                 examples += (examples.empty() ? "" : ", ") + ref + "='" + value + "'";

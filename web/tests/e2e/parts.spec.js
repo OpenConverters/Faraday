@@ -265,7 +265,8 @@ test('the catalogue overlay feeds its measured values into the physics', async (
   // the sweep starts itself on load; it settles, then says what it changed
   const note = page.getByTestId('measured-note')
   await expect(note).toBeVisible({ timeout: CATALOGUE_MS })
-  await expect(note).toContainText('datasheet ESR')
+  await expect(note).toContainText('datasheet figures')
+  await expect(note).toContainText('measured value')
   await expect(note).toContainText('instead of Faraday')
   expect(errors).toEqual([])
 })

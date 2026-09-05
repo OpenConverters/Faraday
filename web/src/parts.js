@@ -559,6 +559,27 @@ export function measuredFrom(hit) {
   return any ? out : null
 }
 
+// A "refdes,value" table for every exactly-identified part the board never
+// valued — the same table the CLI's --values takes, built from the catalogue
+// instead of by hand.
+//
+// This is what stops a fully identified board from still being told its models
+// are "quiet until the values arrive". The PDN can take a capacitance straight
+// from the catalogue, but the Y-capacitor rule and the conducted input branch
+// parse the component's VALUE string, and an Altium export has none.
+//
+// Returns "" when there is nothing to say, so a sweep that identified only
+// parts the board already valued does not churn the report.
+export function valueRows(partIndex) {
+  const rows = []
+  for (const [ref, idx] of Object.entries(partIndex ?? {})) {
+    if (idx?.state !== 'exact' || !idx.hit) continue
+    const v = valueStringFor(idx.hit.family, idx.hit.row)
+    if (v) rows.push(`${ref},${v}`)
+  }
+  return rows.length ? 'refdes,value\n' + rows.join('\n') + '\n' : ''
+}
+
 // The board's worth of it, from a sweep's results: [{ref, mpn, cF, esrOhm, ...}]
 export function measuredParts(partIndex) {
   const out = []
