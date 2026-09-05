@@ -26,6 +26,26 @@ async function loadBoard(page) {
   await expect(page.getByTestId('finding-F-0001')).toBeVisible({ timeout: LOAD_MS })
 }
 
+// A KiCad board with no values and a part number in the footprint field —
+// the same shape an Altium ODB++ export arrives in.
+const NO_VALUES_BOARD = `(kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "GND") (net 2 "+3V3")
+      (zone (net 1) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 40 0) (xy 40 30) (xy 0 30))))
+      (segment (start 5 5) (end 25 5) (width 0.3) (layer "F.Cu") (net 2))
+      (via (at 12.4 10) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
+      (via (at 12.4 12) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 2))
+      (footprint "885012206077" (layer "F.Cu") (at 12 10)
+        (property "Reference" "C1")
+        (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net 2 "+3V3"))
+        (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net 1 "GND")))
+      (footprint "885012206077" (layer "F.Cu") (at 16 10)
+        (property "Reference" "C2")
+        (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net 2 "+3V3"))
+        (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net 1 "GND")))
+    )`
+
 test('a first visit lands in guided, and the toggle is in the header', async ({ page }) => {
   await page.goto('/')
   await expect(page.getByTestId('view-toggle')).toBeVisible()
@@ -213,23 +233,7 @@ test('a board whose export carried part numbers can be given its values',
     await page.goto('/')
     // a KiCad board with no values and part numbers in the footprint field —
     // the same shape an Altium ODB++ export arrives in
-    const board = `(kicad_pcb
-      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
-      (net 0 "") (net 1 "GND") (net 2 "+3V3")
-      (zone (net 1) (net_name "GND") (layer "B.Cu")
-        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 40 0) (xy 40 30) (xy 0 30))))
-      (segment (start 5 5) (end 25 5) (width 0.3) (layer "F.Cu") (net 2))
-      (via (at 12.4 10) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
-      (via (at 12.4 12) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 2))
-      (footprint "885012206077" (layer "F.Cu") (at 12 10)
-        (property "Reference" "C1")
-        (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net 2 "+3V3"))
-        (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net 1 "GND")))
-      (footprint "885012206077" (layer "F.Cu") (at 16 10)
-        (property "Reference" "C2")
-        (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net 2 "+3V3"))
-        (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net 1 "GND")))
-    )`
+    const board = NO_VALUES_BOARD
     await page.getByTestId('file-input').setInputFiles({
       name: 'no-values.kicad_pcb', mimeType: 'text/plain',
       buffer: Buffer.from(board),
@@ -252,6 +256,41 @@ test('a board whose export carried part numbers can be given its values',
     await expect(page.getByTestId('values-note')).toContainText('filled 2')
     // …and with values present the card retires itself
     await expect(page.getByTestId('values-card')).toHaveCount(0)
+  })
+
+test('the values card can be dismissed, without hiding what stays quiet',
+  async ({ page }) => {
+    // A board whose values are genuinely not coming should not have to scroll
+    // past the full note forever. But the models that need a capacitance are
+    // still silent, so dismissing must leave the count and the way back.
+    await page.addInitScript(() => localStorage.setItem('faraday.view', 'advanced'))
+    await page.goto('/')
+    await page.getByTestId('file-input').setInputFiles({
+      name: 'no-values.kicad_pcb', mimeType: 'text/plain',
+      buffer: Buffer.from(NO_VALUES_BOARD),
+    })
+    const card = page.getByTestId('stackup-card')
+    await expect(card.or(page.getByTestId('values-card')).first())
+      .toBeVisible({ timeout: 30000 })
+    if (await card.count()) await card.getByText('Default 2-layer').click()
+    await expect(page.getByTestId('values-card')).toBeVisible({ timeout: 30000 })
+
+    await page.getByTestId('values-dismiss').click()
+    await expect(page.getByTestId('values-card')).toHaveCount(0)
+
+    // what is left says the consequence and still offers the fix
+    const left = page.getByTestId('values-dismissed')
+    await expect(left).toBeVisible()
+    await expect(left).toContainText('2 component(s) still have no value')
+    await expect(left).toContainText('stay quiet')
+
+    // and the values can still be handed back from there
+    await page.getByTestId('values-input-dismissed').setInputFiles({
+      name: 'values.csv', mimeType: 'text/csv',
+      buffer: Buffer.from('refdes,value\nC1,100pF\nC2,100pF\n'),
+    })
+    await expect(page.getByTestId('values-note')).toContainText('filled 2')
+    await expect(page.getByTestId('values-dismissed')).toHaveCount(0)
   })
 
 test('with a simulated run loaded, Hertz gets THAT and not the seed',

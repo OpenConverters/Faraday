@@ -21,8 +21,13 @@ const props = defineProps({
   report: { type: Object, required: true },
   refdes: { type: String, required: true },
   findings: { type: Array, required: true },
+  // Librarian answers already obtained in this session, keyed by part number.
+  // The panel is destroyed when it closes, so without this the record a real
+  // distributor call just paid for vanished on the first ✕ and the part went
+  // back to reading as unknown.
+  sourced: { type: Object, default: () => ({}) },
 })
-const emit = defineEmits(['close', 'adopt', 'goto'])
+const emit = defineEmits(['close', 'adopt', 'goto', 'sourced'])
 const basic = inject('basic', ref(true))
 
 // ---- the board's half ------------------------------------------------------
@@ -79,7 +84,7 @@ const searchedAll = ref(false)
 // Sourcing: the catalogue is not the last word. Heaviside's librarian can look
 // an unknown part number up at the distributor and stage it for the catalogue.
 const sourcing = ref(false)
-const sourced = ref(null)      // the librarian's answer, hit or honest miss
+const answer = ref(null)       // the librarian's answer, hit or honest miss
 const sourceErr = ref('')
 
 const familyLabel = k => familyByKey(k)?.label?.toLowerCase() ?? k
@@ -99,7 +104,7 @@ function reset() {
   record.value = null; recordErr.value = ''; query.value = candidates.value[0] ?? ''
   searchHits.value = null; mfrs.value = []; marked.value = new Set()
   xref.value = null; xrefErr.value = ''; xrefBusy.value = false; searchedAll.value = false
-  sourcing.value = false; sourced.value = null; sourceErr.value = ''
+  sourcing.value = false; answer.value = null; sourceErr.value = ''
 }
 
 async function start() {
@@ -108,16 +113,23 @@ async function start() {
   busy.value = true
   try {
     if (candidates.value.length) {
-      // the likeliest families only — a shard is a download, and the rest are
-      // one click away with the cost stated
+      // The likeliest families FIRST, because a shard is a download and a hit
+      // there costs one. But a miss in three catalogues is not an answer — a
+      // refdes prefix is a convention, not a contract, and the part may be any
+      // family at all — so a miss goes straight on through the rest rather
+      // than reporting "not in the mosfet, diode, bjt catalogues" as if those
+      // were the only places it could have been.
       const first = families.value.length ? families.value.slice(0, 3) : []
       if (first.length) {
         const r = await identify(comp.value, first)
         ident.value = r
         if (r.exact) await choose(r.exact)
+        else await searchAllFamilies()
       } else {
         ident.value = { tried: candidates.value, searched: [], exact: null, near: [] }
+        await searchAllFamilies()
       }
+      if (!original.value) restoreSourced()
     }
     if (!original.value && value.value) {
       status.value = `matching ${si(value.value.si, value.value.unit)}${pkg.value ? ' in ' + pkg.value.code : ''}…`
@@ -130,6 +142,13 @@ async function start() {
     busy.value = false
     if (status.value.startsWith('matching')) status.value = ''
   }
+}
+
+// Every family the first pass did not reach. Called automatically on a miss,
+// and left on a button only so a search that failed can be repeated.
+async function searchAllFamilies() {
+  if (remaining.value.length) await searchMore(true)
+  else searchedAll.value = true
 }
 
 async function searchMore(all = false) {
@@ -151,8 +170,9 @@ async function runSearch() {
   if (q.length < 2) return
   busy.value = true; error.value = ''; searchHits.value = null
   try {
-    const fams = families.value.length ? families.value.slice(0, 3) : ALL_FAMILIES.slice(0, 4)
-    searchHits.value = await searchMpn(q, fams)
+    // every catalogue, not the three the refdes suggests: a typed part number
+    // is a question about the whole library
+    searchHits.value = await searchMpn(q, ALL_FAMILIES)
   } catch (e) { error.value = String(e.message || e) } finally { busy.value = false }
 }
 
@@ -211,19 +231,35 @@ async function runXref() {
 
 function view(hit) { viewing.value = hit; loadRecord(hit) }
 
+// An answer this session already paid a distributor call for. The panel is
+// rebuilt from scratch every time it opens, so without this the record was
+// shown once and then lost, and the part read as unknown again — with a button
+// offering to go and fetch what we already had.
+function restoreSourced() {
+  for (const mpn of candidates.value) {
+    const out = props.sourced?.[mpn]
+    if (!out) continue
+    answer.value = out
+    if (out.found && out.component) { record.value = out.component; recordErr.value = '' }
+    return
+  }
+}
+
 // ---- sourcing an unknown part through Heaviside -----------------------------
 // Only the part NUMBER leaves the browser. It is a public string printed on
 // the component; the layout stays here, as it does for everything else.
 async function askLibrarian(mpn) {
   if (!mpn) return
-  sourcing.value = true; sourceErr.value = ''; sourced.value = null
+  sourcing.value = true; sourceErr.value = ''; answer.value = null
   try {
     // The board's family guess travels as a HINT and the librarian may
     // overrule it from the distributor's own taxonomy — which is right: a
     // refdes and a footprint are weaker evidence than a product family.
     const hint = SOURCE_HINT[families.value[0]] ?? null
     const out = await sourcePart(mpn, hint)
-    sourced.value = out
+    answer.value = out
+    // hand it up: it outlives this panel, and the overlay counts it
+    emit('sourced', { mpn, refdes: props.refdes, answer: out })
     if (out.found && out.component) {
       // What comes back is the catalogue's own envelope, so the record pane
       // renders it with the code it already has. It is NOT in the catalogue
@@ -382,7 +418,11 @@ watch(() => props.refdes, start, { immediate: true })
             </template>
             <template v-else-if="ident">
               <p v-if="ident.tried.length">
-                <span v-if="ident.searched.length">
+                <span v-if="searchedAll && ident.searched.length">
+                  <b class="mono">{{ ident.tried.join(' / ') }}</b> is not an exact part
+                  number in any of the {{ ident.searched.length }} catalogues — all of them
+                  were searched, not just the families the reference designator suggests.</span>
+                <span v-else-if="ident.searched.length">
                   <b class="mono">{{ ident.tried.join(' / ') }}</b> is not in the
                   {{ ident.searched.map(familyLabel).join(', ') }} catalogue{{ ident.searched.length > 1 ? 's' : '' }}
                   as an exact part number.</span>
@@ -455,8 +495,8 @@ watch(() => props.refdes, start, { immediate: true })
             <button class="chip" type="submit" :disabled="busy || query.trim().length < 2">search</button>
           </form>
           <ul v-if="searchHits" class="hits" data-testid="part-search-hits">
-            <li v-if="!searchHits.length" class="dim">no part number contains “{{ query }}” in the
-              {{ (families.length ? families.slice(0, 3) : ALL_FAMILIES.slice(0, 4)).map(familyLabel).join(', ') }} catalogues</li>
+            <li v-if="!searchHits.length" class="dim">no part number contains “{{ query }}”
+              in any of the {{ ALL_FAMILIES.length }} catalogues</li>
             <li v-for="h in searchHits.slice(0, 15)" :key="h.family + keyOf(h.row)">
               <button class="lnk mono" @click="choose(h)">{{ h.row.mpn }}</button>
               <span class="dim"> {{ h.row.manufacturer }} · {{ familyLabel(h.family) }}</span>
@@ -465,7 +505,7 @@ watch(() => props.refdes, start, { immediate: true })
 
           <!-- ================= sourcing an unknown part ================= -->
           <div v-if="!original && candidates.length" class="source" data-testid="part-source">
-            <p v-if="!sourced">
+            <p v-if="!answer">
               <button class="chip real" data-testid="part-source-btn" :disabled="sourcing || !sourceTarget"
                       @click="askLibrarian(sourceTarget)">
                 {{ sourcing ? 'sourcing…' : `source ${sourceTarget} from the web` }}</button>
@@ -474,14 +514,14 @@ watch(() => props.refdes, start, { immediate: true })
                 staged for a librarian to apply. Only the part number is sent.</span>
             </p>
             <p v-if="sourceErr" class="err" data-testid="part-source-error">{{ sourceErr }}</p>
-            <template v-if="sourced">
-              <p v-if="sourced.found" data-testid="part-sourced">
-                <b class="mono">{{ sourced.mpn }}</b> found at the distributor and read as a
-                <b>{{ sourced.category }}</b> record.
+            <template v-if="answer">
+              <p v-if="answer.found" data-testid="part-sourced">
+                <b class="mono">{{ answer.mpn }}</b> found at the distributor and read as a
+                <b>{{ answer.category }}</b> record.
                 <span class="tag ok">schema-valid</span>
-                <span class="dim">{{ sourced.storedReason }}</span>
-                <template v-if="sourced.readFrom">
-                  Read from <a :href="sourced.readFrom" target="_blank" rel="noopener"
+                <span class="dim">{{ answer.storedReason }}</span>
+                <template v-if="answer.readFrom">
+                  Read from <a :href="answer.readFrom" target="_blank" rel="noopener"
                      class="mono ds-link">the datasheet itself</a> — the numbers were extracted
                   from that document, so check them there before trusting them.
                 </template>
@@ -489,11 +529,11 @@ watch(() => props.refdes, start, { immediate: true })
                 that needs the index rebuilt.
               </p>
               <p v-else data-testid="part-sourced-miss">
-                The librarian could not source <b class="mono">{{ sourced.mpn }}</b>:
-                {{ sourced.reason }}
+                The librarian could not source <b class="mono">{{ answer.mpn }}</b>:
+                {{ answer.reason }}
               </p>
-              <ul v-if="sourced.attempts?.length" class="trail" data-testid="part-source-trail">
-                <li v-for="a in sourced.attempts" :key="a.source">
+              <ul v-if="answer.attempts?.length" class="trail" data-testid="part-source-trail">
+                <li v-for="a in answer.attempts" :key="a.source">
                   <b>{{ SOURCE_LABEL[a.source] ?? a.source }}</b>
                   <span :class="a.outcome === 'found' ? 'ok' : 'dim'">{{ a.outcome }}</span>
                 </li>
@@ -502,9 +542,9 @@ watch(() => props.refdes, start, { immediate: true })
           </div>
 
           <!-- ================= the record ================= -->
-          <div v-if="sourced?.found && !original" class="record" data-testid="part-record">
+          <div v-if="answer?.found && !original" class="record" data-testid="part-record">
             <div class="rhead">
-              <h4 class="mono">{{ sourced.mpn }}</h4>
+              <h4 class="mono">{{ answer.mpn }}</h4>
               <span class="dim">{{ info?.name ?? 'sourced from the distributor' }}</span>
               <span v-if="info?.status" class="tag" :class="{ ok: info.status === 'production' }">{{ info.status }}</span>
               <div class="sp" />

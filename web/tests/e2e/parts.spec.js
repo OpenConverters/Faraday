@@ -119,17 +119,21 @@ test('a catalogued part number: exact match, datasheet, cross-references', async
   expect(errors).toEqual([])
 })
 
-test('an unknown part number says which catalogues were searched, and offers the rest',
+// A refdes prefix is a convention, not a contract, so a miss in the three
+// families it suggests is not an answer. The panel used to stop there and
+// report "not in the mosfet, diode, bjt catalogues" with a button offering the
+// rest — which reads as a verdict and is only a partial search.
+test('a part number missing from the likely families is looked for in every catalogue',
   async ({ page }) => {
     test.setTimeout(CATALOGUE_MS + LOAD_MS)
     await loadFixture(page, PARTS)
     await clickWorld(page, 25, 6)
     const ident = page.getByTestId('part-ident')
-    await expect(ident).toContainText('is not in the', { timeout: CATALOGUE_MS })
+    await expect(ident).toContainText('is not an exact part number in any of the',
+                                      { timeout: CATALOGUE_MS })
     await expect(ident).toContainText('XYZ9999ABC')
-    await expect(ident).toContainText('mosfet')
-    await expect(page.getByTestId('part-search-more')).toBeVisible()
-    await expect(page.getByTestId('part-search-more')).toContainText('families')
+    // every catalogue was reached, so nothing is left to offer
+    await expect(page.getByTestId('part-search-more')).toHaveCount(0)
   })
 
 
@@ -189,7 +193,8 @@ test('an unknown part can be sourced through the librarian, and renders as a rec
     })
     await loadFixture(page, PARTS)
     await clickWorld(page, 25, 6)          // Q2, the MPN no catalogue has
-    await expect(page.getByTestId('part-ident')).toContainText('is not in the', { timeout: CATALOGUE_MS })
+    await expect(page.getByTestId('part-ident')).toContainText('is not an exact part number',
+                                                              { timeout: CATALOGUE_MS })
 
     const btn = page.getByTestId('part-source-btn')
     await expect(btn).toBeVisible()
@@ -216,6 +221,35 @@ test('an unknown part can be sourced through the librarian, and renders as a rec
       .toBe('https://example.invalid/xyz9999abc.pdf')
     await expect(rec).toContainText('drainSourceVoltage')
     expect(errors).toEqual([])
+  })
+
+// A librarian call costs a real distributor request, so the answer must not
+// die with the modal. It used to: closing the panel dropped the record and the
+// part read as unknown again, with a button offering to fetch what we had.
+test('a sourced record outlives the panel, and the part stops reading as unknown',
+  async ({ page }) => {
+    test.setTimeout(CATALOGUE_MS * 2 + LOAD_MS)
+    let calls = 0
+    await stubLibrarian(page, async route => {
+      calls++
+      await route.fulfill({ status: 200, contentType: 'application/json',
+                            body: JSON.stringify(SOURCED_MOSFET) })
+    })
+    await loadFixture(page, PARTS)
+    await clickWorld(page, 25, 6)
+    await page.getByTestId('part-source-btn').click({ timeout: CATALOGUE_MS })
+    await expect(page.getByTestId('part-record')).toBeVisible()
+    expect(calls).toBe(1)
+
+    await page.getByTestId('part-panel').getByRole('button', { name: 'Close part' }).click()
+    await expect(page.getByTestId('part-panel')).toHaveCount(0)
+
+    await clickWorld(page, 25, 6)
+    // the record is there again, and no second distributor call was spent
+    await expect(page.getByTestId('part-record')).toBeVisible({ timeout: CATALOGUE_MS })
+    await expect(page.getByTestId('part-sourced')).toBeVisible()
+    await expect(page.getByTestId('part-source-btn')).toHaveCount(0)
+    expect(calls).toBe(1)
   })
 
 test('a part the distributor really does not have is reported as a miss', async ({ page }) => {

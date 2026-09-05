@@ -62,6 +62,35 @@ const partRef = ref('')
 // catalogue can resolve, and it is a question only the catalogue can answer —
 // so it costs the family shards this board needs and is never run unasked.
 const partIndex = ref(null)      // { ref: {state, …} } once swept
+// Librarian answers this session already has, by part number. The inspector is
+// destroyed on close, and a sourced record that dies with it costs a real
+// distributor call to see again — so it is kept here, beside the board it
+// belongs to, and handed back when the same part is opened.
+const sourcedParts = ref({})
+// The tally is stated, not remembered: sourcing a part changes it, and a line
+// that still said "3 unmatched" after two of them were sourced would be wrong.
+function retally() {
+  if (!partIndex.value) return
+  const vals = Object.values(partIndex.value)
+  const n = s => vals.filter(v => v.state === s).length
+  const parts = [`${n('exact')} identified`,
+                 `${n('candidates')} with candidates`,
+                 `${n('none')} unmatched`,
+                 `${n('unlookupable')} unnamed by the board`]
+  if (n('sourced')) parts.splice(1, 0, `${n('sourced')} sourced from the web`)
+  sweepNote.value = `${vals.length} parts: ` + parts.join(', ') + '.'
+}
+function rememberSourced({ mpn, refdes, answer }) {
+  if (!mpn || !answer) return
+  sourcedParts.value = { ...sourcedParts.value, [mpn]: answer }
+  // the catalogue overlay asked "is this part in Kelvin?" — it is not, but it
+  // is no longer unknown either, and the overlay must stop saying it is
+  if (answer.found && partIndex.value?.[refdes])
+    partIndex.value = { ...partIndex.value,
+                        [refdes]: { ...partIndex.value[refdes], state: 'sourced',
+                                    sourcedMpn: mpn } }
+  retally()
+}
 const sweeping = ref(false)
 const sweepNote = ref('')
 let sweepAbort = null
@@ -107,10 +136,7 @@ async function toggleSweep() {
       },
     })
     partIndex.value = Object.fromEntries(res)
-    const n = s => Object.values(partIndex.value).filter(v => v.state === s).length
-    sweepNote.value =
-      `${parts.length} parts: ${n('exact')} identified, ${n('candidates')} with candidates, ` +
-      `${n('none')} unmatched, ${n('unlookupable')} unnamed by the board.`
+    retally()
   } catch (e) {
     sweepNote.value = 'the catalogue could not be asked: ' + String(e.message || e)
     if (Object.keys(partial).length) partIndex.value = partial
@@ -324,6 +350,11 @@ const dvdtAreaMm2 = computed(() => meta.value?.dvdtCopper?.totalMm2 ?? 0)
 // every model that needs a capacitance — the PDN, the input branch, the Y-cap
 // rule — correctly refuses to invent one. This hands them back.
 const valuesNote = ref('')
+// Dismissing the card hides the ASK, never the consequence: the models that
+// need a capacitance stay quiet either way, so what is left behind is a single
+// line saying so, still carrying the way to fix it. A board whose values are
+// genuinely not coming should not have to scroll past the full card forever.
+const valuesDismissed = ref(false)
 const partsMissing = computed(() => {
   if (!engine.value || !report.value) return 0
   try {
@@ -404,12 +435,14 @@ function goHome() {
   stackupSuggest.value = ''
   customStackup.value = null
   valuesNote.value = ''
+  valuesDismissed.value = false
   // what was selected, filtered or dismissed IN those findings
   selectedId.value = ''
   hiddenRules.value = new Set()
   hiddenIds.value = new Set()
   baselineReport.value = null
   onlyChanges.value = false
+  sourcedParts.value = {}
   // the overlays and the panels
   returnPath.value = null
   nearField.value = null
@@ -480,6 +513,9 @@ function toggleReturnPath() {
   runReturnPath()
 }
 watch(report, () => { returnPath.value = null; rpError.value = '' })
+// A different board is a different question: it must ask again, even if the
+// last one was told to be quiet.
+watch(fileName, () => { valuesDismissed.value = false })
 
 // The component near-field map: a different regime from the far-field
 // attribution, so it is a separate panel with its own units and its own caveat.
@@ -806,7 +842,8 @@ function toggleRule(rule) {
     <!-- Some exports carry part numbers and no values (Altium's ODB++ does).
          Say so once, where it is actionable, rather than only inside whichever
          panel refuses first. -->
-    <div v-if="report && partsMissing > 0" class="banner ask" data-testid="values-card">
+    <div v-if="report && partsMissing > 0 && !valuesDismissed"
+         class="banner ask" data-testid="values-card">
       <p><b>{{ partsMissing }} component(s) carry a part number and no value</b> —
          this export wrote part numbers instead. Every model that needs a
          capacitance (PDN impedance, the conducted input branch, the Y-capacitor
@@ -818,6 +855,24 @@ function toggleRule(rule) {
                data-testid="values-input"
                @change="e => { loadValues(e.target.files[0]); e.target.value = '' }" />
         load component values (refdes, value)…</label>
+      <button class="x" data-testid="values-dismiss" aria-label="Dismiss"
+              title="Hide this. The models that need a value stay quiet."
+              @click="valuesDismissed = true">✕</button>
+    </div>
+
+    <!-- Dismissed, but not gone: the count and the way back stay on screen,
+         because the findings those models would have raised are still absent. -->
+    <div v-if="report && partsMissing > 0 && valuesDismissed"
+         class="banner wait" data-testid="values-dismissed">
+      {{ partsMissing }} component(s) still have no value — the models that need one
+      stay quiet.
+      <label class="chip">
+        <input type="file" accept=".csv,.txt" style="display:none"
+               data-testid="values-input-dismissed"
+               @change="e => { loadValues(e.target.files[0]); e.target.value = '' }" />
+        load component values…</label>
+      <button class="chip" data-testid="values-restore"
+              @click="valuesDismissed = false">show the full note</button>
     </div>
 
     <!-- Outside the card on purpose: filling the values RETIRES the card, and
@@ -1025,8 +1080,9 @@ function toggleRule(rule) {
                    @toggle-rule="toggleRule" @close="glossaryOpen = false" />
 
     <PartPanel v-if="partRef && report" :report="report" :refdes="partRef"
-               :findings="findings"
-               @close="partRef = ''" @adopt="adoptValue" @goto="gotoFinding" />
+               :findings="findings" :sourced="sourcedParts"
+               @close="partRef = ''" @adopt="adoptValue" @goto="gotoFinding"
+               @sourced="rememberSourced" />
 
     <StackupPanel v-if="stackupOpen" :initial="customStackup"
                   :copper-hint="suggestCopper"
@@ -1141,6 +1197,9 @@ function toggleRule(rule) {
 .banner.error { background: #3a1a1e; color: #ffb3b8; font-family: var(--mono); }
 .banner.wait { background: var(--resin); color: var(--tin); font-family: var(--mono); }
 .banner.ask { background: #2a2418; color: var(--silk); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.banner.ask .x { margin-left: auto; background: none; border: 0; color: var(--tin);
+                 font-size: 15px; cursor: pointer; padding: 2px 6px; line-height: 1; }
+.banner.ask .x:hover { color: var(--silk); }
 .viewtoggle {
   display: inline-flex; border: 1px solid var(--resin-edge); border-radius: 999px;
   overflow: hidden; margin-right: 4px;

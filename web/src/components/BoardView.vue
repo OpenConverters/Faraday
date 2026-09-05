@@ -125,6 +125,9 @@ const CAT_COLOR = {
   none:         { fill: 'rgba(255,93,93,0.16)',   line: 'rgba(255,93,93,0.65)' },
   unlookupable: { fill: 'rgba(6,9,8,0.62)',       line: 'rgba(120,134,129,0.45)' },
   pending:      { fill: 'rgba(6,9,8,0.62)',       line: 'rgba(157,180,173,0.35)' },
+  // not in the catalogue, but the librarian read it and staged it: a different
+  // answer from "none", and the part must stop reading as unknown
+  sourced:      { fill: 'rgba(111,159,196,0.26)', line: '#6f9fc4' },
 }
 // intentional coupling and identified aggressors read as their own thing, not
 // as heat: diff pairs cool blue-grey, switch nodes copper (the board's own hue)
@@ -531,6 +534,7 @@ const CAT_SAYS = {
   none: i => i.why,
   unlookupable: i => i.why,
   pending: () => 'not looked up yet',
+  sourced: i => `sourced from the web as ${i.sourcedMpn} — staged, not yet in the catalogue`,
 }
 
 function distToSeg(px, py, x1, y1, x2, y2) {
