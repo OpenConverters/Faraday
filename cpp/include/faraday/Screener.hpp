@@ -1276,6 +1276,36 @@ class Screener {
     // (see tools/validate_loop_l.py) — the band is stated where the number
     // is shown, per house discipline. Enables the ring-frequency check
     // f = 1/(2*pi*sqrt(L*Coss)) when the lab tier runs.
+    // "with the switch output capacitance this sets the ringing frequency" —
+    // a sentence that stopped exactly where the useful number is, because the
+    // screener had no Coss. When the catalogue has identified one of the loop's
+    // devices it does, and f = 1/(2*pi*sqrt(L*Coss)) is the frequency the
+    // radiated spectrum peaks at. Without a Coss the old sentence stands: it is
+    // still true, and inventing a typical Coss would put a made-up frequency on
+    // a finding people act on.
+    std::string ring_note(const std::vector<std::string>& members,
+                          double l_nh) const {
+        const values::PartData* best = nullptr;
+        for (const auto& m : members) {
+            auto it = b_.part_data.find(m);
+            if (it != b_.part_data.end() && values::has(it->second.coss_f)) {
+                // the LARGEST Coss in the loop dominates the resonance
+                if (!best || it->second.coss_f > best->coss_f) best = &it->second;
+            }
+        }
+        if (!best || !(l_nh > 0))
+            return " — with the switch output capacitance this sets the "
+                   "ringing frequency";
+        const double f_hz = 1.0 / (2.0 * 3.14159265358979323846 *
+                                   std::sqrt(l_nh * 1e-9 * best->coss_f));
+        char buf[256];
+        std::snprintf(buf, sizeof buf,
+                      " and %s's catalogued Coss of %.0f pF put the ring at "
+                      "~%.0f MHz, which is where this loop radiates",
+                      best->mpn.c_str(), best->coss_f * 1e12, f_hz * 1e-6);
+        return buf;
+    }
+
   public:   // reusable, and pinned against the FastHenry reference in tests
     static double hull_loop_inductance_nh(const std::vector<Point>& hull,
                                           double trace_w_mm) {
@@ -1390,9 +1420,9 @@ class Screener {
                     ". Loop inductance ~" +
                     std::to_string((int)std::lround(l_nh)) +
                     " nH (equivalent-rectangle estimate, within ~15% of a "
-                    "FastHenry solve of the same hull) — with the switch "
-                    "output capacitance this sets the ringing frequency. "
-                    "This loop "
+                    "FastHenry solve of the same hull)" +
+                    ring_note(loop->members, l_nh) +
+                    ". This loop "
                     "carries the discontinuous switching current; its "
                     "enclosed area is the dominant radiated-emission and "
                     "ringing mechanism in a converter.";

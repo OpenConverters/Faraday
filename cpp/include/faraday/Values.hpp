@@ -189,6 +189,14 @@ struct PartData {
     double esr_ohm = std::numeric_limits<double>::quiet_NaN();
     double esr_freq_hz = std::numeric_limits<double>::quiet_NaN();
     double esl_h = std::numeric_limits<double>::quiet_NaN();
+    // Semiconductors. Coss is the one the screener has been missing outright:
+    // the commutation-loop finding computes a loop inductance and then stops at
+    // "with the switch output capacitance this sets the ringing frequency",
+    // because it had no Coss to finish the sentence with. The SPICE export says
+    // the same thing in its own words — it lists device models under "absent".
+    double coss_f = std::numeric_limits<double>::quiet_NaN();
+    double qg_c = std::numeric_limits<double>::quiet_NaN();
+    double rds_on_ohm = std::numeric_limits<double>::quiet_NaN();
     std::string mpn;        // the part the catalogue matched
     std::string source;     // "kelvin" — where it came from, for the report
 };

@@ -252,6 +252,25 @@ test('a sourced record outlives the panel, and the part stops reading as unknown
     expect(calls).toBe(1)
   })
 
+// Identifying a part was only ever a label until this. Faraday assumed 0.015 ohm
+// of ESR for every capacitor on every board, and that constant reaches the
+// conducted-emissions maths through the input branch — so the noise estimate
+// carried an assumption nobody could see.
+test('the catalogue overlay feeds its measured values into the physics', async ({ page }) => {
+  test.setTimeout(CATALOGUE_MS + LOAD_MS)
+  const errors = []
+  page.on('pageerror', e => errors.push(String(e)))
+  await loadFixture(page, PARTS)
+
+  await page.getByTestId('catalogue-toggle').click()
+  // the sweep settles, then says what it changed
+  const note = page.getByTestId('measured-note')
+  await expect(note).toBeVisible({ timeout: CATALOGUE_MS })
+  await expect(note).toContainText('datasheet ESR')
+  await expect(note).toContainText('instead of Faraday')
+  expect(errors).toEqual([])
+})
+
 test('a part the distributor really does not have is reported as a miss', async ({ page }) => {
   test.setTimeout(CATALOGUE_MS + LOAD_MS)
   await stubLibrarian(page, async route => {

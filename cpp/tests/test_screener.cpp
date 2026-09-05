@@ -820,6 +820,28 @@ TEST_CASE("screener: half-bridge phase node found; gate nets excluded",
     CHECK((*loop)["coupledLenMm"].get<double>() > 0.0);   // enclosed area, mm^2
     CHECK((*loop)["detail"].get<std::string>().find("C1") != std::string::npos);
     CHECK((*loop)["geom"]["lines"].size() >= 3);          // hull drawn
+
+    // Without a catalogued Coss the finding stops at the sentence it can
+    // honestly finish — inventing a "typical" Coss would put a made-up
+    // frequency on something people act on.
+    CHECK((*loop)["detail"].get<std::string>().find(
+              "with the switch output capacitance") != std::string::npos);
+    CHECK((*loop)["detail"].get<std::string>().find("MHz") == std::string::npos);
+
+    // Give the loop's switch the Coss the catalogue holds for it, and the
+    // finding names the frequency this loop actually radiates at.
+    values::PartData fet;
+    fet.coss_f = 220e-12;
+    fet.mpn = "EPC2019";
+    for (const auto& c : b.components) b.part_data[c.reference] = fet;
+    nlohmann::json with_coss = analyze_board(b);
+    const auto* l2 = find_rule(with_coss["findings"], "commutation-loop");
+    REQUIRE(l2 != nullptr);
+    const std::string d2 = (*l2)["detail"].get<std::string>();
+    CHECK(d2.find("EPC2019") != std::string::npos);
+    CHECK(d2.find("220 pF") != std::string::npos);
+    CHECK(d2.find("MHz") != std::string::npos);
+    CHECK(d2.find("where this loop radiates") != std::string::npos);
 }
 
 TEST_CASE("screener: commutation loop area grows when the cap moves away",

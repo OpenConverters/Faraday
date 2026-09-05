@@ -141,6 +141,9 @@ static std::string apply_part_data(std::string json_text) {
             num("esrOhm", pd.esr_ohm);
             num("esrFreqHz", pd.esr_freq_hz);
             num("eslH", pd.esl_h);
+            num("cossF", pd.coss_f);
+            num("qgC", pd.qg_c);
+            num("rdsOnOhm", pd.rds_on_ohm);
             if (e.contains("mpn") && e.at("mpn").is_string())
                 pd.mpn = e.at("mpn").get<std::string>();
             pd.source = "kelvin";

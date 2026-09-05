@@ -517,6 +517,59 @@ export async function sweepBoard(parts, { onProgress, signal } = {}) {
   return out
 }
 
+// ---- what the catalogue knows that the board cannot ------------------------
+// A layout gives geometry. It cannot give ESR, and Faraday assumed 0.015 ohm for
+// every capacitor on every board — a constant that reaches the
+// conducted-emissions maths through the input branch, so the noise number
+// carried it. A part the catalogue matched EXACTLY publishes the real figure.
+//
+// Exact matches only. A candidate is a part that might be this one, and its ESR
+// is therefore some other part's ESR; putting that into an impedance curve would
+// be worse than the honest assumption, because it would look like data.
+//
+// Each field travels on its own. Most catalogue rows carry an ESR or an ESL and
+// not both, and a row that carries neither yields nothing rather than zeroes —
+// 0 ohm is not "unknown", it is a perfect capacitor.
+export function measuredFrom(hit) {
+  if (!hit?.row) return null
+  const r = hit.row
+  const num = v => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined)
+  const out = { mpn: r.mpn }
+  const c = num(r.capacitance)
+  const esr = num(r.esr)
+  const esrF = num(r.esr_frequency ?? r.esrFrequency)
+  if (c !== undefined) out.cF = c
+  if (esr !== undefined) out.esrOhm = esr
+  if (esrF !== undefined) out.esrFreqHz = esrF
+  // Kelvin's magnetic rows carry inductance; a capacitor's ESL is not published
+  // in this catalogue, so it is deliberately absent rather than derived from the
+  // SRF here — that derivation belongs where the SRF's own conditions are known.
+  //
+  // Semiconductors: Coss is the one the screener was missing outright. The
+  // commutation-loop finding computes a loop inductance and then stops at "with
+  // the switch output capacitance this sets the ringing frequency" — with a Coss
+  // it finishes the sentence with the frequency the loop actually radiates at.
+  const coss = num(r.coss)
+  const qg = num(r.qg_total ?? r.qgTotal)
+  const rds = num(r.rds_on ?? r.rdsOn)
+  if (coss !== undefined) out.cossF = coss
+  if (qg !== undefined) out.qgC = qg
+  if (rds !== undefined) out.rdsOnOhm = rds
+  const any = ['cF', 'esrOhm', 'cossF', 'qgC', 'rdsOnOhm'].some(k => out[k] !== undefined)
+  return any ? out : null
+}
+
+// The board's worth of it, from a sweep's results: [{ref, mpn, cF, esrOhm, ...}]
+export function measuredParts(partIndex) {
+  const out = []
+  for (const [ref, idx] of Object.entries(partIndex ?? {})) {
+    if (idx?.state !== 'exact') continue
+    const m = measuredFrom(idx.hit)
+    if (m) out.push({ ref, ...m })
+  }
+  return out
+}
+
 // ---- the end of the catalogue: ask Heaviside to source the part ------------
 // When Kelvin has never heard of a part number, the catalogue is not the last
 // word — Heaviside's librarian can look it up at the distributor, convert it

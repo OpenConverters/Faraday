@@ -11,7 +11,7 @@ import GlossaryPanel from './components/GlossaryPanel.vue'
 import StackupPanel from './components/StackupPanel.vue'
 import PartPanel from './components/PartPanel.vue'
 import { unzip } from './zip.js'
-import { sweepBoard, isPart } from './parts.js'
+import { sweepBoard, isPart, measuredParts } from './parts.js'
 
 // ── GUIDED vs ADVANCED ────────────────────────────────────────────────────
 // The same review, two vocabularies. Advanced is everything this tool knows:
@@ -80,6 +80,32 @@ function retally() {
   if (n('sourced')) parts.splice(1, 0, `${n('sourced')} sourced from the web`)
   sweepNote.value = `${vals.length} parts: ` + parts.join(', ') + '.'
 }
+// The catalogue's measured figures, into the physics. Identifying a part was
+// only ever a label until this: Faraday assumed 0.015 ohm of ESR for every
+// capacitor on every board, and that constant reaches the conducted-emissions
+// maths through the input branch. An exactly-matched part publishes the real
+// one, so the board is re-screened with it.
+//
+// Exact matches only, and re-screened only when something actually changed —
+// a sweep that finds nothing measurable must not churn the report.
+const measuredNote = ref('')
+async function adoptMeasured() {
+  if (!engine.value || !partIndex.value) return
+  const parts = measuredParts(partIndex.value)
+  if (!parts.length) { measuredNote.value = ''; return }
+  try {
+    const out = JSON.parse(engine.value.applyPartData(JSON.stringify(parts)))
+    if (out.error) { measuredNote.value = out.error; return }
+    measuredNote.value =
+      `${out.parts} part(s) now carry their datasheet ESR and capacitance ` +
+      `(${out.fields} measured value(s)) instead of Faraday's assumptions — ` +
+      `the PDN, the input branch and the emissions estimate are re-run with them.`
+    await reanalyze()
+  } catch (e) {
+    measuredNote.value = 'the catalogue values could not be applied: ' + String(e.message || e)
+  }
+}
+
 function rememberSourced({ mpn, refdes, answer }) {
   if (!mpn || !answer) return
   sourcedParts.value = { ...sourcedParts.value, [mpn]: answer }
@@ -136,6 +162,7 @@ async function toggleSweep() {
       },
     })
     partIndex.value = Object.fromEntries(res)
+    await adoptMeasured()
     retally()
   } catch (e) {
     sweepNote.value = 'the catalogue could not be asked: ' + String(e.message || e)
@@ -853,6 +880,13 @@ function toggleRule(rule) {
     <!-- Outside the card on purpose: filling the values RETIRES the card, and
          the confirmation of what just happened must outlive the thing that
          asked for it. -->
+    <!-- The catalogue changed the physics: say so, because a report whose ESR
+         came from a datasheet and one whose ESR came from a constant look
+         identical otherwise. -->
+    <div v-if="measuredNote" class="banner wait" data-testid="measured-note">
+      {{ measuredNote }}
+    </div>
+
     <div v-if="valuesNote" class="banner wait" data-testid="values-note">
       {{ valuesNote }}
       <label class="chip">
