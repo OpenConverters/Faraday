@@ -54,7 +54,15 @@ struct CapBranch {
     double c_f = 0;
     double esl_h = 0;          // package
     double l_mount_h = 0;      // measured off the board — the differentiator
+    // 0.015 is an ASSUMPTION, and it used to be a silent one on every board. It
+    // stays as the fallback because the impedance model needs a number, but a
+    // branch now says which of its figures are measured, so a reader can tell a
+    // datasheet ESR from this.
     double esr_ohm = 0.015;
+    bool esr_measured = false;   // from the catalogue, not the constant above
+    bool esl_measured = false;   // from the catalogue, not the package table
+    bool c_measured = false;     // from the catalogue, not the value string
+    std::string mpn;             // the part the catalogue matched, when it did
     double via_d1_mm = 0, via_d2_mm = 0;
     bool no_via = false;       // no same-net via within reach of a pad
     double f_res_hz = 0;
@@ -244,6 +252,16 @@ inline Result discover(const BoardIR& board, const Screener& screener,
         b.c_f = *c;
         b.esl_h = esl_from_footprint(fp);
         b.package = fp;
+        // The catalogue's measured figures REPLACE the guesses, field by field:
+        // a part may publish an ESR and no ESL, and taking the pair together
+        // would throw away the half that is real. Nothing here defaults — an
+        // absent figure leaves the estimate in place and says so.
+        if (auto pd = board.part_data.find(ref); pd != board.part_data.end()) {
+            b.mpn = pd->second.mpn;
+            if (values::has(pd->second.c_f))   { b.c_f = pd->second.c_f;     b.c_measured = true; }
+            if (values::has(pd->second.esr_ohm)) { b.esr_ohm = pd->second.esr_ohm; b.esr_measured = true; }
+            if (values::has(pd->second.esl_h)) { b.esl_h = pd->second.esl_h; b.esl_measured = true; }
+        }
         // the mounting loop, measured: each terminal's escape to its via
         b.via_d1_mm = nearest_via_mm(rail_net, rail_pad->x, rail_pad->y);
         b.via_d2_mm = nearest_via_mm(r.gnd_net, gnd_pad->x, gnd_pad->y);

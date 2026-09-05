@@ -384,3 +384,81 @@ TEST_CASE("a value the board itself carries always beats the side file",
     CHECK(vt.ignored == 1);
     CHECK_THROWS_AS(values::parse_value_table("nonsense\n"), std::invalid_argument);
 }
+
+// ---------------------------------------------------------------------------
+// The catalogue's measured figures, in place of the board's guesses.
+// ---------------------------------------------------------------------------
+
+TEST_CASE("a catalogued ESR replaces the assumed one, and says it did",
+          "[pdn][values]") {
+    // 0.015 ohm was assumed for every capacitor on every board, and it reaches
+    // the conducted-emissions maths through Operating's input branch — so the
+    // noise number carried an assumption nobody could see.
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "GND") (net 2 "+3V3")
+      (zone (net 1) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 40 0) (xy 40 30) (xy 0 30))))
+      (via (at 12.4 10) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 1))
+      (via (at 12.4 12) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net 2))
+      (footprint "C_0603" (layer "F.Cu") (at 12 10)
+        (property "Reference" "C1") (property "Value" "100nF")
+        (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net 2 "+3V3"))
+        (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net 1 "GND")))
+      (footprint "C_0603" (layer "F.Cu") (at 16 10)
+        (property "Reference" "C2") (property "Value" "100nF")
+        (pad "1" smd rect (at 0 0) (size 0.6 0.6) (layers "F.Cu") (net 2 "+3V3"))
+        (pad "2" smd rect (at 1 0) (size 0.6 0.6) (layers "F.Cu") (net 1 "GND")))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
+
+    // C1 is identified in the catalogue; C2 is not.
+    values::PartData pd;
+    pd.esr_ohm = 0.004;          // a real low-ESR MLCC, not the 0.015 constant
+    pd.esl_h = 0.42e-9;          // and its measured ESL, not the package table's 0.5 nH
+    pd.mpn = "GRM188R71H104KA93D";
+    pd.source = "kelvin";
+    b.part_data["C1"] = pd;
+
+    Screener sc(b);
+    const auto r = pdn::discover(b, sc, pdn::Params{});
+    REQUIRE(r.rails.size() == 1);
+    const pdn::CapBranch* c1 = nullptr;
+    const pdn::CapBranch* c2 = nullptr;
+    for (const auto& c : r.rails[0].caps) {
+        if (c.ref == "C1") c1 = &c;
+        if (c.ref == "C2") c2 = &c;
+    }
+    REQUIRE(c1);
+    REQUIRE(c2);
+
+    // the identified part carries its own figures, and is marked as doing so
+    CHECK_THAT(c1->esr_ohm, WithinRel(0.004, 1e-9));
+    CHECK_THAT(c1->esl_h, WithinRel(0.42e-9, 1e-9));
+    CHECK(c1->esr_measured);
+    CHECK(c1->esl_measured);
+    CHECK(c1->mpn == "GRM188R71H104KA93D");
+
+    // the unidentified one keeps the estimates, and says they ARE estimates
+    CHECK_THAT(c2->esr_ohm, WithinRel(0.015, 1e-9));
+    CHECK_FALSE(c2->esr_measured);
+    CHECK_FALSE(c2->esl_measured);
+    CHECK(c2->mpn.empty());
+
+    // and the difference reaches the physics: a lower ESL resonates higher
+    CHECK(c1->f_res_hz > c2->f_res_hz);
+}
+
+TEST_CASE("a part that publishes only an ESR keeps the estimated ESL",
+          "[pdn][values]") {
+    // Most of the catalogue publishes one and not the other. Taking the pair
+    // together would throw away the half that is real.
+    BoardIR b;
+    values::PartData pd;
+    pd.esr_ohm = 0.006;
+    pd.mpn = "SOMEPART";
+    b.part_data["C9"] = pd;
+    CHECK(values::has(b.part_data["C9"].esr_ohm));
+    CHECK_FALSE(values::has(b.part_data["C9"].esl_h));   // NaN, not 0
+    CHECK_FALSE(values::has(b.part_data["C9"].c_f));
+}

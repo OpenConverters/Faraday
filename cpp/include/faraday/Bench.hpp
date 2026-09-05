@@ -868,6 +868,14 @@ inline nlohmann::json pdn_json(const BoardIR& board, const Screener& screener,
                             {"lMountNh", b.l_mount_h * 1e9},
                             {"viaD1Mm", b.via_d1_mm}, {"viaD2Mm", b.via_d2_mm},
                             {"noVia", b.no_via},
+                            // Which of these numbers is a datasheet figure and
+                            // which is still an assumption. A reader cannot
+                            // weigh an impedance curve without knowing.
+                            {"esrOhm", b.esr_ohm},
+                            {"esrMeasured", b.esr_measured},
+                            {"eslMeasured", b.esl_measured},
+                            {"cMeasured", b.c_measured},
+                            {"mpn", b.mpn},
                             {"fResMhz", b.f_res_hz * 1e-6}});
         nlohmann::json f = nlohmann::json::array(), z = nlohmann::json::array();
         for (size_t i = 0; i < c.f_hz.size(); ++i) {

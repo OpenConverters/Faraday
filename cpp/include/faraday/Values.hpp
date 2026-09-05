@@ -8,6 +8,8 @@
 // Screener.hpp. One definition, no per-caller re-implementation.
 
 #include <cctype>
+#include <cmath>
+#include <limits>
 #include <map>
 #include <sstream>
 #include <stdexcept>
@@ -165,6 +167,39 @@ inline double esl_from_footprint(const std::string& fp) {
 //
 // Only EMPTY values are filled. A value the board itself carries always wins:
 // a side file must never quietly overrule what the layout says.
+// ---------------------------------------------------------------------------
+// What the CATALOGUE knows about a part that the board cannot
+// ---------------------------------------------------------------------------
+// A board gives geometry: where a capacitor sits, how far its pads escape to
+// their vias. It cannot give ESR, and Faraday was using 0.015 ohm for every
+// capacitor on every board — a constant that reaches the conducted-emissions
+// maths through Operating's input branch, so the noise number carried it.
+// Package-derived ESL is the same shape of guess, one table lookup wide.
+//
+// Kelvin holds the measured figures per part number. When the catalogue has
+// identified a part EXACTLY, its values belong in the model in place of the
+// guesses, and — because the two must never be confusable — each branch records
+// which of its numbers came from a datasheet and which is still an assumption.
+//
+// Absence travels as NaN, never 0: a 0 ohm ESR is physically impossible and
+// would read as a perfect capacitor. This mirrors Kelvin's own convention, and
+// for the same reason (its ABT #455).
+struct PartData {
+    double c_f = std::numeric_limits<double>::quiet_NaN();
+    double esr_ohm = std::numeric_limits<double>::quiet_NaN();
+    double esr_freq_hz = std::numeric_limits<double>::quiet_NaN();
+    double esl_h = std::numeric_limits<double>::quiet_NaN();
+    std::string mpn;        // the part the catalogue matched
+    std::string source;     // "kelvin" — where it came from, for the report
+};
+
+inline bool has(double v) { return std::isfinite(v) && v > 0; }
+
+struct PartTable {
+    std::map<std::string, PartData> by_refdes;
+    size_t applied = 0;
+};
+
 struct ValueTable {
     std::map<std::string, std::string> by_refdes;
     size_t applied = 0, ignored = 0;      // ignored = the board already had one

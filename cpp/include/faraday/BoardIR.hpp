@@ -10,6 +10,7 @@
 #include "Values.hpp"
 
 #include <nlohmann/json.hpp>
+#include <map>
 #include <optional>
 #include <stdexcept>
 #include <regex>
@@ -195,6 +196,10 @@ struct Component {
 
 struct BoardIR {
     Stackup stackup;
+    // What the CATALOGUE knows about the parts on this board, by refdes: the
+    // measured ESR and ESL a layout cannot give and Faraday was assuming. Empty
+    // until something identifies the parts; see values::PartData.
+    std::map<std::string, values::PartData> part_data;
     std::vector<std::string> copper_names;  // ordinal → KiCad name
     std::vector<Net> nets;
     std::vector<Segment> segments;

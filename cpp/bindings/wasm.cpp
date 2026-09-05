@@ -103,6 +103,56 @@ static std::string analyze_set(std::string request_json) {
 // correctly refuse to invent them. This takes the refdes,value table back in;
 // the caller then re-screens. partsWithoutValues() asks the question the table
 // answers, so the browser can offer the same workflow the CLI has.
+// The CATALOGUE's measured figures for the parts on this board, by refdes:
+// [{"ref":"C12","mpn":"GRM188R71H104KA93D","cF":1e-7,"esrOhm":0.012,
+//   "esrFreqHz":1e5,"eslH":5e-10}, ...]
+//
+// This is where an identified part stops being a label and starts changing the
+// numbers. Faraday assumed 0.015 ohm of ESR for every capacitor on every board,
+// and that constant reaches the conducted-emissions maths through Operating's
+// input branch — so the noise estimate carried it. A part Kelvin has matched
+// exactly publishes the real figure.
+//
+// Fields are taken INDIVIDUALLY: a part may publish an ESR and no ESL, and
+// insisting on the pair would discard the half that is real. Anything absent,
+// zero or non-finite is left alone rather than defaulted, and each branch
+// reports which of its numbers ended up measured.
+static std::string apply_part_data(std::string json_text) {
+    try {
+        if (!g_board)
+            throw std::runtime_error("no board loaded");
+        const nlohmann::json in = nlohmann::json::parse(json_text);
+        if (!in.is_array())
+            throw std::runtime_error(
+                "applyPartData wants an array of {ref, ...} objects");
+        size_t applied = 0, fields = 0;
+        for (const auto& e : in) {
+            if (!e.is_object() || !e.contains("ref")) continue;
+            const std::string ref = e.at("ref").get<std::string>();
+            if (ref.empty()) continue;
+            faraday::values::PartData pd;
+            auto num = [&](const char* k, double& dst) {
+                if (e.contains(k) && e.at(k).is_number()) {
+                    const double v = e.at(k).get<double>();
+                    if (std::isfinite(v) && v > 0) { dst = v; ++fields; }
+                }
+            };
+            num("cF", pd.c_f);
+            num("esrOhm", pd.esr_ohm);
+            num("esrFreqHz", pd.esr_freq_hz);
+            num("eslH", pd.esl_h);
+            if (e.contains("mpn") && e.at("mpn").is_string())
+                pd.mpn = e.at("mpn").get<std::string>();
+            pd.source = "kelvin";
+            g_board->part_data[ref] = pd;
+            ++applied;
+        }
+        return nlohmann::json{{"parts", applied}, {"fields", fields}}.dump();
+    } catch (const std::exception& e) {
+        return nlohmann::json{{"error", e.what()}}.dump();
+    }
+}
+
 static std::string apply_values(std::string csv) {
     try {
         if (!g_board)
@@ -319,6 +369,7 @@ EMSCRIPTEN_BINDINGS(faraday) {
     emscripten::function("analyzeSet", &analyze_set);
     emscripten::function("reanalyze", &reanalyze);
     emscripten::function("applyValues", &apply_values);
+    emscripten::function("applyPartData", &apply_part_data);
     emscripten::function("partsWithoutValues", &parts_without_values);
     emscripten::function("diffReports", &diff_reports_js);
     emscripten::function("fixStitching", &fix_stitching);
