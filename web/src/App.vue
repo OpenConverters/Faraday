@@ -67,6 +67,9 @@ const partIndex = ref(null)      // { ref: {state, …} } once swept
 // distributor call to see again — so it is kept here, beside the board it
 // belongs to, and handed back when the same part is opened.
 const sourcedParts = ref({})
+// The catalogue summary is read once and then in the way. Hidden per sweep, not
+// per board: asking again is a new answer and deserves to be seen.
+const catBarHidden = ref(false)
 // The tally is stated, not remembered: sourcing a part changes it, and a line
 // that still said "3 unmatched" after two of them were sourced would be wrong.
 function retally() {
@@ -131,6 +134,30 @@ const boardParts = computed(() => {
   }
   return (b.components ?? []).filter(c => isPart(c, byRef.get(c.ref)))
 })
+
+// Ask the catalogue as soon as a board is on screen, rather than waiting to be
+// asked. Identifying the parts is what puts real ESRs and a real Coss into the
+// physics, so a board that is never swept is screened on assumptions — and
+// nobody clicks a button whose value they cannot see yet.
+//
+// It runs ONCE per board and never fights the user: a sweep already running or
+// already answered is left alone, and a manual dismissal of the overlay is not
+// undone. The shards are a one-time download the browser keeps, so the second
+// board costs nothing.
+let autoSweptFor = ''
+async function autoSweep() {
+  if (!report.value || !engine.value) return
+  const id = fileName.value + ':' + (report.value.board?.components?.length ?? 0)
+  if (autoSweptFor === id) return
+  autoSweptFor = id
+  if (sweeping.value || partIndex.value) return
+  if (!boardParts.value.length) return
+  try { await toggleSweep() } catch { /* reported in sweepNote already */ }
+}
+// On the report, because that is when there are parts to ask about. NOT the
+// place to un-hide the bar: adopting the catalogue's values re-screens the
+// board, and that must not undo a dismissal the user just made.
+watch(report, () => { autoSweep() })
 
 async function toggleSweep() {
   if (sweeping.value) {                      // a second click cancels
@@ -513,7 +540,7 @@ function toggleReturnPath() {
 watch(report, () => { returnPath.value = null; rpError.value = '' })
 // A different board is a different question: it must ask again, even if the
 // last one was told to be quiet.
-watch(fileName, () => { valuesCard.value = 'full' })
+watch(fileName, () => { valuesCard.value = 'full'; catBarHidden.value = false })
 
 // The component near-field map: a different regime from the far-field
 // attribution, so it is a separate panel with its own units and its own caveat.
@@ -936,7 +963,12 @@ function toggleRule(rule) {
                    @pdn="pdnOpen = true" />
       <!-- while drawing a shield the bars go click-through and faded — a
            floating card must never steal the drag that draws underneath it -->
-      <div v-if="sweepNote" class="overlaybars">
+      <!-- ghost while a shield is being drawn, exactly as the bars below. This
+           bar used to appear only when someone asked for it, so it never
+           overlapped a drag; now it is on every board, and without this it
+           steals the pointer that draws the can. -->
+      <div v-if="sweepNote && !catBarHidden" class="overlaybars"
+           :class="{ ghost: drawingShield }">
         <div class="radbar cat" data-testid="catalogue-bar">
           <b>Catalogue</b>
           <span>{{ sweepNote }}</span>
@@ -946,6 +978,13 @@ function toggleRule(rule) {
             <i class="k-none" /><span>nothing in the catalogue fits</span>
             <i class="k-unk" /><span>the board never named it</span>
           </span>
+          <!-- The tally and its legend are worth reading once and then in the
+               way. Dismissing hides the BAR; the overlay it explains stays on,
+               and the chip that toggles the overlay brings it back. -->
+          <button class="barx" data-testid="catalogue-bar-dismiss"
+                  aria-label="Hide the catalogue summary"
+                  title="Hide this. The overlay stays; the colours mean the same."
+                  @click="catBarHidden = true">✕</button>
         </div>
       </div>
       <div class="overlaybars" :class="{ ghost: drawingShield }"
@@ -1206,6 +1245,9 @@ function toggleRule(rule) {
 .banner.error { background: #3a1a1e; color: #ffb3b8; font-family: var(--mono); }
 .banner.wait { background: var(--resin); color: var(--tin); font-family: var(--mono); }
 .banner.ask { background: #2a2418; color: var(--silk); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.radbar .barx { margin-left: 8px; background: none; border: 0; color: var(--tin);
+                font-size: 14px; cursor: pointer; padding: 0 4px; line-height: 1; }
+.radbar .barx:hover { color: var(--silk); }
 .banner.brief { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .banner.ask .x, .banner.brief .x { margin-left: auto; background: none; border: 0;
                  color: var(--tin); font-size: 15px; cursor: pointer;

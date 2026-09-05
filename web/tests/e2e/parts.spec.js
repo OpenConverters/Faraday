@@ -262,13 +262,40 @@ test('the catalogue overlay feeds its measured values into the physics', async (
   page.on('pageerror', e => errors.push(String(e)))
   await loadFixture(page, PARTS)
 
-  await page.getByTestId('catalogue-toggle').click()
-  // the sweep settles, then says what it changed
+  // the sweep starts itself on load; it settles, then says what it changed
   const note = page.getByTestId('measured-note')
   await expect(note).toBeVisible({ timeout: CATALOGUE_MS })
   await expect(note).toContainText('datasheet ESR')
   await expect(note).toContainText('instead of Faraday')
   expect(errors).toEqual([])
+})
+
+// Identifying the parts is what puts real ESRs and a real Coss into the physics,
+// so a board that is never swept is screened on assumptions — and nobody clicks
+// a button whose value they cannot see yet.
+test('the catalogue is asked as soon as a board loads, without being told to',
+  async ({ page }) => {
+    test.setTimeout(CATALOGUE_MS + LOAD_MS)
+    await loadFixture(page, PARTS)
+    // no click on the catalogue chip anywhere in this test
+    const bar = page.getByTestId('catalogue-bar')
+    await expect(bar).toBeVisible({ timeout: CATALOGUE_MS })
+    await expect(bar).toContainText('identified', { timeout: CATALOGUE_MS })
+  })
+
+test('the catalogue summary can be dismissed, and the overlay stays', async ({ page }) => {
+  test.setTimeout(CATALOGUE_MS + LOAD_MS)
+  await loadFixture(page, PARTS)
+  const bar = page.getByTestId('catalogue-bar')
+  await expect(bar).toContainText('identified', { timeout: CATALOGUE_MS })
+
+  await page.getByTestId('catalogue-bar-dismiss').click()
+  await expect(page.getByTestId('catalogue-bar')).toHaveCount(0)
+
+  // the overlay it explained is still on — dismissing the words does not
+  // dismiss the answer
+  const canvas = page.getByTestId('board-canvas')
+  await expect(canvas).toHaveAttribute('data-parts', /./)
 })
 
 test('a part the distributor really does not have is reported as a miss', async ({ page }) => {
@@ -416,12 +443,13 @@ test('the catalogue overlay answers per part, and says what it could not answer'
     page.on('pageerror', e => errors.push(String(e)))
     await loadFixture(page, PARTS)
 
-    // it is never run unasked — the plain parts layer is what you get first
-    await expect(page.getByTestId('catalogue-bar')).toHaveCount(0)
-    await page.getByTestId('catalogue-toggle').click()
-
+    // It now runs UNASKED, on load. That reverses what this test used to assert
+    // ("never run unasked — the plain parts layer is what you get first"), and
+    // the reversal is the point: identifying the parts is what puts real ESRs
+    // and a real Coss into the physics, so a board nobody swept is screened on
+    // assumptions. The chip still cancels and re-runs it.
     const bar = page.getByTestId('catalogue-bar')
-    await expect(bar).toBeVisible()
+    await expect(bar).toBeVisible({ timeout: CATALOGUE_MS })
     await expect(bar).toContainText('identified', { timeout: CATALOGUE_MS * 2 })
 
     // Q1 (EPC2019) is a real catalogue part; Q2 (XYZ9999ABC) is not; C1 and R1
