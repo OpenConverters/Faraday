@@ -199,6 +199,12 @@ struct PartData {
     double rds_on_ohm = std::numeric_limits<double>::quiet_NaN();
     std::string mpn;        // the part the catalogue matched
     std::string source;     // "kelvin" — where it came from, for the report
+    // The catalogue FAMILY ("timing", "capacitor", …). Carried because a net's
+    // name is not the only evidence of what it does, and on a board whose nets
+    // are the CAD tool's own inventions it is no evidence at all: an Altium
+    // export names every unnamed net "NetIC4_19". A crystal, though, is a
+    // crystal whatever its net is called.
+    std::string family;
 };
 
 inline bool has(double v) { return std::isfinite(v) && v > 0; }

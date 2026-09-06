@@ -5,7 +5,18 @@ const props = defineProps({
   engine: { type: Object, required: true },
   result: { type: Object, required: true },
   params: { type: Object, required: true },
+  // the board's nets, so an empty victim table can say WHY it is empty
+  board: { type: Object, default: null },
 })
+
+const netNames = computed(() =>
+  (props.board?.nets ?? []).map(n => n?.name).filter(Boolean))
+const netCount = computed(() => netNames.value.length)
+// "NetIC4_19", "NetC78_2" — what a CAD tool writes for a net the schematic
+// never named. Counting them separates "you did not name your nets" from
+// "you named them and none are sensitive", which are different problems.
+const autoNamed = computed(() =>
+  netNames.value.filter(n => /^Net[A-Z]+\d+_\d+$/i.test(n)).length)
 const emit = defineEmits(['close', 'params'])
 
 // ---- shielding -----------------------------------------------------------
@@ -85,7 +96,26 @@ function set(k, v) { emit('params', { [k]: Number(v) }) }
               coupling entirely — and no distance rule can see that.</p>
           </div>
 
-          <table class="vic" data-testid="nf-victims">
+          <!-- An empty table is not an answer. A victim is recognised by its
+               NET NAME — vref, isense, xtal, fb — and a board whose nets are
+               the CAD tool's own inventions ("NetIC4_19", which is what Altium
+               writes for every net the schematic did not name) matches none of
+               them. That is a naming gap, not a quiet board, and saying so is
+               the difference between "nothing couples here" and "nothing was
+               looked at". -->
+          <p v-if="!result.victims?.length" class="empty" data-testid="nf-no-victims">
+            No component on this board sits on a net this recognises as
+            sensitive. Victims are found by net NAME — <code>VREF</code>,
+            <code>ISENSE</code>, <code>XTAL</code>, <code>FB</code>,
+            <code>ADC</code>, <code>COMP</code> and the like — and this board's
+            {{ netCount }} nets carry none of them
+            <span v-if="autoNamed">({{ autoNamed }} are the CAD tool's own
+              <code>Net&lt;refdes&gt;_&lt;pin&gt;</code> inventions, which say
+              nothing about what the net does)</span>.
+            Name the sensitive nets in your schematic and this fills in. Nothing
+            here is switched off — there was simply nothing to rule on.
+          </p>
+          <table v-else class="vic" data-testid="nf-victims">
             <thead><tr><th>part</th><th>class</th><th>d</th><th>|H|</th><th>cosθ</th><th>induced</th></tr></thead>
             <tbody>
               <tr v-for="v in result.victims.slice(0, 12)" :key="v.component + v.net"

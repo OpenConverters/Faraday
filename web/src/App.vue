@@ -1130,6 +1130,7 @@ function toggleRule(rule) {
 
     <NearFieldPanel v-if="nfDetail && nearField && engine" :engine="engine"
                     :result="nearField" :params="nfParams"
+                    :board="report?.board"
                     @close="nfDetail = false" @params="setNfParams" />
 
     <PdnPanel v-if="pdnOpen && engine && report" :engine="engine"

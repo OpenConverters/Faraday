@@ -437,3 +437,57 @@ TEST_CASE("a victim pad broadside over switch copper gets a capacitive hit",
     const auto clean = run(converter());
     CHECK(clean.cap_hits.empty());
 }
+
+TEST_CASE("a catalogued crystal is a victim even when its net has no name",
+          "[nf][victims]") {
+    // Victims are found by NET NAME, and a CAD tool names every unnamed net
+    // after a refdes and a pin ("NetY1_1"), which says nothing about what the
+    // net does. A crystal loop IS the high-Q, high-impedance node the "xtal"
+    // class describes, whatever its net is called.
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "GND") (net 2 "SW") (net 3 "NetY1_1")
+      (zone (net 1) (net_name "GND") (layer "B.Cu")
+        (filled_polygon (layer "B.Cu") (pts (xy 0 0) (xy 60 0) (xy 60 40) (xy 0 40))))
+      (segment (start 5 5) (end 25 5) (width 0.5) (layer "F.Cu") (net 2))
+      (segment (start 30 20) (end 40 20) (width 0.3) (layer "F.Cu") (net 3))
+      (footprint "Q" (layer "F.Cu") (at 8 5) (property "Reference" "Q1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 2 "SW"))
+        (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net 1 "GND")))
+      (footprint "L" (layer "F.Cu") (at 22 5) (property "Reference" "L1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 2 "SW"))
+        (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net 1 "GND")))
+      (footprint "X" (layer "F.Cu") (at 32 20) (property "Reference" "Y1")
+        (pad "1" smd rect (at 0 0) (size 1 1) (layers "F.Cu") (net 3 "NetY1_1"))
+        (pad "2" smd rect (at 2 0) (size 1 1) (layers "F.Cu") (net 1 "GND")))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
+    Screener sc(b);
+    nfmap::MapParams p;
+
+    // with nothing but net names, "NetY1_1" is unrecognisable and Y1 is missed
+    auto before = nfmap::compute(b, sc, p);
+    bool y1_before = false;
+    for (const auto& v : before.victims) if (v.component == "Y1") y1_before = true;
+    CHECK_FALSE(y1_before);
+
+    // the catalogue says Y1 is a timing device, and that IS the evidence
+    values::PartData pd;
+    pd.family = "timing";
+    pd.mpn = "ABM8-24.000MHZ-B2-T";
+    b.part_data["Y1"] = pd;
+    auto after = nfmap::compute(b, sc, p);
+    const nfmap::VictimHit* y1 = nullptr;
+    for (const auto& v : after.victims) if (v.component == "Y1") y1 = &v;
+    REQUIRE(y1 != nullptr);
+    CHECK(y1->victim_class == "xtal");
+
+    // and an ordinary catalogued part is NOT promoted — inventing a victim is
+    // worse than missing one, because a manufactured threshold looks measured
+    values::PartData cap;
+    cap.family = "capacitor";
+    cap.mpn = "GRM188R71H104KA93D";
+    b.part_data["L1"] = cap;
+    auto after2 = nfmap::compute(b, sc, p);
+    for (const auto& v : after2.victims) CHECK(v.component != "L1");
+}

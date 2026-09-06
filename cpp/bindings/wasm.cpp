@@ -146,6 +146,8 @@ static std::string apply_part_data(std::string json_text) {
             num("rdsOnOhm", pd.rds_on_ohm);
             if (e.contains("mpn") && e.at("mpn").is_string())
                 pd.mpn = e.at("mpn").get<std::string>();
+            if (e.contains("family") && e.at("family").is_string())
+                pd.family = e.at("family").get<std::string>();
             pd.source = "kelvin";
             g_board->part_data[ref] = pd;
             ++applied;

@@ -320,11 +320,26 @@ inline MapResult compute(const BoardIR& board, const Screener& screener,
     }
 
     // ---- victims: components on nets whose class we actually recognise ----
+    // The net NAME is the primary evidence and the best one when it exists. It
+    // often does not: a CAD tool names every unnamed net after a refdes and a
+    // pin ("NetIC4_19"), and a board full of those matches nothing at all.
+    //
+    // The PART is the other evidence, and for one family it is unambiguous: a
+    // crystal loop IS the high-Q, high-impedance node the "xtal" class
+    // describes, whatever its net is called. That is the only family promoted
+    // here. An analog IC is NOT assumed to be an ADC input — inventing victims
+    // is worse than missing them, because a manufactured threshold looks
+    // exactly like a measured one.
     const double area_m2 = p.default_victim_area_mm2 * 1e-6;
     for (const auto& pad : board.pads) {
         if (pad.net < 0) continue;
         const std::string& net = board.net_name(pad.net);
-        const std::string cls = victim_class_for(net);
+        std::string cls = victim_class_for(net);
+        if (cls.empty() && !pad.component.empty()) {
+            auto pd = board.part_data.find(pad.component);
+            if (pd != board.part_data.end() && pd->second.family == "timing")
+                cls = "xtal";
+        }
         if (cls.empty()) continue;
         const nf::VictimClass& vc = nf::victim_by_id(cls);
 

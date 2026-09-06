@@ -534,7 +534,10 @@ export function measuredFrom(hit) {
   if (!hit?.row) return null
   const r = hit.row
   const num = v => (typeof v === 'number' && Number.isFinite(v) && v > 0 ? v : undefined)
-  const out = { mpn: r.mpn }
+  // The catalogue FAMILY travels too. A net's name is not the only evidence of
+  // what it does, and on a board whose nets are the CAD tool's own inventions
+  // it is no evidence at all — but a crystal is a crystal regardless.
+  const out = { mpn: r.mpn, family: hit.family }
   const c = num(r.capacitance)
   const esr = num(r.esr)
   const esrF = num(r.esr_frequency ?? r.esrFrequency)
@@ -556,7 +559,10 @@ export function measuredFrom(hit) {
   if (qg !== undefined) out.qgC = qg
   if (rds !== undefined) out.rdsOnOhm = rds
   const any = ['cF', 'esrOhm', 'cossF', 'qgC', 'rdsOnOhm'].some(k => out[k] !== undefined)
-  return any ? out : null
+  // A timing device carries no number this model uses, and is still worth
+  // sending: it is what tells the near-field map that this net is a crystal
+  // loop when the net name says nothing.
+  return (any || hit.family === 'timing') ? out : null
 }
 
 // A "refdes,value" table for every exactly-identified part the board never
