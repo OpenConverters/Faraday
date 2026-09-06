@@ -318,6 +318,49 @@ test('and the one line can be dismissed too, for a board whose values never come
     await expect(page.getByTestId('board-canvas')).toBeVisible()
   })
 
+test('every notice banner can be dismissed, and a new board brings them back',
+  async ({ page }) => {
+    // Each of these is worth reading once and none is worth scrolling past for
+    // the rest of a session. One mechanism, keyed by the banner's own test id,
+    // so a notice added later cannot be the one that was forgotten.
+    await page.addInitScript(() => localStorage.setItem('faraday.view', 'advanced'))
+    await page.goto('/')
+    await page.getByTestId('file-input').setInputFiles({
+      name: 'no-values.kicad_pcb', mimeType: 'text/plain',
+      buffer: Buffer.from(NO_VALUES_BOARD),
+    })
+    const card = page.getByTestId('stackup-card')
+    await expect(card.or(page.getByTestId('values-card')).first())
+      .toBeVisible({ timeout: 30000 })
+    if (await card.count()) await card.getByText('Default 2-layer').click()
+
+    // hand values in, which raises the values-note
+    await page.getByTestId('values-input').setInputFiles({
+      name: 'values.csv', mimeType: 'text/csv',
+      buffer: Buffer.from('refdes,value\nC1,100pF\nC2,100pF\n'),
+    })
+    const note = page.getByTestId('values-note')
+    await expect(note).toContainText('filled 2')
+
+    await page.getByTestId('values-note-dismiss').click()
+    await expect(page.getByTestId('values-note')).toHaveCount(0)
+
+    // a different board is a different set of facts
+    await page.getByTestId('file-input').setInputFiles({
+      name: 'again.kicad_pcb', mimeType: 'text/plain',
+      buffer: Buffer.from(NO_VALUES_BOARD),
+    })
+    const card2 = page.getByTestId('stackup-card')
+    await expect(card2.or(page.getByTestId('values-card')).first())
+      .toBeVisible({ timeout: 30000 })
+    if (await card2.count()) await card2.getByText('Default 2-layer').click()
+    await page.getByTestId('values-input').setInputFiles({
+      name: 'values.csv', mimeType: 'text/csv',
+      buffer: Buffer.from('refdes,value\nC1,100pF\nC2,100pF\n'),
+    })
+    await expect(page.getByTestId('values-note')).toContainText('filled 2')
+  })
+
 test('the collapsed line can be expanded back to the full note', async ({ page }) => {
     await page.addInitScript(() => localStorage.setItem('faraday.view', 'advanced'))
     await page.goto('/')

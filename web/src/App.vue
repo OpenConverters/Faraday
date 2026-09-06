@@ -70,6 +70,18 @@ const sourcedParts = ref({})
 // The catalogue summary is read once and then in the way. Hidden per sweep, not
 // per board: asking again is a new answer and deserves to be seen.
 const catBarHidden = ref(false)
+// Every notice on this screen is worth reading once. None of them is worth
+// scrolling past for the rest of a session, and adding a ref per banner is how
+// you end up with four of them and one that was forgotten. One set, keyed by
+// the banner's own test id, cleared when a different board arrives — because a
+// new board's notices are new facts, not the ones that were waved away.
+const hiddenNotices = ref(new Set())
+const noticeShown = id => !hiddenNotices.value.has(id)
+function hideNotice(id) {
+  const next = new Set(hiddenNotices.value)
+  next.add(id)
+  hiddenNotices.value = next
+}
 // The tally is stated, not remembered: sourcing a part changes it, and a line
 // that still said "3 unmatched" after two of them were sourced would be wrong.
 function retally() {
@@ -427,13 +439,26 @@ const valuesNote = ref('')
 // it bites: the PDN, the input branch and the Y-cap rule each say why they are
 // empty when you open them.
 const valuesCard = ref('full')   // 'full' | 'brief' | 'gone'
-const partsMissing = computed(() => {
-  if (!engine.value || !report.value) return 0
+// Parts with a part number and no value, split by whether the missing value
+// BLOCKS anything. A diode, a MOSFET, an IC and a connector have no scalar
+// value for any model to want, so counting them made the card say "every model
+// that needs a capacitance is quiet until the values arrive" about 48 parts no
+// model was ever going to ask about — and kept saying it after the catalogue
+// had filled in every capacitor, resistor and inductor on the board.
+const partsWithoutValues = computed(() => {
+  if (!engine.value || !report.value) return []
   try {
     const p = JSON.parse(engine.value.partsWithoutValues())
-    return Array.isArray(p) ? p.length : 0
-  } catch { return 0 }
+    return Array.isArray(p) ? p : []
+  } catch { return [] }
 })
+// C, R, L and FB are the kinds a value means something for; the models that
+// read one read those.
+const VALUED_KIND = /^(C|R|L|FB|FL)[A-Z]?\d/i
+const partsMissing = computed(() =>
+  partsWithoutValues.value.filter(e => VALUED_KIND.test(e?.refdes ?? '')).length)
+const partsUnvalued = computed(() =>
+  partsWithoutValues.value.length - partsMissing.value)
 async function loadValues(file) {
   if (!file || !engine.value) return
   try {
@@ -555,7 +580,11 @@ function toggleReturnPath() {
 watch(report, () => { returnPath.value = null; rpError.value = '' })
 // A different board is a different question: it must ask again, even if the
 // last one was told to be quiet.
-watch(fileName, () => { valuesCard.value = 'full'; catBarHidden.value = false })
+watch(fileName, () => {
+  valuesCard.value = 'full'
+  catBarHidden.value = false
+  hiddenNotices.value = new Set()
+})
 
 // The component near-field map: a different regime from the far-field
 // attribution, so it is a separate panel with its own units and its own caveat.
@@ -875,19 +904,30 @@ function toggleRule(rule) {
 
     <div v-if="engineLoading && fileName" class="banner wait" data-testid="engine-loading">
       Loading the analysis engine…</div>
-    <div v-if="rpError" class="banner error" data-testid="rp-error">{{ rpError }}</div>
+    <div v-if="rpError && noticeShown('rp-error')" class="banner error dismissable"
+         data-testid="rp-error">{{ rpError }}
+      <button class="barx" aria-label="Dismiss" @click="hideNotice('rp-error')">✕</button>
+    </div>
 
-    <div v-if="nfError" class="banner error" data-testid="nf-error">{{ nfError }}</div>
+    <div v-if="nfError && noticeShown('nf-error')" class="banner error dismissable"
+         data-testid="nf-error">{{ nfError }}
+      <button class="barx" aria-label="Dismiss" @click="hideNotice('nf-error')">✕</button>
+    </div>
 
     <!-- Some exports carry part numbers and no values (Altium's ODB++ does).
          Say so once, where it is actionable, rather than only inside whichever
          panel refuses first. -->
     <div v-if="report && partsMissing > 0 && valuesCard === 'full'"
          class="banner ask" data-testid="values-card">
-      <p><b>{{ partsMissing }} component(s) carry a part number and no value</b> —
-         this export wrote part numbers instead. Every model that needs a
-         capacitance (PDN impedance, the conducted input branch, the Y-capacitor
-         rule) refuses to guess one, so they are quiet until the values arrive.</p>
+      <p><b>{{ partsMissing }} capacitor(s), resistor(s) and inductor(s) carry a
+         part number and no value</b> — this export wrote part numbers instead.
+         Every model that needs one (PDN impedance, the conducted input branch,
+         the Y-capacitor rule) refuses to guess, so they are quiet until the
+         values arrive.
+         <span v-if="partsUnvalued" class="dim">({{ partsUnvalued }} more part(s)
+           carry a part number and no value either — diodes, transistors, ICs,
+           connectors — but no model here asks those for one, so they are not
+           counted above.)</span></p>
       <button class="chip" data-testid="parts-download" @click="downloadParts">
         download the part list (refdes, part number)</button>
       <label class="chip real">
@@ -925,17 +965,23 @@ function toggleRule(rule) {
     <!-- The catalogue changed the physics: say so, because a report whose ESR
          came from a datasheet and one whose ESR came from a constant look
          identical otherwise. -->
-    <div v-if="measuredNote" class="banner wait" data-testid="measured-note">
+    <div v-if="measuredNote && noticeShown('measured-note')"
+         class="banner wait dismissable" data-testid="measured-note">
       {{ measuredNote }}
+      <button class="barx" data-testid="measured-note-dismiss" aria-label="Dismiss"
+              @click="hideNotice('measured-note')">✕</button>
     </div>
 
-    <div v-if="valuesNote" class="banner wait" data-testid="values-note">
+    <div v-if="valuesNote && noticeShown('values-note')"
+         class="banner wait dismissable" data-testid="values-note">
       {{ valuesNote }}
       <label class="chip">
         <input type="file" accept=".csv,.txt" style="display:none"
                data-testid="values-input-again"
                @change="e => { loadValues(e.target.files[0]); e.target.value = '' }" />
         load another table…</label>
+      <button class="barx" data-testid="values-note-dismiss" aria-label="Dismiss"
+              @click="hideNotice('values-note')">✕</button>
     </div>
 
     <div v-if="needStackup" class="banner ask" data-testid="stackup-card">
@@ -1261,6 +1307,10 @@ function toggleRule(rule) {
 .banner.error { background: #3a1a1e; color: #ffb3b8; font-family: var(--mono); }
 .banner.wait { background: var(--resin); color: var(--tin); font-family: var(--mono); }
 .banner.ask { background: #2a2418; color: var(--silk); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.banner.dismissable { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.banner .barx { margin-left: auto; background: none; border: 0; color: var(--tin);
+                font-size: 15px; cursor: pointer; padding: 2px 6px; line-height: 1; }
+.banner .barx:hover { color: var(--silk); }
 .radbar .barx { margin-left: 8px; background: none; border: 0; color: var(--tin);
                 font-size: 14px; cursor: pointer; padding: 0 4px; line-height: 1; }
 .radbar .barx:hover { color: var(--silk); }
