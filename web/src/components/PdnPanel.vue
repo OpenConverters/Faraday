@@ -1,5 +1,8 @@
 <script setup>
 import { ref, computed, onMounted, onBeforeUnmount, nextTick, watch } from 'vue'
+import { palette, onThemeChange } from '../theme.js'
+
+let themeOff = null
 
 const props = defineProps({
   engine: { type: Object, required: true },
@@ -50,6 +53,7 @@ function draw() {
   const w = cv.clientWidth, h = cv.clientHeight
   cv.width = w * dpr; cv.height = h * dpr
   const ctx = cv.getContext('2d')
+  const pal = palette(cv)
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, w, h)
 
@@ -62,8 +66,8 @@ function draw() {
   const Y = z => padT + (1 - Math.log10(z / zlo) / Math.log10(zhi / zlo)) * (h - padT - padB)
 
   ctx.font = '10px IBM Plex Mono, monospace'
-  ctx.strokeStyle = 'rgba(157,180,173,0.13)'
-  ctx.fillStyle = 'rgba(157,180,173,0.65)'
+  ctx.strokeStyle = pal.grid(0.13)
+  ctx.fillStyle = pal.grid(0.65)
   for (const f of [0.01, 0.1, 1, 10, 100, 1000]) {
     ctx.beginPath(); ctx.moveTo(X(f), padT); ctx.lineTo(X(f), h - padB); ctx.stroke()
     ctx.textAlign = 'center'
@@ -79,16 +83,16 @@ function draw() {
   ctx.fillText('MHz', (padL + w) / 2, h - 3)
 
   // the target line: above it, the rail cannot hold the ripple at that f
-  ctx.strokeStyle = 'rgba(255,93,93,0.6)'
+  ctx.strokeStyle = pal.high(0.6)
   ctx.setLineDash([6, 4]); ctx.lineWidth = 1.6
   ctx.beginPath(); ctx.moveTo(padL, Y(zTarget.value)); ctx.lineTo(w - padR, Y(zTarget.value))
   ctx.stroke(); ctx.setLineDash([])
-  ctx.fillStyle = 'rgba(255,93,93,0.85)'
+  ctx.fillStyle = pal.high(0.85)
   ctx.textAlign = 'left'
   ctx.fillText('target', padL + 4, Y(zTarget.value) - 4)
 
   // |Z|
-  ctx.strokeStyle = '#8fb8ff'
+  ctx.strokeStyle = pal.cool
   ctx.lineWidth = 1.8
   ctx.beginPath()
   for (let i = 0; i < r.fMhz.length; i++) {
@@ -98,13 +102,13 @@ function draw() {
   ctx.stroke()
 
   // per-cap series resonances as ticks — where each cap actually works
-  ctx.fillStyle = 'rgba(88,199,154,0.8)'
+  ctx.fillStyle = pal.low(0.8)
   for (const c of r.caps) {
     const x = X(Math.max(f0, Math.min(f1, c.fResMhz)))
     ctx.fillRect(x - 1, h - padB - 6, 2, 6)
   }
   // anti-resonances
-  ctx.fillStyle = '#ffb454'
+  ctx.fillStyle = pal.heat.medium
   for (const a of r.antires) {
     ctx.beginPath()
     ctx.arc(X(Math.max(f0, Math.min(f1, a.fMhz))), Y(Math.min(zhi, a.zOhm)), 3, 0, 7)
@@ -114,11 +118,12 @@ function draw() {
 
 const ro = new ResizeObserver(() => draw())
 onMounted(() => {
+  themeOff = onThemeChange(draw)
   run()
   nextTick(() => { draw(); if (canvas.value) ro.observe(canvas.value) })
   window.addEventListener('keydown', onKey)
 })
-onBeforeUnmount(() => { ro.disconnect(); window.removeEventListener('keydown', onKey) })
+onBeforeUnmount(() => { themeOff?.(); ro.disconnect(); window.removeEventListener('keydown', onKey) })
 function onKey(e) { if (e.key === 'Escape') emit('close') }
 watch([rail, dI, dV], () => nextTick(draw))
 watch(vrmL, () => { run(); nextTick(draw) })
@@ -223,14 +228,14 @@ const num = (x, d = 1) => (x === undefined || x === null ? '—' : Number(x).toF
 </template>
 
 <style scoped>
-.scrim { position: fixed; inset: 0; z-index: 50; background: rgba(8,12,10,0.72);
+.scrim { position: fixed; inset: 0; z-index: 50; background: var(--modal-scrim);
   display: flex; align-items: center; justify-content: center; padding: 20px; }
 .panel { width: min(1120px, 100%); max-height: 100%; display: flex; flex-direction: column;
   overflow: auto; background: var(--resin); border: 1px solid var(--resin-edge); border-radius: 8px; }
 header { display: flex; align-items: center; gap: 12px; padding: 11px 16px;
   border-bottom: 1px solid var(--resin-edge); }
 header h2 { font-family: var(--display); font-size: 17px; font-weight: 700;
-  letter-spacing: 0.16em; color: #8fb8ff; }
+  letter-spacing: 0.16em; color: var(--cool); }
 .sub { font-family: var(--mono); font-size: 11px; color: var(--tin); }
 .gndpick select { font-family: var(--mono); font-size: 11px; color: var(--silk);
   background: var(--resin); border: 1px solid var(--resin-edge);
@@ -240,16 +245,16 @@ header h2 { font-family: var(--display); font-size: 17px; font-weight: 700;
 .sp { flex: 1; }
 .x { color: var(--tin); font-size: 15px; padding: 0 4px; }
 .x:hover { color: var(--silk); }
-.err { margin: 12px 16px; padding: 10px 12px; border-radius: 4px; background: #3a1a1e;
-  color: #ffb3b8; font-family: var(--mono); font-size: 12.5px; }
+.err { margin: 12px 16px; padding: 10px 12px; border-radius: 4px; background: var(--err-bg);
+  color: var(--err-ink); font-family: var(--mono); font-size: 12.5px; }
 
 .body { display: grid; gap: 14px; padding: 14px 16px;
   grid-template-columns: minmax(0, 1.5fr) minmax(0, 1fr); }
 @media (max-width: 880px) { .body { grid-template-columns: 1fr; } }
-canvas { width: 100%; height: 320px; display: block; border-radius: 4px; background: #0d1210; }
+canvas { width: 100%; height: 320px; display: block; border-radius: 4px; background: var(--plot-bg); }
 figcaption { display: flex; gap: 14px; flex-wrap: wrap; padding-top: 6px;
   font-family: var(--mono); font-size: 11px; color: var(--tin); }
-.k.z { color: #8fb8ff; }
+.k.z { color: var(--cool); }
 .k.res { color: var(--heat-low); }
 .k.anti { color: var(--heat-med); }
 .k.tgt { color: var(--heat-high); }
@@ -278,5 +283,5 @@ figcaption { display: flex; gap: 14px; flex-wrap: wrap; padding-top: 6px;
   border-top: 1px solid var(--resin-edge); background: var(--bare-fr4); }
 .sl { display: flex; flex-direction: column; gap: 3px; font-size: 11.5px; color: var(--tin); }
 .sl span b { color: var(--silk); font-family: var(--mono); }
-.sl input { width: 100%; accent-color: #8fb8ff; }
+.sl input { width: 100%; accent-color: var(--cool); }
 </style>

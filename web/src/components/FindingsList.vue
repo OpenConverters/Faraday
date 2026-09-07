@@ -284,9 +284,9 @@ const toolTitle = f => [
 .heat.medium { background: var(--heat-med); box-shadow: 0 0 5px var(--heat-med); }
 .heat.low { background: var(--heat-low); }
 .heat.info { background: var(--tin); }
-.heat.pair { background: #6f9fc4; }
+.heat.pair { background: var(--cool); }
 .heat.sw { background: var(--copper); box-shadow: 0 0 6px var(--copper); }
-.heat.loop { background: #e8d24a; box-shadow: 0 0 6px #e8d24a; }
+.heat.loop { background: var(--loop); box-shadow: 0 0 6px var(--loop); }
 .fid { font-family: var(--mono); font-size: 11px; color: var(--tin); }
 .ftitle {
   font-size: 12.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;

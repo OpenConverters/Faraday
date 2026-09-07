@@ -131,7 +131,7 @@ const r = computed(() => result.value)
 </template>
 
 <style scoped>
-.scrim { position: fixed; inset: 0; z-index: 50; background: rgba(8,12,10,0.72);
+.scrim { position: fixed; inset: 0; z-index: 50; background: var(--modal-scrim);
   display: flex; align-items: center; justify-content: center; padding: 20px; }
 .panel { width: min(860px, 100%); max-height: 100%; display: flex; flex-direction: column;
   overflow: auto; background: var(--resin); border: 1px solid var(--resin-edge); border-radius: 8px; }
@@ -143,8 +143,8 @@ header h2 { font-family: var(--display); font-size: 17px; font-weight: 700;
 .sp { flex: 1; }
 .x { color: var(--tin); font-size: 15px; padding: 0 4px; }
 .x:hover { color: var(--silk); }
-.err { margin: 12px 16px; padding: 10px 12px; border-radius: 4px; background: #3a1a1e;
-  color: #ffb3b8; font-family: var(--mono); font-size: 12.5px; }
+.err { margin: 12px 16px; padding: 10px 12px; border-radius: 4px; background: var(--err-bg);
+  color: var(--err-ink); font-family: var(--mono); font-size: 12.5px; }
 
 .body { display: grid; gap: 18px; padding: 14px 16px;
   grid-template-columns: minmax(0, 1.1fr) minmax(0, 1fr); }

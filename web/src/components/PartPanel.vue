@@ -698,7 +698,7 @@ watch(() => props.refdes, start, { immediate: true })
 <style scoped>
 .scrim {
   position: fixed; inset: 0; z-index: 50;
-  background: rgba(8, 12, 10, 0.72);
+  background: var(--modal-scrim);
   display: flex; align-items: center; justify-content: center; padding: 20px;
 }
 .part {
@@ -707,7 +707,7 @@ watch(() => props.refdes, start, { immediate: true })
   background: var(--resin); border: 1px solid var(--resin-edge);
   border-radius: 8px; overflow: auto;
   /* Kelvin's chart reads its palette from these — mapped onto Faraday's */
-  --bg-deep: #101613; --grat-strong: rgba(157, 180, 173, 0.16); --ink: var(--silk);
+  --bg-deep: var(--plot-bg); --grat-strong: rgba(var(--grid), 0.16); --ink: var(--silk);
   --ink-dim: var(--tin); --k: var(--copper); --line-soft: var(--resin-edge); --s1: #6f9fc4;
 }
 .phead {
@@ -754,7 +754,7 @@ h4 { font-size: 15px; color: var(--silk); }
 
 .chip {
   font-family: var(--mono); font-size: 11px; padding: 3px 10px; border-radius: 999px;
-  border: 1px solid var(--tin); color: var(--tin); background: rgba(16, 22, 19, 0.6);
+  border: 1px solid var(--tin); color: var(--tin); background: rgba(var(--scrim), 0.6);
 }
 .chip:hover:not(:disabled) { border-color: var(--silk); color: var(--silk); }
 .chip.on { border-color: var(--copper); color: var(--copper); }
@@ -795,7 +795,7 @@ h4 { font-size: 15px; color: var(--silk); }
 .xt tr.st-no_substitute td { opacity: 0.55; }
 .g-drop_in { border-color: var(--heat-low); color: var(--heat-low); }
 .g-minor_review { border-color: var(--heat-med); color: var(--heat-med); }
-.g-major_review { border-color: #e07a3f; color: #e07a3f; }
+.g-major_review { border-color: var(--copper); color: var(--copper); }
 .g-redesign, .g-no_substitute { border-color: var(--heat-high); color: var(--heat-high); }
 .dir { font-size: 10.5px; margin-left: 4px; }
 .v-pass { color: var(--heat-low); } .v-warn { color: var(--heat-med); }

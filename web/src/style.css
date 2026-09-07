@@ -11,9 +11,104 @@
   --heat-high: #ff5d5d;
   --heat-med: #ffb454;
   --heat-low: #58c79a;
+  /* the same three, as triples, for the translucent fills a canvas paints
+     under a line — one definition, so a fill can never drift from its line */
+  --heat-high-rgb: 255, 93, 93;
+  --heat-med-rgb: 255, 180, 84;
+  --heat-low-rgb: 88, 199, 154;
+  --copper-rgb: 217, 139, 95;
   --mono: 'IBM Plex Mono', ui-monospace, monospace;
   --sans: 'IBM Plex Sans', system-ui, sans-serif;
   --display: 'Rajdhani', var(--sans);
+
+  /* The board render is a canvas, so these live here rather than in JS: one
+     definition each, read back through getComputedStyle when it draws. Two
+     hardcoded palettes in two languages drift, and the drift shows up as a
+     board that does not match the page it sits on. */
+  --board: #182019;         /* substrate under the copper */
+  --board-edge: #2c3a30;
+  --board-ink: #b9c4bf;     /* refdes lettering, as silkscreen */
+  --board-ink-inv: #101613;
+  --wash: 6, 9, 8;          /* the dim over a part the catalogue could not answer */
+  --wash-line: 157, 180, 173;
+  --glare: 230, 237, 232;   /* highlight washes: probe rings, near-field bloom */
+  --scrim: 16, 22, 19;      /* floating bars over the board */
+  --panel-float: 23, 31, 26;
+  --shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+  color-scheme: dark;   /* scrollbars, form controls, the browser's own chrome */
+
+  /* Plots are canvases too, and a plot is a second board: same ground, same
+     ink. --grid is an rgb triple for the same reason as --wash. */
+  --plot-bg: #0d1210;
+  --grid: 157, 180, 173;
+  --modal-scrim: rgba(8, 12, 10, 0.72);
+  --err-bg: #3a1a1e;
+  --err-ink: #ffb3b8;
+  --ask-bg: #2a2418;
+  --cool: #8fb8ff;          /* impedance, diff pairs: the one non-copper hue */
+  --copper-hi: #f0a877;     /* copper caught by the light: hover, focus */
+  /* a simulated run drawn beside the estimate: the SAME two hues, stepped
+     off the ground so the pair reads as one measurement and its model */
+  --sim-dm: #9fd0ef;
+  --sim-cm: #ffc79a;
+  /* Layer identity. A layer keeps its meaning in both themes — F.Cu is copper,
+     B.Cu is tinned — but not its value: on a dark board the copper glows,
+     on a pale one it has to sit DARKER than the substrate or it disappears
+     into it. Same hue, opposite side of the ground. */
+  --cu-front: #e8955c;
+  --cu-back: #5d9ec7;
+  --cu-in1: #b8c24d; --cu-in2: #c778b8; --cu-in3: #5dc7b0; --cu-in4: #c7a15d;
+  --loop: #e8d24a;         /* commutation loop: the one thing drawn in yellow */
+}
+
+/* LIGHT — the same board in daylight.
+   Bare FR4 is not white and not cream: it is a pale olive-yellow woven glass,
+   and that is the anchor here. Copper stays copper because it is the F.Cu
+   layer's own colour rather than an accent, but it oxidises a couple of stops
+   darker so it holds contrast on a pale ground instead of glowing on a dark
+   one. The severity ramp does the same — the dark theme's red/amber/green are
+   tuned to glow, and glowing colours are the ones that fail on paper. */
+:root[data-theme="light"] {
+  --bare-fr4: #c9c5a8;
+  --resin: #eeecdf;
+  --resin-edge: #b9b69a;
+  --copper: #9d4d24;
+  --tin: #59665f;
+  --silk: #191f1b;
+  --heat-high: #c1272d;
+  --heat-med: #9a5b0a;
+  --heat-low: #0f7a52;
+  --heat-high-rgb: 193, 39, 45;
+  --heat-med-rgb: 154, 91, 10;
+  --heat-low-rgb: 15, 122, 82;
+  --copper-rgb: 157, 77, 36;
+
+  --board: #eae7d2;
+  --board-edge: #b6b295;
+  --board-ink: #3e4a44;
+  --board-ink-inv: #f2efe0;
+  --wash: 252, 250, 241;
+  --wash-line: 90, 100, 94;
+  --glare: 30, 38, 33;
+  --scrim: 232, 229, 212;
+  --panel-float: 244, 242, 231;
+  --shadow: 0 4px 18px rgba(60, 58, 40, 0.22);
+  color-scheme: light;
+
+  --plot-bg: #f6f4e8;
+  --grid: 89, 102, 95;
+  --modal-scrim: rgba(78, 76, 58, 0.42);
+  --err-bg: #f7dcdc;
+  --err-ink: #8c1c22;
+  --ask-bg: #f2e7c8;
+  --cool: #23558f;
+  --copper-hi: #7d3512;
+  --sim-dm: #3d7fa8;
+  --sim-cm: #b57534;
+  --cu-front: #a8511c;
+  --cu-back: #24618c;
+  --cu-in1: #6b7317; --cu-in2: #8c3d80; --cu-in3: #14776a; --cu-in4: #7d5a17;
+  --loop: #8a7008;
 }
 
 * { margin: 0; padding: 0; box-sizing: border-box; }

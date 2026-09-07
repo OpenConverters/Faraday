@@ -1,6 +1,7 @@
 <script setup>
 import { ref, reactive, computed, watch, onMounted, onBeforeUnmount } from 'vue'
 import { isPart, footprintName } from '../parts.js'
+import { palette, onThemeChange } from '../theme.js'
 
 const props = defineProps({
   report: { type: Object, required: true },
@@ -47,18 +48,24 @@ const heat = computed(() => {
 // copper it is describing, and the reader cannot tell "this trace is quiet"
 // from "this trace was not analysed" — which is how the first version of this
 // map came out looking like nothing had happened.
-function radColour(v) {
+// Four stops at 0 / 0.5 / 0.8 / 1. The shape of the ramp is the same in both
+// themes — quiet teal, warming, hot — but its far end runs AWAY from the
+// substrate: white-hot over a dark board, ember-dark over a pale one. Ending
+// pale on a pale ground would make the loudest traces the hardest to see.
+const RAMP = {
+  dark:  [[78, 148, 132], [138, 170, 110], [217, 139, 95], [255, 237, 232]],
+  light: [[26, 112, 88],  [86, 122, 52],   [170, 84, 18],  [136, 12, 24]],
+}
+function radColour(v, light) {
+  const st = light ? RAMP.light : RAMP.dark
   const t = v / 255
-  if (t < 0.5) {                     // quiet: cool teal, clearly drawn
-    const u = t / 0.5
-    return `rgb(${Math.round(78 + 60 * u)},${Math.round(148 + 22 * u)},${Math.round(132 - 22 * u)})`
-  }
-  if (t < 0.8) {                     // warming
-    const u = (t - 0.5) / 0.3
-    return `rgb(${Math.round(138 + 79 * u)},${Math.round(170 - 31 * u)},${Math.round(110 - 15 * u)})`
-  }
-  const u = (t - 0.8) / 0.2          // hot
-  return `rgb(${Math.round(217 + 38 * u)},${Math.round(139 + 98 * u)},${Math.round(95 + 137 * u)})`
+  const [i, u] = t < 0.5 ? [0, t / 0.5]
+               : t < 0.8 ? [1, (t - 0.5) / 0.3]
+                         : [2, (t - 0.8) / 0.2]
+  const a = st[i], b = st[i + 1]
+  return `rgb(${Math.round(a[0] + (b[0] - a[0]) * u)},` +
+         `${Math.round(a[1] + (b[1] - a[1]) * u)},` +
+         `${Math.round(a[2] + (b[2] - a[2]) * u)})`
 }
 
 const wrap = ref(null)
@@ -115,32 +122,45 @@ const partVisible = p =>
   p.side === 'bottom' ? layerVis[board.value.copperNames[board.value.copperNames.length - 1]]
                       : layerVis[board.value.copperNames[0]]
 
-const HEAT = { high: '#ff5d5d', medium: '#ffb454', low: '#58c79a', info: '#9db4ad' }
+// severity and rule identity: the meaning never changes, the value does — see
+// palette() and the --heat-*/--cu-* tokens in style.css
 // The catalogue overlay's four answers. "unlookupable" is deliberately its own
 // colour and not a failure: a part the EXPORT never described is not a part the
 // catalogue is missing, and colouring them alike would blame the wrong thing.
-const CAT_COLOR = {
-  exact:        { fill: 'rgba(88,199,154,0.30)',  line: '#58c79a' },
-  candidates:   { fill: 'rgba(255,180,84,0.24)',  line: '#ffb454' },
-  none:         { fill: 'rgba(255,93,93,0.16)',   line: 'rgba(255,93,93,0.65)' },
-  unlookupable: { fill: 'rgba(6,9,8,0.62)',       line: 'rgba(120,134,129,0.45)' },
-  pending:      { fill: 'rgba(6,9,8,0.62)',       line: 'rgba(157,180,173,0.35)' },
+// The four verdicts keep their own hues in both themes — an answer does not
+// change colour because the lights came on. Only the two "no answer yet"
+// states follow the ground, because they ARE the ground: a part nothing can be
+// said about is left as substrate.
+const catColors = pal => ({
+  exact:        { fill: pal.low(0.30),  line: pal.heat.low },
+  candidates:   { fill: pal.med(0.24),  line: pal.heat.medium },
+  none:         { fill: pal.high(0.16),   line: pal.high(0.65) },
+  unlookupable: { fill: pal.wash,                 line: pal.washLine(0.45) },
+  pending:      { fill: pal.wash,                 line: pal.washLine(0.35) },
   // not in the catalogue, but the librarian read it and staged it: a different
   // answer from "none", and the part must stop reading as unknown
-  sourced:      { fill: 'rgba(111,159,196,0.26)', line: '#6f9fc4' },
-}
+  sourced:      { fill: 'rgba(111,159,196,0.26)', line: pal.cool },
+})
 // intentional coupling and identified aggressors read as their own thing, not
 // as heat: diff pairs cool blue-grey, switch nodes copper (the board's own hue)
-const RULE_COLOR = { 'diff-pair': '#6f9fc4', 'switch-node': '#d98b5f',
-                     'commutation-loop': '#e8d24a' }
-const colorFor = f => RULE_COLOR[f.rule] ?? HEAT[f.severityLabel] ?? HEAT.info
-const INNER_COLORS = ['#b8c24d', '#c778b8', '#5dc7b0', '#c7a15d']
+const ruleColors = pal => ({ 'diff-pair': pal.cool, 'switch-node': pal.copper,
+                             'commutation-loop': pal.loop })
+const colorFor = (f, pal) =>
+  ruleColors(pal)[f.rule] ?? pal.heat[f.severityLabel] ?? pal.heat.info
 
-function layerColor(cu) {
+// the layer chips are CSS, so they take the variable itself and follow a
+// theme flip without a repaint
+function layerVar(cu) {
   const names = board.value.copperNames
-  if (cu === 0) return '#e8955c'            // F.Cu: copper
-  if (cu === names.length - 1) return '#5d9ec7' // B.Cu: tinned blue
-  return INNER_COLORS[(cu - 1) % INNER_COLORS.length]
+  if (cu === 0) return 'var(--cu-front)'
+  if (cu === names.length - 1) return 'var(--cu-back)'
+  return `var(--cu-in${((cu - 1) % 4) + 1})`
+}
+function layerColor(cu, pal) {
+  const names = board.value.copperNames
+  if (cu === 0) return pal.cuFront            // F.Cu: copper
+  if (cu === names.length - 1) return pal.cuBack // B.Cu: tinned
+  return pal.inner[(cu - 1) % pal.inner.length]
 }
 
 const z0map = computed(() => {
@@ -212,8 +232,9 @@ function hLoop(hull, px, py, pz, cur) {
 // a rubber-band drag none of those change, so the grid must not recompute
 // per mousemove (user: "why is it so slow drawing the can?").
 const nfCache = { key: null, nfd: null, img: null }
+let themeOff = null
 
-function drawNearField(ctx, w, h, toScreen, invScreen) {
+function drawNearField(ctx, w, h, toScreen, invScreen, pal) {
   const nfd = props.nearField
   if (!nfd || !nfd.aggressors?.length) return
   const cacheKey = `${view.scale}|${view.ox}|${view.oy}|${w}|${h}`
@@ -221,7 +242,7 @@ function drawNearField(ctx, w, h, toScreen, invScreen) {
     ctx.imageSmoothingEnabled = true
     ctx.imageSmoothingQuality = 'high'
     ctx.drawImage(nfCache.img, 0, 0, w, h)
-    drawNearFieldVectors(ctx, toScreen)
+    drawNearFieldVectors(ctx, toScreen, pal)
     return
   }
   const step = 5
@@ -293,16 +314,16 @@ function drawNearField(ctx, w, h, toScreen, invScreen) {
   ctx.imageSmoothingEnabled = true
   ctx.imageSmoothingQuality = 'high'
   ctx.drawImage(off, 0, 0, w, h)
-  drawNearFieldVectors(ctx, toScreen)
+  drawNearFieldVectors(ctx, toScreen, pal)
 }
 
 // the loops the field is integrated over, and the victims sitting in it —
 // cheap vector work, drawn fresh on every frame on top of the cached image
-function drawNearFieldVectors(ctx, toScreen) {
+function drawNearFieldVectors(ctx, toScreen, pal) {
   const nfd = props.nearField
   for (const a of nfd.aggressors) {
     if (!a.hull || a.hull.length < 3) continue
-    ctx.strokeStyle = 'rgba(255,255,255,0.75)'
+    ctx.strokeStyle = pal.glare(0.75)
     ctx.lineWidth = 1.4
     ctx.beginPath()
     a.hull.forEach(([hx, hy], i) => {
@@ -313,8 +334,8 @@ function drawNearFieldVectors(ctx, toScreen) {
   }
   for (const v of (nfd.victims ?? []).slice(0, 20)) {
     const [sx, sy] = toScreen(v.xMm, v.yMm)
-    ctx.strokeStyle = v.level === 'over' ? '#ff5d5d'
-                    : v.level === 'watch' ? '#ffb454' : '#58c79a'
+    ctx.strokeStyle = v.level === 'over' ? pal.heat.high
+                    : v.level === 'watch' ? pal.heat.medium : pal.heat.low
     ctx.lineWidth = 2
     ctx.beginPath(); ctx.arc(sx, sy, 6, 0, 7); ctx.stroke()
   }
@@ -323,8 +344,17 @@ function drawNearFieldVectors(ctx, toScreen) {
 function draw() {
   const el = canvas.value
   if (!el) return
+  const pal = palette(el)
+  const cat = catColors(pal)
   // deterministic hook for tests: the current board->CSS-pixel transform
   el.dataset.view = JSON.stringify({ scale: view.scale, ox: view.ox, oy: view.oy })
+  // and the risk ramp's own ends, which no pixel count can isolate — the hot
+  // end covers too little copper to show up in a histogram, and the property
+  // that matters (it runs away from the substrate) is a statement about the
+  // ramp, not about this board
+  el.dataset.ramp = JSON.stringify(
+    { quiet: radColour(0, pal.light), hot: radColour(255, pal.light),
+      board: pal.board })
   const dpr = window.devicePixelRatio || 1
   if (el.width !== el.clientWidth * dpr || el.height !== el.clientHeight * dpr) {
     el.width = el.clientWidth * dpr
@@ -338,8 +368,8 @@ function draw() {
   // board substrate
   const [bx1, by1] = toScreen(b.bbox[0], b.bbox[1])
   const [bx2, by2] = toScreen(b.bbox[2], b.bbox[3])
-  ctx.fillStyle = '#182019'
-  ctx.strokeStyle = '#2c3a30'
+  ctx.fillStyle = pal.board
+  ctx.strokeStyle = pal.edge
   ctx.lineWidth = 1
   ctx.beginPath()
   ctx.roundRect(bx1, by1, bx2 - bx1, by2 - by1, 3)
@@ -354,7 +384,7 @@ function draw() {
     ctx.beginPath()
     ctx.rect(bx1, by1, bx2 - bx1, by2 - by1)
     ctx.clip()
-    drawNearField(ctx, el.clientWidth, el.clientHeight, toScreen, invScreen)
+    drawNearField(ctx, el.clientWidth, el.clientHeight, toScreen, invScreen, pal)
     ctx.restore()
   }
 
@@ -373,19 +403,19 @@ function draw() {
       ctx.fillStyle = 'rgba(150,158,162,0.32)'
       ctx.fillRect(ax, ay, w2, h2)
       // brushed-metal hatch
-      ctx.strokeStyle = 'rgba(210,216,220,0.14)'
+      ctx.strokeStyle = pal.glare(0.16)
       ctx.lineWidth = 1
       for (let x = ax - h2; x < cx; x += 7) {
         ctx.beginPath(); ctx.moveTo(x, cy); ctx.lineTo(x + h2, ay); ctx.stroke()
       }
       // lid highlight along the top edge
       const grad = ctx.createLinearGradient(ax, ay, ax, ay + Math.min(18, h2))
-      grad.addColorStop(0, 'rgba(230,237,232,0.22)')
-      grad.addColorStop(1, 'rgba(230,237,232,0)')
+      grad.addColorStop(0, pal.glare(0.22))
+      grad.addColorStop(1, pal.glare(0))
       ctx.fillStyle = grad
       ctx.fillRect(ax, ay, w2, Math.min(18, h2))
       ctx.restore()
-      ctx.strokeStyle = 'rgba(200,208,212,0.85)'
+      ctx.strokeStyle = pal.glare(0.7)
       ctx.lineWidth = 1.6
       ctx.strokeRect(ax, ay, w2, h2)
     }
@@ -395,7 +425,7 @@ function draw() {
   // bottom -> top so F.Cu renders on top
   for (let cu = nCu - 1; cu >= 0; --cu) {
     if (!layerVis[b.copperNames[cu]]) continue
-    const col = layerColor(cu)
+    const col = layerColor(cu, pal)
     ctx.globalAlpha = 0.26
     ctx.fillStyle = col
     for (const z of b.zones) {
@@ -419,7 +449,7 @@ function draw() {
       // height — how far away its return current really is — drawn a little
       // heavier so the hot traces read at board zoom.
       if (h) {
-        ctx.strokeStyle = radColour(h[i] ?? 0)
+        ctx.strokeStyle = radColour(h[i] ?? 0, pal.light)
         ctx.lineWidth = Math.max(s.w * view.scale, h[i] > 150 ? 2.2 : 1.1)
       } else {
         ctx.lineWidth = Math.max(s.w * view.scale, 0.6)
@@ -444,9 +474,9 @@ function draw() {
   // vias
   for (const v of board.value.vias) {
     const [vx, vy] = toScreen(v.x, v.y)
-    ctx.fillStyle = '#b9c4bf'
+    ctx.fillStyle = pal.ink
     ctx.beginPath(); ctx.arc(vx, vy, (v.size / 2) * view.scale, 0, 7); ctx.fill()
-    ctx.fillStyle = '#101613'
+    ctx.fillStyle = pal.inkInv
     ctx.beginPath(); ctx.arc(vx, vy, (v.drill / 2) * view.scale, 0, 7); ctx.fill()
   }
 
@@ -465,23 +495,23 @@ function draw() {
       // In catalogue mode a part is coloured by what the catalogue can say
       // about it; otherwise by which side it is on.
       const idx = props.partIndex ? props.partIndex[p.ref] : null
-      let fill = 'rgba(6,9,8,0.62)'
-      let line = p.side === 'bottom' ? 'rgba(93,158,199,0.75)' : 'rgba(157,180,173,0.6)'
+      let fill = pal.wash
+      let line = p.side === 'bottom' ? 'rgba(93,158,199,0.75)' : pal.washLine(0.6)
       if (props.partIndex) {
-        const c = CAT_COLOR[idx?.state ?? 'pending']
+        const c = cat[idx?.state ?? 'pending']
         fill = c.fill
         line = c.line
       }
-      ctx.fillStyle = sel ? 'rgba(217,139,95,0.28)' : fill
-      ctx.strokeStyle = sel ? '#e8955c' : line
+      ctx.fillStyle = sel ? pal.cu(0.28) : fill
+      ctx.strokeStyle = sel ? pal.cuFront : line
       ctx.lineWidth = sel ? 2 : (props.partIndex && idx?.state === 'exact' ? 1.6 : 1)
-      if (sel) { ctx.shadowColor = '#e8955c'; ctx.shadowBlur = 14 }
+      if (sel) { ctx.shadowColor = pal.cuFront; ctx.shadowBlur = 14 }
       ctx.beginPath()
       ctx.roundRect(ax, ay, w, h, Math.min(3, w / 4, h / 4))
       ctx.fill(); ctx.stroke()
       ctx.shadowBlur = 0
       if (w >= 22 && h >= 11) {
-        ctx.fillStyle = sel ? '#fff1e6' : 'rgba(230,237,232,0.85)'
+        ctx.fillStyle = sel ? pal.silk : pal.glare(0.85)
         ctx.save()
         ctx.beginPath(); ctx.rect(ax, ay, w, h); ctx.clip()
         ctx.fillText(p.ref, ax + w / 2, ay + h / 2)
@@ -497,7 +527,7 @@ function draw() {
   // risk overlays: heat on copper (the signature)
   if (overlaysOn.value) {
     for (const f of findings.value) {
-      const col = colorFor(f)
+      const col = colorFor(f, pal)
       const dim = props.selectedId && f.id !== props.selectedId
       ctx.globalAlpha = dim ? 0.18 : 0.95
       ctx.shadowColor = col
@@ -699,8 +729,9 @@ onMounted(() => {
   draw()
   ro = new ResizeObserver(() => { draw() })
   ro.observe(canvas.value)
+  themeOff = onThemeChange(draw)
 })
-onBeforeUnmount(() => ro?.disconnect())
+onBeforeUnmount(() => { ro?.disconnect(); themeOff?.() })
 
 watch(() => props.report, () => {
   for (const n of board.value.copperNames)
@@ -737,26 +768,26 @@ watch(() => props.drawingShield, on => {
     <div class="chips">
       <button v-for="(name, cu) in board.copperNames" :key="name" class="lchip"
               :class="{ off: !layerVis[name] }"
-              :style="{ '--c': layerColor(cu) }"
+              :style="{ '--c': layerVar(cu) }"
               @click="layerVis[name] = !layerVis[name]">{{ name }}</button>
       <button class="lchip risk" :class="{ off: !overlaysOn }" data-testid="overlay-toggle"
               @click="overlaysOn = !overlaysOn">risk overlay</button>
       <button class="lchip" :class="{ off: !partsOn }" data-testid="parts-toggle"
-              :style="{ '--c': '#e6ede8' }"
+              :style="{ '--c': 'var(--silk)' }"
               title="every component as a body over its pads — click one for its board facts, its catalogue record and datasheet, and cross-references"
               @click="partsOn = !partsOn">parts</button>
       <button class="lchip" :class="{ off: !partIndex, busy: sweeping }"
-              data-testid="catalogue-toggle" :style="{ '--c': '#58c79a' }"
+              data-testid="catalogue-toggle" :style="{ '--c': 'var(--heat-low)' }"
               :title="partIndex
                 ? 'each part coloured by what the catalogue can resolve — click again to drop back to the plain parts layer'
                 : 'ask the catalogue about every part on this board: green in the catalogue by part number, amber candidates to choose from, red nothing that fits. Downloads the catalogue families this board needs.'"
               @click="emit('sweep')">{{ sweeping ? 'asking…' : 'in catalogue' }}</button>
       <button class="lchip rad" :class="{ off: !returnPath }" data-testid="rp-toggle"
-              :style="{ '--c': '#ffb454' }"
+              :style="{ '--c': 'var(--heat-med)' }"
               title="effective loop height of every trace — where the return current really flows. Geometry only, no assumed currents"
               @click="emit('toggleReturnPath')">return path</button>
       <button class="lchip rad" :class="{ off: !nearField, dis: !hasSwitchNode }"
-              data-testid="nf-toggle" :style="{ '--c': '#58c79a' }"
+              data-testid="nf-toggle" :style="{ '--c': 'var(--heat-low)' }"
               :disabled="!hasSwitchNode"
               :title="hasSwitchNode
                 ? 'quasi-static field at component scale — what couples ON the board'
@@ -765,7 +796,7 @@ watch(() => props.drawingShield, on => {
                   : 'no switching node on this board, so there is no near-field aggressor to model'"
               @click="emit('nearField')">near field</button>
       <button class="lchip rad off" data-testid="pdn-toggle"
-              :style="{ '--c': '#8fb8ff' }"
+              :style="{ '--c': 'var(--cool)' }"
               title="power-distribution impedance: every decoupling cap as a measured R-L-C branch"
               @click="emit('pdn')">pdn</button>
     </div>
@@ -788,7 +819,7 @@ canvas { width: 100%; height: 100%; display: block; touch-action: none; }
   font-family: var(--mono); font-size: 11px;
   padding: 3px 10px; border-radius: 999px;
   border: 1px solid var(--c, var(--tin)); color: var(--c, var(--tin));
-  background: rgba(16, 22, 19, 0.82);
+  background: rgba(var(--scrim), 0.82);
 }
 /* element selector: the canvas carries only the conditional 'drawing' class,
    so '.canvas.drawing' never matched and a stale inline 'grab' cursor (the
@@ -801,11 +832,11 @@ canvas.drawing { cursor: crosshair; }
 
 .tooltip {
   position: absolute; pointer-events: none; z-index: 10;
-  background: rgba(23, 31, 26, 0.96);
+  background: rgba(var(--panel-float), 0.96);
   border: 1px solid var(--resin-edge); border-radius: 5px;
   padding: 7px 10px; max-width: 340px;
   font-family: var(--mono); font-size: 11.5px; color: var(--tin);
-  box-shadow: 0 4px 18px rgba(0, 0, 0, 0.5);
+  box-shadow: var(--shadow);
 }
 .tooltip .head { color: var(--silk); margin-bottom: 2px; }
 </style>

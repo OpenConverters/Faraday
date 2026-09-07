@@ -69,7 +69,12 @@ const here = path.dirname(fileURLToPath(import.meta.url))
 const LOAD_MS = process.env.FARADAY_E2E_BASE ? 75000 : 30000
 const MPPT = path.join(here, '../../../cpp/tests/fixtures/real/mppt-2420-hc.kicad_pcb')
 
-async function load(page) {
+// This spec asserts on PIXELS, so it must say which theme those pixels are
+// from: the ramp runs to white-hot over a dark board and to ember-dark over a
+// pale one, and headless Chromium reports prefers-color-scheme: light. Left
+// unpinned, the "white-hot" count was really counting the light substrate.
+async function load(page, theme = 'dark') {
+  await page.addInitScript(t => localStorage.setItem('faraday.theme', t), theme)
   await page.goto('/')
   await page.getByTestId('file-input').setInputFiles(MPPT)
   const card = page.getByTestId('stackup-card')
@@ -108,6 +113,32 @@ test('the return-path layer maps loop height and recolours the copper',
     })
     expect(px.quiet, 'quiet copper must be drawn visibly').toBeGreaterThan(500)
     expect(px.hot).toBeLessThan(px.quiet)
+
+    // The ramp's far end must run AWAY from the ground, in both themes:
+    // white-hot over a dark board, ember-dark over a pale one. A ramp that
+    // ended pale on a pale board would hide the loudest traces in the
+    // substrate. Read from the ramp itself — its hot end covers too few
+    // pixels for a histogram to separate it from the board's own copper.
+    // the ramp comes back as rgb(), the substrate as the hex its token holds
+    const lum = c => {
+      const [r, g, b] = c.startsWith('#')
+        ? [1, 3, 5].map(i => parseInt(c.slice(i, i + 2), 16))
+        : c.match(/\d+/g).map(Number)
+      return 0.2126 * r + 0.7152 * g + 0.0722 * b
+    }
+    const ramp = async () =>
+      JSON.parse(await page.getByTestId('board-canvas').getAttribute('data-ramp'))
+    const dk = await ramp()
+    expect(lum(dk.hot), 'hot must be brighter than a dark board')
+      .toBeGreaterThan(lum(dk.board) + 60)
+
+    await page.getByTestId('theme-toggle').click()
+    await expect(page.locator('html')).toHaveAttribute('data-theme', 'light')
+    const lt = await ramp()
+    expect(lum(lt.board), 'the light board is a pale ground').toBeGreaterThan(180)
+    expect(lum(lt.hot), 'hot must be darker than a pale board')
+      .toBeLessThan(lum(lt.board) - 60)
+    await page.getByTestId('theme-toggle').click()
 
     await page.getByTestId('rp-toggle').click()
     await expect(page.getByTestId('rp-bar')).toHaveCount(0)

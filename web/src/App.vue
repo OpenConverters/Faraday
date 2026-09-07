@@ -32,6 +32,26 @@ provide('basic', basic)
 // reachable from the place that made you want them
 provide('view', view)
 
+// ── THEME ─────────────────────────────────────────────────────────────────
+// Dark is this board in a dark room; light is the same board in daylight,
+// which is what an unmasked FR4 panel actually looks like on a bench. Neither
+// is a downgrade of the other, so nothing is hardcoded to one of them: the
+// palette lives in style.css and the canvas reads it back (see BoardView's
+// palette()). With no stored choice we follow the operating system, because a
+// person who has already told their machine which one they want should not
+// have to tell us as well.
+const media = window.matchMedia('(prefers-color-scheme: light)')
+const theme = ref(localStorage.getItem('faraday.theme')
+  || (media.matches ? 'light' : 'dark'))
+function applyTheme(t) { document.documentElement.dataset.theme = t }
+applyTheme(theme.value)
+watch(theme, t => { localStorage.setItem('faraday.theme', t); applyTheme(t) })
+// Only while the choice is still the system's to make — once it is stored,
+// the stored one wins and the OS switching underneath is not our business.
+media.addEventListener('change', e => {
+  if (!localStorage.getItem('faraday.theme')) theme.value = e.matches ? 'light' : 'dark'
+})
+
 const engine = ref(null)
 const boardText = ref('')
 // A Gerber board is a SET of files ({name, text}); non-empty means the set
@@ -862,6 +882,15 @@ function toggleRule(rule) {
                 title="Everything: decibels, frequencies, confidence tiers, and the sliders that drive the physics.">
           advanced</button>
       </div>
+      <!-- Sits with the view toggle because it is the same kind of switch:
+           how the review is presented, not what it says. -->
+      <button class="themebtn" data-testid="theme-toggle"
+              :aria-pressed="theme === 'light'"
+              :title="theme === 'dark' ? 'Switch to light mode' : 'Switch to dark mode'"
+              @click="theme = theme === 'dark' ? 'light' : 'dark'">
+        <span aria-hidden="true">{{ theme === 'dark' ? '\u25D1' : '\u25D0' }}</span>
+        <span class="sr-only">{{ theme === 'dark' ? 'Light mode' : 'Dark mode' }}</span>
+      </button>
       <label class="filebtn">
         <input ref="fileInput" data-testid="file-input" type="file" multiple
                accept=".kicad_pcb,.hyp,.HYP,.xml,.zip,.gbr,.gtl,.gbl,.g1,.g2,.g3,.g4,.gm1,.gko,.drl,.xln,.txt"
@@ -1281,7 +1310,7 @@ function toggleRule(rule) {
   border: 1px solid transparent; text-align: left;
 }
 .brandbtn:hover { border-color: var(--resin-edge); background: rgba(217, 139, 95, 0.07); }
-.brandbtn:hover .brand { color: #f0a877; }
+.brandbtn:hover .brand { color: var(--copper-hi); }
 .brandbtn:focus-visible { outline: 2px solid var(--copper); outline-offset: 1px; }
 @media (max-width: 900px) { .brandbtn .tagline { display: none; } }
 .spacer { flex: 1; }
@@ -1293,8 +1322,9 @@ function toggleRule(rule) {
   background: var(--bare-fr4);
 }
 .filebtn:hover { border-color: var(--copper); }
-.filebtn.warn { color: #e8b34a; border-color: #8a6a2a; }
-.filebtn.warn:hover { border-color: #e8b34a; }
+.filebtn.warn { color: var(--heat-med);
+  border-color: color-mix(in srgb, var(--heat-med) 45%, var(--resin-edge)); }
+.filebtn.warn:hover { border-color: var(--heat-med); }
 .filebtn input { position: absolute; width: 1px; height: 1px; opacity: 0; }
 
 .stackup {
@@ -1304,9 +1334,9 @@ function toggleRule(rule) {
 }
 
 .banner { padding: 12px 16px; font-size: 13.5px; }
-.banner.error { background: #3a1a1e; color: #ffb3b8; font-family: var(--mono); }
+.banner.error { background: var(--err-bg); color: var(--err-ink); font-family: var(--mono); }
 .banner.wait { background: var(--resin); color: var(--tin); font-family: var(--mono); }
-.banner.ask { background: #2a2418; color: var(--silk); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+.banner.ask { background: var(--ask-bg); color: var(--silk); display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .banner.dismissable { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
 .banner .barx { margin-left: auto; background: none; border: 0; color: var(--tin);
                 font-size: 15px; cursor: pointer; padding: 2px 6px; line-height: 1; }
@@ -1330,6 +1360,19 @@ function toggleRule(rule) {
 }
 .viewtoggle button:hover { color: var(--copper); }
 .viewtoggle button.on { background: var(--copper); color: var(--bare-fr4); }
+/* The theme switch borrows the toggle's shape but not its weight: it is a
+   preference, not a mode of the review, so it stays an outline at rest. */
+.themebtn {
+  flex: none; width: 26px; height: 26px; border-radius: 999px;
+  border: 1px solid var(--resin-edge); background: transparent;
+  color: var(--tin); font-size: 13px; line-height: 1; cursor: pointer;
+  margin-right: 4px;
+}
+.themebtn:hover { color: var(--copper); border-color: var(--copper); }
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
 .chip {
   border: 1px solid var(--heat-med); color: var(--heat-med);
   border-radius: 999px; padding: 5px 14px; font-size: 13px;
@@ -1368,7 +1411,7 @@ function toggleRule(rule) {
   pointer-events: auto; flex: none;
   display: flex; gap: 6px; flex-direction: column; align-items: flex-start;
   padding: 10px 13px; border: 1px solid var(--resin-edge); border-radius: 8px;
-  background: rgba(16, 22, 19, 0.9); backdrop-filter: blur(3px);
+  background: rgba(var(--scrim), 0.9); backdrop-filter: blur(3px);
   font-family: var(--mono); font-size: 11.5px; color: var(--tin);
 }
 .radbar > b { color: var(--copper); letter-spacing: 0.06em; }
@@ -1389,8 +1432,8 @@ function toggleRule(rule) {
 .radbar .spec select:hover { border-color: var(--copper); }
 .radbar .cav { flex: 1 1 100%; opacity: 0.75; font-family: var(--sans); font-size: 11px; }
 
-.radbar.cat { border-color: #58c79a; }
-.radbar.cat > b { color: #58c79a; }
+.radbar.cat { border-color: var(--heat-low); }
+.radbar.cat > b { color: var(--heat-low); }
 .radbar.cat .key {
   display: grid; grid-template-columns: auto 1fr; gap: 3px 7px;
   align-items: center; opacity: 0.85; margin-top: 3px; font-size: 11px;
@@ -1398,10 +1441,11 @@ function toggleRule(rule) {
 .radbar.cat .key i {
   width: 10px; height: 10px; border-radius: 2px; display: block;
 }
-.k-exact { background: rgba(88,199,154,0.5); border: 1px solid #58c79a; }
-.k-cand { background: rgba(255,180,84,0.4); border: 1px solid #ffb454; }
-.k-none { background: rgba(255,93,93,0.3); border: 1px solid rgba(255,93,93,0.65); }
-.k-unk { background: rgba(6,9,8,0.62); border: 1px solid rgba(120,134,129,0.45); }
+.k-exact { background: rgba(var(--heat-low-rgb), 0.5); border: 1px solid var(--heat-low); }
+.k-cand { background: rgba(var(--heat-med-rgb), 0.4); border: 1px solid var(--heat-med); }
+.k-none { background: rgba(var(--heat-high-rgb), 0.3);
+  border: 1px solid rgba(var(--heat-high-rgb), 0.65); }
+.k-unk { background: rgba(var(--wash), 0.62); border: 1px solid rgba(var(--wash-line), 0.45); }
 
 .metastrip {
   display: flex; gap: 18px; flex-wrap: wrap;
@@ -1413,18 +1457,20 @@ function toggleRule(rule) {
 .m.warn { color: var(--heat-med); }
 .m.sw b { color: var(--copper); }
 .m.sw .prov {
-  font-style: normal; font-size: 10px; color: #9ecbff;
-  border: 1px solid #3a5a7a; border-radius: 3px; padding: 0 3px; margin-left: 4px;
+  font-style: normal; font-size: 10px; color: var(--cool);
+  border: 1px solid color-mix(in srgb, var(--cool) 45%, var(--resin-edge)); border-radius: 3px; padding: 0 3px; margin-left: 4px;
 }
 .m.sw .demote {
   background: none; border: none; color: var(--tin); cursor: pointer;
   font-size: 12px; padding: 0 2px;
 }
-.m.sw .demote:hover { color: #ff8a8a; }
+.m.sw .demote:hover { color: var(--heat-high); }
 .m.cand .candbtn {
   background: none; cursor: pointer; font-size: 11.5px;
-  color: #58c79a; border: 1px solid #2a5a46; border-radius: 4px;
+  color: var(--heat-low);
+  border: 1px solid color-mix(in srgb, var(--heat-low) 45%, var(--resin-edge));
+  border-radius: 4px;
   padding: 1px 6px; margin-left: 4px;
 }
-.m.cand .candbtn:hover { border-color: #58c79a; }
+.m.cand .candbtn:hover { border-color: var(--heat-low); }
 </style>

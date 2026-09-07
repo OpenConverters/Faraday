@@ -1,5 +1,8 @@
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick } from 'vue'
+import { palette, onThemeChange } from '../theme.js'
+
+let themeOff = null
 
 const props = defineProps({
   engine: { type: Object, required: true },
@@ -119,6 +122,7 @@ function drawSweep() {
   const w = cv.clientWidth, h = cv.clientHeight
   cv.width = w * dpr; cv.height = h * dpr
   const ctx = cv.getContext('2d')
+  const pal = palette(cv)
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, w, h)
   const budget = result.value.verdict.budgetV * 1000
@@ -126,22 +130,22 @@ function drawSweep() {
   const X = g => 34 + (Math.log(g / 0.05) / Math.log(2 / 0.05)) * (w - 40)
   const Y = mv => 6 + (1 - mv / top) * (h - 22)
   ctx.font = '9px IBM Plex Mono, monospace'
-  ctx.strokeStyle = 'rgba(255,93,93,0.55)'
+  ctx.strokeStyle = pal.high(0.55)
   ctx.setLineDash([4, 3])
   ctx.beginPath(); ctx.moveTo(34, Y(budget)); ctx.lineTo(w - 4, Y(budget)); ctx.stroke()
   ctx.setLineDash([])
-  ctx.fillStyle = 'rgba(255,93,93,0.8)'
+  ctx.fillStyle = pal.high(0.8)
   ctx.fillText('budget', 36, Y(budget) - 3)
-  ctx.strokeStyle = '#d98b5f'
+  ctx.strokeStyle = pal.copper
   ctx.lineWidth = 1.6
   ctx.beginPath()
   pts.forEach((p2, i) => i ? ctx.lineTo(X(p2.g), Y(p2.mv)) : ctx.moveTo(X(p2.g), Y(p2.mv)))
   ctx.stroke()
   // the current setting
-  ctx.fillStyle = '#58c79a'
+  ctx.fillStyle = pal.heat.low
   ctx.beginPath(); ctx.arc(X(Math.max(0.05, Math.min(2, gap.value))),
     Y(Math.max(...[result.value.verdict.peakMv]) || 0), 3.2, 0, 7); ctx.fill()
-  ctx.fillStyle = 'rgba(157,180,173,0.7)'
+  ctx.fillStyle = pal.grid(0.7)
   for (const g of [0.1, 0.5, 1, 2]) { ctx.textAlign = 'center'; ctx.fillText(String(g), X(g), h - 4) }
   ctx.textAlign = 'left'
   ctx.fillText('mm', 4, h - 4)
@@ -196,6 +200,7 @@ function drawField() {
   const w = cv.clientWidth, h = cv.clientHeight
   cv.width = w * dpr; cv.height = h * dpr
   const ctx = cv.getContext('2d')
+  const pal = palette(cv)
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, w, h)
 
@@ -224,14 +229,14 @@ function drawField() {
   const X = mm => (mm - f.x0Mm) * sx
   const Y = mm => h - (mm - f.y0Mm) * sy
   const rect = (x0, y0, x1, y1, label) => {
-    ctx.fillStyle = 'rgba(230,237,232,0.92)'
+    ctx.fillStyle = pal.glare(0.92)
     ctx.fillRect(X(x0), Y(y1), (x1 - x0) * sx, (y1 - y0) * sy)
-    ctx.strokeStyle = '#101613'; ctx.lineWidth = 1
+    ctx.strokeStyle = pal.inkInv; ctx.lineWidth = 1
     ctx.strokeRect(X(x0), Y(y1), (x1 - x0) * sx, (y1 - y0) * sy)
     if (label) {
       // single-letter tags: at realistic separations two words centred on two
       // 0.2 mm traces overlap into an unreadable smudge
-      ctx.fillStyle = '#e6ede8'
+      ctx.fillStyle = pal.glare(1)
       ctx.font = '600 11px IBM Plex Mono, monospace'
       ctx.textAlign = 'center'
       ctx.fillText(label, X((x0 + x1) / 2), Y(y1) - 6)
@@ -246,17 +251,17 @@ function drawField() {
     rect(-(g.gapMm / 2 + g.w1Mm), y, -g.gapMm / 2, y + t, 'A')
     rect(g.gapMm / 2, y, g.gapMm / 2 + g.w2Mm, y + t, 'V')
     if (g.mode === 'stripline') {
-      ctx.fillStyle = 'rgba(230,237,232,0.92)'
+      ctx.fillStyle = pal.glare(0.92)
       ctx.fillRect(0, Y(g.bMm + t), w, Math.max(2, t * sy))
     }
   }
   // the reference plane: exact in the solve, drawn as the floor it is
-  ctx.fillStyle = 'rgba(230,237,232,0.92)'
+  ctx.fillStyle = pal.glare(0.92)
   ctx.fillRect(0, h - 3, w, 3)
 
   // dielectric interface
   if (g.mode === 'microstrip') {
-    ctx.strokeStyle = 'rgba(157,180,173,0.35)'
+    ctx.strokeStyle = pal.grid(0.35)
     ctx.setLineDash([4, 3]); ctx.lineWidth = 1
     ctx.beginPath(); ctx.moveTo(0, Y(g.hMm)); ctx.lineTo(w, Y(g.hMm)); ctx.stroke()
     ctx.setLineDash([])
@@ -272,6 +277,7 @@ function drawWave() {
   const w = cv.clientWidth, h = cv.clientHeight
   cv.width = w * dpr; cv.height = h * dpr
   const ctx = cv.getContext('2d')
+  const pal = palette(cv)
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, w, h)
 
@@ -284,17 +290,17 @@ function drawWave() {
 
   // the receiver threshold: the line this whole panel is about
   for (const s of [1, -1]) {
-    ctx.strokeStyle = 'rgba(255,93,93,0.5)'
+    ctx.strokeStyle = pal.high(0.5)
     ctx.setLineDash([5, 4]); ctx.lineWidth = 1
     ctx.beginPath(); ctx.moveTo(40, Y(s * budget)); ctx.lineTo(w - 4, Y(s * budget))
     ctx.stroke(); ctx.setLineDash([])
   }
-  ctx.fillStyle = 'rgba(255,93,93,0.75)'
+  ctx.fillStyle = pal.high(0.75)
   ctx.font = '10px IBM Plex Mono, monospace'
   ctx.textAlign = 'left'
   ctx.fillText(`${(budget * 1000).toFixed(0)} mV`, 4, Y(budget) + 3)
 
-  ctx.strokeStyle = 'rgba(157,180,173,0.25)'
+  ctx.strokeStyle = pal.grid(0.25)
   ctx.beginPath(); ctx.moveTo(40, Y(0)); ctx.lineTo(w - 4, Y(0)); ctx.stroke()
 
   const line = (arr, color, width) => {
@@ -305,18 +311,19 @@ function drawWave() {
     }
     ctx.stroke()
   }
-  line(sp.vicFar, '#ffb454', 1.2)
-  line(sp.vicNear, '#58c79a', 1.8)
+  line(sp.vicFar, pal.heat.medium, 1.2)
+  line(sp.vicNear, pal.heat.low, 1.8)
   if (Math.abs(sp.nextMv) / 1000 > budget || Math.abs(sp.fextMv) / 1000 > budget)
-    line(sp.vicNear, '#ff5d5d', 1.8)
+    line(sp.vicNear, pal.heat.high, 1.8)
 
-  ctx.fillStyle = 'rgba(157,180,173,0.8)'
+  ctx.fillStyle = pal.grid(0.8)
   ctx.textAlign = 'right'
   ctx.fillText(`${(t1 * 1e9).toFixed(1)} ns`, w - 4, h - 3)
 }
 
 const ro = new ResizeObserver(() => draw())
 onMounted(() => {
+  themeOff = onThemeChange(() => { draw(); drawSweep(); drawWave() })
   solve(true)
   runSweep()
   nextTick(() => {
@@ -328,6 +335,7 @@ onMounted(() => {
   window.addEventListener('keydown', onKey)
 })
 onBeforeUnmount(() => {
+  themeOff?.()
   ro.disconnect()
   clearTimeout(idleTimer)
   window.removeEventListener('keydown', onKey)
@@ -454,7 +462,7 @@ const num = (x, d = 2) => (x === undefined || x === null ? '—' : x.toFixed(d))
 <style scoped>
 .scrim {
   position: fixed; inset: 0; z-index: 50;
-  background: rgba(8, 12, 10, 0.72);
+  background: var(--modal-scrim);
   display: flex; align-items: center; justify-content: center; padding: 20px;
 }
 .bench {
@@ -480,7 +488,7 @@ const num = (x, d = 2) => (x === undefined || x === null ? '—' : x.toFixed(d))
 .x:hover { color: var(--silk); }
 .err {
   margin: 12px 16px; padding: 10px 12px; border-radius: 4px;
-  background: #3a1a1e; color: #ffb3b8; font-family: var(--mono); font-size: 12.5px;
+  background: var(--err-bg); color: var(--err-ink); font-family: var(--mono); font-size: 12.5px;
 }
 
 .grid {
@@ -490,9 +498,9 @@ const num = (x, d = 2) => (x === undefined || x === null ? '—' : x.toFixed(d))
 @media (max-width: 820px) { .grid { grid-template-columns: 1fr; } }
 
 figure { min-width: 0; }
-.fieldwrap canvas { width: 100%; display: block; border-radius: 4px; background: #0d1210; }
-.wavewrap canvas { width: 100%; height: 150px; display: block; border-radius: 4px; background: #0d1210; }
-.sweepwrap canvas { width: 100%; height: 92px; display: block; border-radius: 4px; background: #0d1210; }
+.fieldwrap canvas { width: 100%; display: block; border-radius: 4px; background: var(--plot-bg); }
+.wavewrap canvas { width: 100%; height: 150px; display: block; border-radius: 4px; background: var(--plot-bg); }
+.sweepwrap canvas { width: 100%; height: 92px; display: block; border-radius: 4px; background: var(--plot-bg); }
 figcaption {
   display: flex; align-items: center; gap: 8px; flex-wrap: wrap;
   padding-top: 6px; font-family: var(--mono); font-size: 11px; color: var(--tin);
@@ -519,7 +527,7 @@ figcaption button.on { border-color: var(--copper); color: var(--copper); }
 .big { font-family: var(--display); font-size: 46px; font-weight: 700; line-height: 1; }
 .big small { font-size: 17px; font-weight: 500; color: var(--tin); margin-left: 4px; }
 .of { font-size: 12.5px; color: var(--tin); }
-.bar { height: 6px; border-radius: 3px; background: #0d1210; overflow: hidden; }
+.bar { height: 6px; border-radius: 3px; background: var(--plot-bg); overflow: hidden; }
 .bar i { display: block; height: 100%; background: var(--heat-low); }
 .verdict.watch .bar i { background: var(--heat-med); }
 .verdict.fail .bar i { background: var(--heat-high); }

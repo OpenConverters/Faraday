@@ -1,5 +1,8 @@
 <script setup>
 import { ref, computed, watch, onMounted, onBeforeUnmount, nextTick, inject } from 'vue'
+import { palette, onThemeChange } from '../theme.js'
+
+let themeOff = null
 
 const props = defineProps({
   engine: { type: Object, required: true },
@@ -278,6 +281,7 @@ function draw() {
   const w = cv.clientWidth, h = cv.clientHeight
   cv.width = w * dpr; cv.height = h * dpr
   const ctx = cv.getContext('2d')
+  const pal = palette(cv)
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, w, h)
 
@@ -292,8 +296,8 @@ function draw() {
 
   // grid
   ctx.font = '10px IBM Plex Mono, monospace'
-  ctx.strokeStyle = 'rgba(157,180,173,0.13)'
-  ctx.fillStyle = 'rgba(157,180,173,0.65)'
+  ctx.strokeStyle = pal.grid(0.13)
+  ctx.fillStyle = pal.grid(0.65)
   ctx.lineWidth = 1
   for (const f of [30, 50, 100, 200, 300, 500, 1000]) {
     ctx.beginPath(); ctx.moveTo(X(f), padT); ctx.lineTo(X(f), h - padB); ctx.stroke()
@@ -321,7 +325,7 @@ function draw() {
   }
 
   // the line spectrum, drawn as the spikes it is
-  ctx.strokeStyle = 'rgba(217,139,95,0.5)'
+  ctx.strokeStyle = pal.cu(0.5)
   ctx.lineWidth = 1
   ctx.beginPath()
   for (let i = 0; i < r.fMhz.length; i++) {
@@ -330,25 +334,25 @@ function draw() {
   }
   ctx.stroke()
 
-  path(r.envelopeDbuvM, '#d98b5f', 1.8)          // envelope — the honest bound
-  path(r.limitDbuvM, '#ff5d5d', 2, [6, 4])       // the limit line
+  path(r.envelopeDbuvM, pal.copper, 1.8)          // envelope — the honest bound
+  path(r.limitDbuvM, pal.heat.high, 2, [6, 4])       // the limit line
 
   // mark where the model stops being valid
   if (r.smallLoopMaxMhz < f1) {
     const x = X(Math.max(f0, r.smallLoopMaxMhz))
-    ctx.fillStyle = 'rgba(16,22,19,0.55)'
+    ctx.fillStyle = pal.scrim(0.55)
     ctx.fillRect(x, padT, w - padR - x, h - padT - padB)
-    ctx.strokeStyle = 'rgba(157,180,173,0.4)'
+    ctx.strokeStyle = pal.grid(0.4)
     ctx.setLineDash([3, 3])
     ctx.beginPath(); ctx.moveTo(x, padT); ctx.lineTo(x, h - padB); ctx.stroke()
     ctx.setLineDash([])
-    ctx.fillStyle = 'rgba(157,180,173,0.8)'
+    ctx.fillStyle = pal.grid(0.8)
     ctx.textAlign = 'left'
     ctx.fillText('loop no longer small', x + 5, padT + 12)
   }
 
   // the worst point
-  ctx.fillStyle = '#ff5d5d'
+  ctx.fillStyle = pal.heat.high
   ctx.beginPath()
   ctx.arc(X(Math.max(f0, r.worstFMhz)), Y(r.worstLevelDbuvM), 3.5, 0, 7)
   ctx.fill()
@@ -369,6 +373,7 @@ function drawConducted() {
   if (!w || !h) return
   el.width = w * dpr; el.height = h * dpr
   const ctx = el.getContext('2d')
+  const pal = palette(el)
   ctx.setTransform(dpr, 0, 0, dpr, 0, 0)
   ctx.clearRect(0, 0, w, h)
 
@@ -388,8 +393,8 @@ function drawConducted() {
   const Y = db => padT + (1 - (db - lo) / (hi - lo)) * (h - padT - padB)
 
   ctx.font = '10px IBM Plex Mono, monospace'
-  ctx.strokeStyle = 'rgba(157,180,173,0.13)'
-  ctx.fillStyle = 'rgba(157,180,173,0.65)'
+  ctx.strokeStyle = pal.grid(0.13)
+  ctx.fillStyle = pal.grid(0.65)
   ctx.lineWidth = 1
   for (const f of [0.15, 0.3, 0.5, 1, 3, 5, 10, 30]) {
     ctx.beginPath(); ctx.moveTo(X(f), padT); ctx.lineTo(X(f), h - padB); ctx.stroke()
@@ -420,9 +425,9 @@ function drawConducted() {
   ctx.beginPath()
   ctx.rect(padL, padT, w - padL - padR, h - padT - padB)
   ctx.clip()
-  path(v.dmDbuv, '#6f9fc4', 1.6)                 // differential mode
-  path(v.cmDbuv, '#d98b5f', 1.6)                 // common mode
-  path(v.limitDbuv, '#ff5d5d', 2, [6, 4])        // the limit
+  path(v.dmDbuv, pal.cool, 1.6)                 // differential mode
+  path(v.cmDbuv, pal.copper, 1.6)                 // common mode
+  path(v.limitDbuv, pal.heat.high, 2, [6, 4])        // the limit
 
   // the simulated run, on its own frequency base — drawn thinner and dashed,
   // because it is a different KIND of number and must not be mistaken for the
@@ -445,12 +450,12 @@ function drawConducted() {
       ctx.stroke()
       ctx.setLineDash([])
     }
-    simPath(sim.spectra.dm, '#9fd0ef')
-    simPath(sim.spectra.cm, '#ffc79a')
+    simPath(sim.spectra.dm, pal.simDm)
+    simPath(sim.spectra.cm, pal.simCm)
   }
 
   // the worst point of the dominant mode — the frequency to quote
-  ctx.fillStyle = '#ff5d5d'
+  ctx.fillStyle = pal.heat.high
   ctx.beginPath()
   ctx.arc(X(Math.min(Math.max(f0, v.worstFMhz), f1)),
           Y(v.worstLevelDbuv), 3.5, 0, 7)
@@ -458,7 +463,7 @@ function drawConducted() {
   ctx.restore()
 
   if (clipped) {
-    ctx.fillStyle = 'rgba(157,180,173,0.7)'
+    ctx.fillStyle = pal.grid(0.7)
     ctx.textAlign = 'right'
     ctx.fillText('nulls run below the axis', w - padR, h - padB - 4)
   }
@@ -466,6 +471,7 @@ function drawConducted() {
 
 const ro = new ResizeObserver(() => { draw(); drawConducted() })
 onMounted(() => {
+  themeOff = onThemeChange(() => { draw(); drawConducted() })
   run()
   runCm()
   loadBranch()
@@ -478,6 +484,7 @@ onMounted(() => {
   window.addEventListener('keydown', onKey)
 })
 onBeforeUnmount(() => {
+  themeOff?.()
   ro.disconnect()
   window.removeEventListener('keydown', onKey)
 })
@@ -861,7 +868,7 @@ const where = computed(() => {
 .cbig.watch b { color: var(--heat-med); }
 .cbig.ok b { color: var(--heat-low); }
 .cfig canvas { height: 220px; }
-.k.dm { color: #6f9fc4; }
+.k.dm { color: var(--cool); }
 .k.cmm { color: var(--copper); }
 .cwhich { font-size: 12.5px; color: var(--tin); margin-top: 4px; }
 .creq { display: flex; gap: 18px; flex-wrap: wrap; margin: 8px 0;
@@ -883,10 +890,11 @@ const where = computed(() => {
 .cwhich.warn { color: var(--heat-med); }
 .conducted .hbtn {
   margin-top: 6px; padding: 7px 14px; cursor: pointer;
-  background: none; color: #58c79a; border: 1px solid #2a5a46; border-radius: 5px;
+  background: none; color: var(--heat-low); border-radius: 5px;
+  border: 1px solid color-mix(in srgb, var(--heat-low) 45%, var(--resin-edge));
   font: 600 13px/1 var(--mono, monospace); letter-spacing: .03em;
 }
-.conducted .hbtn:hover { border-color: #58c79a; }
+.conducted .hbtn:hover { border-color: var(--heat-low); }
 
 .presets { margin: 0 16px 12px; }
 .plabel { font-size: 13px; color: var(--silk); margin-bottom: 6px; }
@@ -898,11 +906,11 @@ const where = computed(() => {
 }
 .pchip small { font-family: var(--mono); font-size: 10.5px; color: var(--tin); }
 .pchip:hover { border-color: var(--copper); }
-.pchip.on { border-color: var(--copper); background: rgba(217,139,95,0.12); }
+.pchip.on { border-color: var(--copper); background: rgba(var(--copper-rgb), 0.12); }
 .passumed { margin-top: 8px; font-size: 12px; color: var(--tin); }
 .scrim {
   position: fixed; inset: 0; z-index: 50;
-  background: rgba(8, 12, 10, 0.72);
+  background: var(--modal-scrim);
   display: flex; align-items: center; justify-content: center; padding: 20px;
 }
 .panel {
@@ -923,17 +931,17 @@ header h2 { font-family: var(--display); font-size: 17px; font-weight: 700;
 .x { color: var(--tin); font-size: 15px; padding: 0 4px; }
 .x:hover { color: var(--silk); }
 .err { margin: 12px 16px; padding: 10px 12px; border-radius: 4px;
-  background: #3a1a1e; color: #ffb3b8; font-family: var(--mono); font-size: 12.5px; }
+  background: var(--err-bg); color: var(--err-ink); font-family: var(--mono); font-size: 12.5px; }
 
 .body { display: grid; gap: 14px; padding: 14px 16px;
   grid-template-columns: minmax(0, 1.6fr) minmax(0, 1fr); }
 @media (max-width: 820px) { .body { grid-template-columns: 1fr; } }
-canvas { width: 100%; height: 300px; display: block; border-radius: 4px; background: #0d1210; }
+canvas { width: 100%; height: 300px; display: block; border-radius: 4px; background: var(--plot-bg); }
 figcaption { display: flex; gap: 14px; flex-wrap: wrap; padding-top: 6px;
   font-family: var(--mono); font-size: 11px; color: var(--tin); }
 .k::before { content: '—'; margin-right: 4px; font-weight: 700; }
 .k.env { color: var(--copper); }
-.k.line { color: rgba(217,139,95,0.6); }
+.k.line { color: rgba(var(--copper-rgb), 0.6); }
 .k.lim { color: var(--heat-high); }
 
 .verdict { align-self: start; border: 1px solid var(--resin-edge); border-left-width: 3px;

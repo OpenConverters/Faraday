@@ -133,7 +133,7 @@ const preview = computed(() => {
 </template>
 
 <style scoped>
-.scrim { position: fixed; inset: 0; z-index: 50; background: rgba(8,12,10,0.72);
+.scrim { position: fixed; inset: 0; z-index: 50; background: var(--modal-scrim);
   display: flex; align-items: center; justify-content: center; padding: 20px; }
 .panel { width: min(680px, 100%); max-height: 100%; overflow: auto;
   background: var(--resin); border: 1px solid var(--resin-edge); border-radius: 8px; }
