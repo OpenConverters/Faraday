@@ -56,18 +56,28 @@ const valid = computed(() =>
   rows.value.every(d => +d.h > 0 && +d.er >= 1))
 
 // cross-section preview: heights proportional to thickness, copper never
-// thinner than 3px so it stays visible next to a 1.5 mm core
+// thinner than 3px so it stays visible next to a 1.5 mm core.
+//
+// A 35 um layer in a 1.54 mm board is about 2% of the drawing — three pixels,
+// against a label that needs eleven. The label used to be written into it
+// anyway and came out as a clipped sliver of letters, one per copper layer,
+// which on a board whose fab names its layers properly ("Inner Layer 2
+// (PwrGND Plane)") reads as several unrelated strings on top of each other.
+//
+// The proportions are the whole point of the drawing, so they stay: what goes
+// is the text that was never going to fit. The name is still on the band, as
+// its title, and on the layer chips over the board where it is legible.
+const LABEL_PX = 11
 const preview = computed(() => {
   const H = 150
   const total = totalMm.value || 1
-  return layers.value.map(l => ({
-    kind: l.kind,
-    name: l.name,
-    mm: l.thicknessMm,
-    px: l.kind === 'copper'
+  return layers.value.map(l => {
+    const px = l.kind === 'copper'
       ? Math.max(3, (l.thicknessMm / total) * H)
-      : Math.max(6, (l.thicknessMm / total) * H),
-  }))
+      : Math.max(6, (l.thicknessMm / total) * H)
+    return { kind: l.kind, name: l.name, mm: l.thicknessMm, px,
+             fits: px >= LABEL_PX }
+  })
 })
 </script>
 
@@ -123,8 +133,9 @@ const preview = computed(() => {
 
         <div class="xsec" aria-hidden="true">
           <div v-for="(l, i) in preview" :key="i" class="lay"
-               :class="l.kind" :style="{ height: l.px + 'px' }">
-            <span>{{ l.name }} · {{ l.mm.toFixed(3) }}</span>
+               :class="l.kind" :style="{ height: l.px + 'px' }"
+               :title="`${l.name} · ${l.mm.toFixed(3)} mm`">
+            <span v-if="l.fits">{{ l.name }} · {{ l.mm.toFixed(3) }}</span>
           </div>
         </div>
       </div>

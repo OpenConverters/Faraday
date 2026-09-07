@@ -102,6 +102,16 @@ function hideNotice(id) {
   next.add(id)
   hiddenNotices.value = next
 }
+// Some notices are a receipt, not a question: they report something that has
+// already happened and needs no answer. Those retire themselves rather than
+// waiting to be dismissed — the ✕ stays, for anyone who wants the space back
+// sooner. A notice that asks the reader for something must NOT use this; it
+// would take the request away while they were still reading it.
+let noticeTimer = null
+function retireNotice(id, ms = 10000) {
+  clearTimeout(noticeTimer)
+  noticeTimer = setTimeout(() => hideNotice(id), ms)
+}
 // The tally is stated, not remembered: sourcing a part changes it, and a line
 // that still said "3 unmatched" after two of them were sourced would be wrong.
 function retally() {
@@ -150,6 +160,8 @@ async function adoptMeasured() {
       (filled ? `, and ${filled} took their value from the catalogue` : '') +
       ` instead of Faraday's assumptions — the PDN, the input branch and the ` +
       `emissions estimate are re-run with them.`
+    // A receipt for work already done: it needs no reply, so it goes on its own.
+    retireNotice('measured-note')
     await reanalyze()
   } catch (e) {
     measuredNote.value = 'the catalogue values could not be applied: ' + String(e.message || e)
@@ -191,14 +203,30 @@ const boardParts = computed(() => {
 // already answered is left alone, and a manual dismissal of the overlay is not
 // undone. The shards are a one-time download the browser keeps, so the second
 // board costs nothing.
+// Has the catalogue had its say about THIS board yet? An Altium export writes
+// part numbers where the values go, so the moment a board like that lands the
+// engine can truthfully report a hundred components with no value — and the
+// sweep that is about to answer for most of them is already running. Saying
+// "they are quiet until the values arrive" in that window is a verdict
+// delivered over the top of the answer.
+//
+// So the note waits. It is not suppressed: a sweep that finishes, fails, is
+// cancelled, or never had anything to ask all settle this, and whatever is
+// still missing is then reported against the catalogue's real answer.
+const catalogueSettled = ref(false)
+
 let autoSweptFor = ''
 async function autoSweep() {
   if (!report.value || !engine.value) return
   const id = fileName.value + ':' + (report.value.board?.components?.length ?? 0)
+  // A re-screen with the catalogue's values in hand is the SAME board and must
+  // not re-open the question; a different board must.
   if (autoSweptFor === id) return
   autoSweptFor = id
-  if (sweeping.value || partIndex.value) return
-  if (!boardParts.value.length) return
+  catalogueSettled.value = false
+  if (sweeping.value) return                 // its own finally will settle this
+  if (partIndex.value) { catalogueSettled.value = true; return }   // already answered
+  if (!boardParts.value.length) { catalogueSettled.value = true; return }
   try { await toggleSweep() } catch { /* reported in sweepNote already */ }
 }
 // On the report, because that is when there are parts to ask about. NOT the
@@ -244,6 +272,9 @@ async function toggleSweep() {
   } finally {
     sweeping.value = false
     sweepAbort = null
+    // Answered, refused or stopped — either way the catalogue has said what it
+    // is going to say, and what is still missing is now worth reporting.
+    catalogueSettled.value = true
   }
 }
 function gotoFinding(id) {
@@ -946,7 +977,7 @@ function toggleRule(rule) {
     <!-- Some exports carry part numbers and no values (Altium's ODB++ does).
          Say so once, where it is actionable, rather than only inside whichever
          panel refuses first. -->
-    <div v-if="report && partsMissing > 0 && valuesCard === 'full'"
+    <div v-if="report && partsMissing > 0 && catalogueSettled && valuesCard === 'full'"
          class="banner ask" data-testid="values-card">
       <p><b>{{ partsMissing }} capacitor(s), resistor(s) and inductor(s) carry a
          part number and no value</b> — this export wrote part numbers instead.
@@ -972,7 +1003,7 @@ function toggleRule(rule) {
     <!-- One line: the count and the way back, for a board that has been told
          once. Dismissed again it goes entirely — the models still refuse in
          their own panels, so nothing silently becomes a guess. -->
-    <div v-if="report && partsMissing > 0 && valuesCard === 'brief'"
+    <div v-if="report && partsMissing > 0 && catalogueSettled && valuesCard === 'brief'"
          class="banner wait brief" data-testid="values-dismissed">
       {{ partsMissing }} component(s) still have no value — the models that need one
       stay quiet.

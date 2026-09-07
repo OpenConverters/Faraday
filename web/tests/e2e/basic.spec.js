@@ -223,6 +223,52 @@ test('a simulated run reads back into the panel, beside the seed it checks',
     await expect(page.getByTestId('sim-error')).toContainText('not a simulated-run export')
   })
 
+// Two capacitors named by a real part number and carrying no value: the sweep
+// has to download the capacitor catalogue to answer, which is what makes the
+// in-flight window observable at all.
+const MPN_NO_VALUES_BOARD = NO_VALUES_BOARD.replace(/885012206077/g,
+                                                    'GRM188R71H104KA93D')
+
+test('the values note waits for the catalogue, then reports what is left',
+  async ({ page }) => {
+    // An Altium export writes part numbers where the values go, so the instant
+    // such a board lands the engine can truthfully say a hundred components
+    // have no value — while the sweep that will answer for most of them is
+    // already running. Delivering "they are quiet until the values arrive"
+    // over the top of that answer is what made a real board read as broken:
+    // 115 on the PoE board for twenty seconds, then 5.
+    //
+    // The note is not suppressed, it is deferred: held while the catalogue is
+    // being asked, shown as soon as it has finished, whatever it found. A
+    // sweep that fails or is cancelled settles it too — nothing that is
+    // genuinely missing goes unreported.
+    //
+    // Reaches the REAL catalogue, like the parts specs: the shard download is
+    // the product, and it is also the only honest way to see the window.
+    await page.goto('/')
+    await page.getByTestId('file-input').setInputFiles({
+      name: 'no-values.kicad_pcb', mimeType: 'text/plain',
+      buffer: Buffer.from(MPN_NO_VALUES_BOARD),
+    })
+    const card = page.getByTestId('stackup-card')
+    await expect(card.or(page.getByTestId('board-canvas')).first())
+      .toBeVisible({ timeout: 30000 })
+    if (await card.count()) await card.getByText('Default 2-layer').click()
+    await expect(page.getByTestId('board-canvas')).toBeVisible({ timeout: 30000 })
+
+    // While the catalogue is being asked, the board is fully on screen and its
+    // values are genuinely absent — and the note is not there, because the
+    // question it answers is still open.
+    const bar = page.locator('.radbar.cat').first()
+    await expect(bar).toContainText(/catalogue|settled/i, { timeout: 60000 })
+    await expect(page.getByTestId('values-card')).toHaveCount(0)
+
+    // and once the catalogue has said its piece, what is still missing is
+    // reported against its real answer
+    await expect(page.getByTestId('values-card')).toBeVisible({ timeout: 120000 })
+    await expect(page.getByTestId('values-card')).toContainText('no value')
+  })
+
 test('a board whose export carried part numbers can be given its values',
   async ({ page }) => {
     // Altium's ODB++ writes the manufacturer part number and no value at all,

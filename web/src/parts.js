@@ -669,7 +669,24 @@ export function valueStringFor(family, row) {
     if (!c) return null
     return row.v_rated > 0 ? `${c} ${Number(row.v_rated.toPrecision(3))}V` : c
   }
-  if (family === 'resistor') return fmt(row.resistance, 'R')
-  if (family === 'magnetic') return fmt(row.inductance, 'H')
+  // A 0 ohm link is a resistance of zero, not a missing one, and fmt() rejects
+  // anything that is not positive — so three of these on a real board stayed
+  // "no value" however well the catalogue knew them. Kelvin refuses a resistor
+  // record that carries no resistance field at all, so a row's 0 always means
+  // a real zero and never "we did not know" (ABT #1123).
+  if (family === 'resistor')
+    return row.resistance === 0 ? '0R' : fmt(row.resistance, 'R')
+  if (family === 'magnetic') {
+    const l = fmt(row.inductance, 'H')
+    if (l) return l
+    // A ferrite bead has no inductance and never did: its published spec is
+    // |Z| at 100 MHz, which is what a schematic writes on it. Asking it for an
+    // inductance got null, so a fully identified bead was still counted as a
+    // part carrying no value. Kelvin already reads the impedance curve — this
+    // just stops Faraday insisting on the wrong quantity.
+    const z = row.impedance_100mhz
+    if (z > 0) return `${Number(z.toPrecision(4))}R@100MHz`
+    return null
+  }
   return null
 }

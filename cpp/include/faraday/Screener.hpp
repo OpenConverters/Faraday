@@ -1997,6 +1997,9 @@ class Screener {
             // violation inside it and how many pairs are in that state.
             double w3_sep = 1e30, w3_maxw = 0, w3_len = 0;
             int w3_count = 0, w3_a = -1, w3_b = -1;
+            // the worst pair's cross-section, for the field-solver bench
+            std::optional<nlohmann::json> solve;
+            double pair_len = 0, pair_sep = 0;
         };
         std::vector<Bundle> bundles;
         std::set<PairKey> bundled;   // pairs a bundle now speaks for
@@ -2034,6 +2037,26 @@ class Screener {
                     bu.geom.lines.push_back(ln);
                 }
             }
+            // The bench solves a TWO-conductor cross-section, so a bundle hands
+            // it the pair its headline is about. Without this the field-solver
+            // tier simply disappeared for every grouped run — the pair findings
+            // that used to carry it are the ones the bundle absorbed.
+            if (bu.victim >= 0 && bu.aggressor >= 0) {
+                PairKey wk{std::min(bu.victim, bu.aggressor),
+                           std::max(bu.victim, bu.aggressor), bu.cu, bu.cu};
+                if (auto it = pairs.find(wk); it != pairs.end()) {
+                    const PairAccum& pa = it->second;
+                    double hot = 0.0;
+                    for (const auto& [kk, ll] : pa.k_len)
+                        if (kk >= 0.891 * pa.worst_k) hot += ll;
+                    bu.solve = cross_section_for(bu.cu, bu.cu, pa.w_a, pa.w_b,
+                                                 pa.min_edge_sep,
+                                                 hot > 0 ? hot : pa.len);
+                    bu.pair_len = pa.len;
+                    bu.pair_sep = pa.min_edge_sep;
+                }
+            }
+
             // Everything this bundle now speaks for, so the same coupling is
             // not also reported six more times underneath it.
             for (size_t i = 0; i < bu.nets.size(); ++i)
@@ -2242,6 +2265,8 @@ class Screener {
             f.confidence = "screening-estimate";
             f.severity = std::clamp((db + 40.0) / 30.0, 0.0, 1.0);
             f.geom = std::move(bu.geom);
+            f.solve = bu.solve;
+            f.min_sep_mm = bu.pair_sep;
 
             const std::string& where = b_.copper_names[bu.cu];
             std::string names;
@@ -2278,7 +2303,10 @@ class Screener {
                 " dB floor while their sum does not. The neighbours are summed in "
                 "POWER, which assumes they are uncorrelated and that their runs "
                 "coincide along this one — an upper bound where they do not, and "
-                "an UNDERSTATEMENT if they switch together, as the lines of a bus do.";
+                "an UNDERSTATEMENT if they switch together, as the lines of a bus do."
+                + std::string(bu.solve ? " The field solver takes two conductors, "
+                    "so the bench opens on the loudest PAIR in this bundle — a "
+                    "lower bound on what the group does, solved exactly." : "");
             f.remediation =
                 "Treat the group, not the pairs: widen the pitch across the "
                 "whole bundle, split it across layers or a plane, or put a "

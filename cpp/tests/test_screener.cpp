@@ -2459,3 +2459,19 @@ TEST_CASE("bundle: a differential pair inside a bundle is still called intention
     CHECK(diff == 1);       // USB_P/USB_N, kept as its own info finding
     CHECK(bundles == 1);    // and the group around it is still reported
 }
+
+TEST_CASE("bundle: the field solver is still reachable from a group",
+          "[screener][bundle]") {
+    // The bench solves a two-conductor cross-section, and the pair findings
+    // that carried one are exactly the ones a bundle absorbs. Without handing
+    // the group's worst pair down, grouping silently deleted the field-solver
+    // tier for every bus on the board.
+    auto fs = screen(bus_board(4, 0.3), "default-2layer");
+    const faraday::Finding* bu = nullptr;
+    for (const auto& f : fs) if (f.rule == "coupled-bundle") bu = &f;
+    REQUIRE(bu != nullptr);
+    REQUIRE(bu->solve.has_value());
+    CHECK(bu->min_sep_mm > 0.0);
+    // and it is the cross-section of the pair the headline names, not a guess
+    CHECK(bu->net_a != bu->net_b);
+}
