@@ -13,6 +13,14 @@ export const RULES = [
     confidence: 'screening-estimate (±6 dB stated)',
   },
   {
+    id: 'coupled-bundle',
+    name: 'Coupled bundle',
+    what: 'Three or more nets that run together as one group. Reported once, with the crosstalk into its worst member from ALL of that member’s neighbours at once — the number no single pair can give you.',
+    physics: 'The same Johnson & Graham k per neighbour, summed in power at the victim conductor. Power summation assumes the neighbours are uncorrelated: an upper bound when their runs only partly coincide, and an UNDERSTATEMENT when they switch together, as the lines of a bus do.',
+    fix: 'Treat the group: widen the pitch across the whole bundle, split it across layers or a plane, or guard the aggressor. Re-spacing one pair moves the noise to its neighbour.',
+    confidence: 'screening-estimate (±6 dB stated)',
+  },
+  {
     id: '3w',
     name: '3W violation',
     what: 'Edge separation under three trace-widths on a coupled run — the classic layout rule of thumb, reported alongside its quantified partner.',
@@ -231,6 +239,10 @@ export const PLAIN = {
   'coupled-run': {
     says: 'These two tracks run side by side for long enough that whatever happens on one will show up on the other.',
     do: 'Move them apart — three track-widths is the usual minimum — shorten the parallel stretch, or run a grounded track with vias between them.',
+  },
+  'coupled-bundle': {
+    says: 'These tracks all run together as one group, and the noise on the worst one is everything its neighbours put there — more than any single pair of them would suggest.',
+    do: 'Spread the whole group out, or split it between layers. Moving just one track away only pushes the problem onto the track next to it.',
   },
   '3w': {
     says: 'These two tracks are closer together than the usual safe spacing of three track-widths.',

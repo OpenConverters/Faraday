@@ -882,9 +882,14 @@ TEST_CASE("screener: commutation loop area grows when the cap moves away",
 
 TEST_CASE("screener: finding cap gives every rule a fair share",
           "[screener][ranking]") {
-    // 40 tightly-packed victim traces around one aggressor: coupled-run and
-    // 3w both fire in bulk. With a small cap, a global sort would hand every
-    // slot to whichever rule ranks highest; round-robin must keep both.
+    // 40 tightly-packed victim traces around one aggressor. With a small cap,
+    // a global sort would hand every slot to whichever rule ranks highest;
+    // round-robin must keep the others.
+    //
+    // These 40 ARE one bundle, so the coupling now arrives as a single
+    // coupled-bundle finding rather than hundreds of coupled-run pairs — the
+    // fairness question is unchanged, it is just asked of the rules that
+    // actually fire here.
     std::string full =
         "(kicad_pcb"
         " (layers (0 \"F.Cu\" signal) (31 \"B.Cu\" signal))"
@@ -909,8 +914,16 @@ TEST_CASE("screener: finding cap gives every rule a fair share",
     CHECK(report["findings"].size() == 20);
     CHECK(report["meta"]["droppedByFindingCap"].get<int>() > 0);
     REQUIRE(by_rule.size() >= 2);            // no single rule monopolises
-    CHECK(by_rule["coupled-run"] > 0);
     CHECK(by_rule["3w"] > 0);
+    CHECK(by_rule["dangling-stub"] > 0);
+    // the loudest rule does not take the whole budget
+    for (const auto& [rule, n] : by_rule)
+        CHECK_FALSE(n == (int)report["findings"].size());
+    // and the 780 pairs among these 40 nets are ONE object, not 780 findings
+    CHECK(by_rule["coupled-bundle"] == 1);
+    CHECK(by_rule["coupled-run"] == 0);
+    CHECK(report["meta"]["bundlesFound"].get<int>() == 1);
+    CHECK(report["meta"]["pairsAbsorbedIntoBundles"].get<int>() > 100);
     // and the surviving set is still ranked for display
     double prev = 2.0;
     for (const auto& f : report["findings"]) {
@@ -2300,4 +2313,149 @@ TEST_CASE("filter: a 4-pad wound part with no X or Y capacitor is not a filter",
     // but the ordinary coupled-run rule still sees the two tracks — the
     // filter family adds a reading, it does not remove one
     CHECK(find_rule(report["findings"], "coupled-run") != nullptr);
+}
+
+// ---------------------------------------------------------------------------
+// Bundles: traces that run together are ONE coupling object
+//
+// The rule that produced these findings works pair by pair, keyed on
+// (net, net, layer, layer). That is the right unit for two nets and the wrong
+// one for a bus: four traces side by side are six findings for one thing a
+// reader sees as one thing, and — the part that actually matters — the noise
+// on an inner conductor is what ALL its neighbours put there, which no pair
+// can report and which the -40 dB floor can drop pair by pair while the sum
+// stays loud.
+// ---------------------------------------------------------------------------
+
+// n parallel traces at a given pitch over a ground plane, plus one net far
+// away that must NOT be swept into the group.
+static std::string bus_board(int n, double pitch_mm) {
+    std::string s =
+        "(kicad_pcb"
+        " (layers (0 \"F.Cu\" signal) (31 \"B.Cu\" signal))"
+        " (net 0 \"\") (net 99 \"GND\")"
+        " (zone (net 99) (net_name \"GND\") (layer \"B.Cu\")"
+        "   (filled_polygon (layer \"B.Cu\")"
+        "     (pts (xy 0 0) (xy 90 0) (xy 90 90) (xy 0 90))))";
+    for (int i = 1; i <= n; ++i) {
+        std::string y = std::to_string(10.0 + i * pitch_mm);
+        std::string k = std::to_string(i);
+        s += " (net " + k + " \"D" + k + "\")"
+             " (segment (start 5 " + y + ") (end 60 " + y + ")"
+             " (width 0.2) (layer \"F.Cu\") (net " + k + "))";
+    }
+    // a lone net right across the board: nothing runs beside it
+    s += " (net 90 \"ALONE\")"
+         " (segment (start 5 80) (end 60 80) (width 0.2) (layer \"F.Cu\") (net 90))";
+    return s + ")";
+}
+
+static std::vector<faraday::Finding> screen(const std::string& src,
+                                            const char* stackup) {
+    faraday::BoardIR b = faraday::import_kicad(src, faraday::builtin_stackup(stackup));
+    faraday::ScreenerParams p;
+    p.max_findings = 500;
+    faraday::Screener sc(b, p);
+    return sc.run();
+}
+
+TEST_CASE("bundle: four traces running together are one finding, not six",
+          "[screener][bundle]") {
+    auto fs = screen(bus_board(4, 0.4), "default-2layer");
+    int bundles = 0, runs = 0;
+    const faraday::Finding* bu = nullptr;
+    for (const auto& f : fs) {
+        if (f.rule == "coupled-bundle") { ++bundles; bu = &f; }
+        if (f.rule == "coupled-run") ++runs;
+    }
+    REQUIRE(bundles == 1);
+    // the six pairs among them are spoken for by the bundle
+    CHECK(runs == 0);
+    REQUIRE(bu != nullptr);
+    CHECK(bu->members.size() == 4);
+    // and the net with nothing beside it is not in the group
+    for (int n : bu->members) CHECK(n != 90);
+}
+
+TEST_CASE("bundle: the group reports what a pair cannot — every neighbour at once",
+          "[screener][bundle]") {
+    // The middle conductor of a bus has neighbours on both sides. Summed in
+    // power, what it receives must exceed the loudest single pair; if the
+    // bundle reported a pair's number there would be no reason to group at all.
+    auto fs = screen(bus_board(5, 0.4), "default-2layer");
+    const faraday::Finding* bu = nullptr;
+    for (const auto& f : fs) if (f.rule == "coupled-bundle") bu = &f;
+    REQUIRE(bu != nullptr);
+    REQUIRE(bu->next_db.has_value());
+
+    // the worst single pair on the same geometry, from the same engine
+    faraday::BoardIR b = faraday::import_kicad(bus_board(2, 0.4),
+                                               faraday::builtin_stackup("default-2layer"));
+    faraday::ScreenerParams p;
+    faraday::Screener sc(b, p);
+    double worst_pair = -1e30;
+    for (const auto& f : sc.run())
+        if (f.rule == "coupled-run" && f.next_db) worst_pair = std::max(worst_pair, *f.next_db);
+    REQUIRE(worst_pair > -1e29);
+    CHECK(*bu->next_db > worst_pair + 1.0);   // strictly louder, not a relabel
+    CHECK(*bu->next_db < 0.0);                // and still a coupling coefficient
+}
+
+TEST_CASE("bundle: two nets stay a pair — a bundle is what a pair cannot say",
+          "[screener][bundle]") {
+    auto fs = screen(bus_board(2, 0.4), "default-2layer");
+    int bundles = 0, runs = 0;
+    for (const auto& f : fs) {
+        if (f.rule == "coupled-bundle") ++bundles;
+        if (f.rule == "coupled-run") ++runs;
+    }
+    CHECK(bundles == 0);
+    CHECK(runs > 0);
+}
+
+TEST_CASE("bundle: separated traces are not a bundle", "[screener][bundle]") {
+    // Same four nets, opened out well past the screening radius: nothing runs
+    // together any more and there is no object to report.
+    auto fs = screen(bus_board(4, 12.0), "default-2layer");
+    for (const auto& f : fs) CHECK(f.rule != "coupled-bundle");
+}
+
+TEST_CASE("bundle: the clearance fact survives the grouping", "[screener][bundle]") {
+    // Absorbing the pairs must not quietly take 3W with them: it is exact and
+    // actionable. One finding for the group, naming the tightest pair in it.
+    auto fs = screen(bus_board(4, 0.3), "default-2layer");
+    int w3 = 0;
+    const faraday::Finding* f3 = nullptr;
+    for (const auto& f : fs) if (f.rule == "3w") { ++w3; f3 = &f; }
+    REQUIRE(w3 == 1);
+    CHECK(f3->members.size() == 4);
+    CHECK(f3->min_sep_mm < 2.0 * 0.2);
+    CHECK(f3->net_a != f3->net_b);
+}
+
+TEST_CASE("bundle: a differential pair inside a bundle is still called intentional",
+          "[screener][bundle]") {
+    // The pair's own coupling is the signal, not noise: it must not be summed
+    // into its partner's neighbours, and its finding is about those two nets by
+    // name, so the bundle does not speak for it.
+    std::string s =
+        "(kicad_pcb"
+        " (layers (0 \"F.Cu\" signal) (31 \"B.Cu\" signal))"
+        " (net 0 \"\") (net 99 \"GND\")"
+        " (zone (net 99) (net_name \"GND\") (layer \"B.Cu\")"
+        "   (filled_polygon (layer \"B.Cu\")"
+        "     (pts (xy 0 0) (xy 90 0) (xy 90 90) (xy 0 90))))"
+        " (net 1 \"USB_P\") (net 2 \"USB_N\") (net 3 \"CLK\") (net 4 \"ADDR\")"
+        " (segment (start 5 10.0) (end 60 10.0) (width 0.2) (layer \"F.Cu\") (net 1))"
+        " (segment (start 5 10.4) (end 60 10.4) (width 0.2) (layer \"F.Cu\") (net 2))"
+        " (segment (start 5 10.8) (end 60 10.8) (width 0.2) (layer \"F.Cu\") (net 3))"
+        " (segment (start 5 11.2) (end 60 11.2) (width 0.2) (layer \"F.Cu\") (net 4)))";
+    auto fs = screen(s, "default-2layer");
+    int diff = 0, bundles = 0;
+    for (const auto& f : fs) {
+        if (f.rule == "diff-pair") ++diff;
+        if (f.rule == "coupled-bundle") ++bundles;
+    }
+    CHECK(diff == 1);       // USB_P/USB_N, kept as its own info finding
+    CHECK(bundles == 1);    // and the group around it is still reported
 }

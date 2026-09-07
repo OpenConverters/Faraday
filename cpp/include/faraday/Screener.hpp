@@ -40,6 +40,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <functional>
 #include <map>
 #include <optional>
 #include <set>
@@ -143,6 +144,10 @@ struct Finding {
     double min_sep_mm = 0.0;         // minimum EDGE separation seen
     int net_a = -1, net_b = -1;
     int cu_a = -1, cu_b = -1;
+    // Every net in the object this finding is about, when it is about more
+    // than two. A bundle of parallel runs is ONE coupling object to the person
+    // who drew it, and net_a/net_b can only name the worst pair inside it.
+    std::vector<int> members;
     FindingGeom geom;
     // Everything the field solver needs to rebuild this pair's cross-section.
     // Without it the deep tier would have to be re-parameterised by hand,
@@ -632,6 +637,8 @@ class Screener {
                 {"reportFloorDb", p_.report_floor_db},
                 {"crossingCheckSkippedPlanes", unverifiable},
                 {"diffPairsRecognized", diff_pairs_recognized_},
+                {"bundlesFound", bundles_found_},
+                {"pairsAbsorbedIntoBundles", absorbed_into_bundles_},
                 {"switchNodes", sw},
                 {"switchNodeSource", sw_src},
                 {"switchNodeCandidates", sw_cand},
@@ -1784,6 +1791,48 @@ class Screener {
         for (size_t cu = 0; cu < n_cu; ++cu)
             for (size_t k = 0; k < refs[cu].size(); ++k) grids[cu].insert(refs[cu][k], k);
 
+        // ---- bundles -------------------------------------------------------
+        // Four traces running together are ONE thing to the person who drew
+        // them, and reporting them as six net pairs both buries the object and
+        // understates it: the noise on an inner conductor is what ALL its
+        // neighbours put there, and each pair on its own can sit under the
+        // report floor while the sum does not.
+        //
+        // A bundle is therefore a maximal set of same-layer conductors that
+        // actually run together — and "run together" is already decided, by
+        // the same parallel_overlap test that produces the pairs. So the
+        // grouping costs one union per hit and introduces no second tolerance
+        // to keep in step with the first.
+        //
+        // Segments, not nets, are what get united: a net wanders across a
+        // board, and uniting on net identity would chain a bus in one corner
+        // to an unrelated pair in the other. Chaining sideways is real and
+        // wanted (a ten-wide bus IS one object); the screening radius, a few
+        // times the dielectric height, is what keeps it local.
+        std::vector<size_t> seg_off(n_cu + 1, 0);
+        for (size_t cu = 0; cu < n_cu; ++cu) seg_off[cu + 1] = seg_off[cu] + refs[cu].size();
+        const size_t n_seg = seg_off[n_cu];
+        auto gid = [&](int cu, size_t id) { return seg_off[cu] + id; };
+        std::vector<size_t> uf(n_seg);
+        for (size_t i = 0; i < n_seg; ++i) uf[i] = i;
+        std::function<size_t(size_t)> find_root = [&](size_t x) {
+            while (uf[x] != x) { uf[x] = uf[uf[x]]; x = uf[x]; }
+            return x;
+        };
+        auto unite = [&](size_t a, size_t b) {
+            a = find_root(a); b = find_root(b);
+            if (a != b) uf[a] = b;
+        };
+        // What every neighbour puts into this segment, summed in POWER. It is
+        // accumulated per SEGMENT rather than per net pair because a segment is
+        // one place on the board: the aggressors counted here are the ones
+        // actually alongside this run, so the sum is co-located by
+        // construction rather than by assumption.
+        std::vector<double> seg_k2(n_seg, 0.0);
+        std::vector<double> seg_worst_k(n_seg, 0.0);
+        std::vector<int> seg_worst_net(n_seg, -1);
+        std::vector<int> seg_aggressors(n_seg, 0);
+
         std::map<PairKey, PairAccum> pairs;
 
         // A pour's outline has many edges, and a nearby track is usually
@@ -1869,6 +1918,24 @@ class Screener {
             }
             accumulate(a.net, sb.net, cu_a, cu_b, a.w, sb.w, *ov, k, have_h,
                        false);
+
+            // Broadside neighbours are on another layer: they couple, but they
+            // are not part of this layer's bundle, and a bundle drawn across
+            // layers would have no cross-section to speak of.
+            if (broadside) return;
+            const size_t ga = gid(cu_a, a.id), gb = gid(cu_b, sb.id);
+            unite(ga, gb);
+            // A differential pair belongs to the bundle it runs in, but its
+            // partner is not noise: that coupling is the signal, and adding it
+            // to the victim's sum would report the pair's own balance as
+            // interference.
+            if (is_differential_pair_name(b_.net_name(a.net), b_.net_name(sb.net)))
+                return;
+            for (auto [g, other] : {std::pair{ga, sb.net}, std::pair{gb, a.net}}) {
+                seg_k2[g] += k * k;
+                ++seg_aggressors[g];
+                if (k > seg_worst_k[g]) { seg_worst_k[g] = k; seg_worst_net[g] = other; }
+            }
         };
 
         for (size_t cu = 0; cu < n_cu; ++cu) {
@@ -1908,8 +1975,102 @@ class Screener {
                        h.ov, k, have_h, true);
         }
 
+        // ---- collect the bundles ------------------------------------------
+        // Two nets running together are a pair and read perfectly well as one:
+        // a bundle is what a pair cannot say, so three distinct nets is where
+        // it starts.
+        std::map<size_t, std::vector<size_t>> comps;
+        for (size_t i = 0; i < n_seg; ++i)
+            if (seg_aggressors[i] > 0) comps[find_root(i)].push_back(i);
+
+        struct Bundle {
+            std::vector<int> nets;
+            int cu = -1;
+            double worst_k = 0.0;        // the aggregate into the worst victim
+            double worst_pair_k = 0.0;   // the loudest single pair inside it
+            int victim = -1, aggressor = -1;
+            int n_aggressors = 0;        // neighbours feeding the worst victim
+            double len = 0.0;
+            FindingGeom geom;
+            // 3W is a clearance fact about a PAIR, and absorbing the pairs
+            // must not take it with them: the bundle carries the tightest
+            // violation inside it and how many pairs are in that state.
+            double w3_sep = 1e30, w3_maxw = 0, w3_len = 0;
+            int w3_count = 0, w3_a = -1, w3_b = -1;
+        };
+        std::vector<Bundle> bundles;
+        std::set<PairKey> bundled;   // pairs a bundle now speaks for
+
+        for (auto& [root, segs] : comps) {
+            std::set<int> nets;
+            for (size_t g : segs) {
+                // recover the layer this segment lives on
+                size_t cu = std::upper_bound(seg_off.begin(), seg_off.end(), g)
+                            - seg_off.begin() - 1;
+                nets.insert(refs[cu][g - seg_off[cu]].net);
+            }
+            if (nets.size() < 3) continue;
+
+            Bundle bu;
+            bu.nets.assign(nets.begin(), nets.end());
+            for (size_t g : segs) {
+                size_t cu = std::upper_bound(seg_off.begin(), seg_off.end(), g)
+                            - seg_off.begin() - 1;
+                const detail::SegRef& r = refs[cu][g - seg_off[cu]];
+                bu.cu = (int)cu;
+                bu.len = std::max(bu.len, r.len);
+                const double kagg = std::sqrt(seg_k2[g]);
+                if (kagg > bu.worst_k) {
+                    bu.worst_k = kagg;
+                    bu.victim = r.net;
+                    bu.aggressor = seg_worst_net[g];
+                    bu.n_aggressors = seg_aggressors[g];
+                }
+                bu.worst_pair_k = std::max(bu.worst_pair_k, seg_worst_k[g]);
+                if (bu.geom.lines.size() < 400) {
+                    Segment ln;
+                    ln.net = r.net; ln.cu = (int)cu; ln.width = r.w;
+                    ln.x1 = r.x1; ln.y1 = r.y1; ln.x2 = r.x2; ln.y2 = r.y2;
+                    bu.geom.lines.push_back(ln);
+                }
+            }
+            // Everything this bundle now speaks for, so the same coupling is
+            // not also reported six more times underneath it.
+            for (size_t i = 0; i < bu.nets.size(); ++i)
+                for (size_t j = i + 1; j < bu.nets.size(); ++j) {
+                    PairKey pk{std::min(bu.nets[i], bu.nets[j]),
+                               std::max(bu.nets[i], bu.nets[j]), bu.cu, bu.cu};
+                    bundled.insert(pk);
+                    auto it = pairs.find(pk);
+                    if (it == pairs.end() || it->second.involves_pour) continue;
+                    const PairAccum& pa = it->second;
+                    if (is_differential_pair_name(b_.net_name(pk.net_lo),
+                                                  b_.net_name(pk.net_hi)))
+                        continue;   // that gap is the design, not a violation
+                    if (pa.min_edge_sep >= 2.0 * pa.max_w) continue;
+                    ++bu.w3_count;
+                    if (pa.min_edge_sep < bu.w3_sep) {
+                        bu.w3_sep = pa.min_edge_sep;
+                        bu.w3_maxw = pa.max_w;
+                        bu.w3_len = pa.len;
+                        bu.w3_a = pk.net_lo;
+                        bu.w3_b = pk.net_hi;
+                    }
+                }
+            bundles.push_back(std::move(bu));
+        }
+
         dropped_below_floor_ = 0;
         for (auto& [key, acc] : pairs) {
+            // Absorbed into a bundle above. The exception is a differential
+            // pair: that finding is about those two nets by name, says the
+            // coupling is intentional, and is not the bundle's to make.
+            if (bundled.count(key) &&
+                !is_differential_pair_name(b_.net_name(key.net_lo),
+                                           b_.net_name(key.net_hi))) {
+                ++absorbed_into_bundles_;
+                continue;
+            }
             double mean_d = acc.len_x_d / acc.len;
             bool broadside = key.cu_a != key.cu_b;
             // How much of the run is actually at the worst coupling, and what
@@ -2062,6 +2223,114 @@ class Screener {
                 w3.geom = f.geom;  // same overlay
                 out.push_back(std::move(w3));
             }
+            out.push_back(std::move(f));
+        }
+
+        // ---- emit the bundles ---------------------------------------------
+        for (auto& bu : bundles) {
+            if (bu.worst_k <= 0 || bu.victim < 0) continue;
+            const double db = tline::to_db(bu.worst_k);
+            if (db < p_.report_floor_db) { ++dropped_below_floor_; continue; }
+            Finding f;
+            f.rule = "coupled-bundle";
+            f.net_a = bu.victim;
+            f.net_b = bu.aggressor;
+            f.cu_a = f.cu_b = bu.cu;
+            f.members = bu.nets;
+            f.coupled_len_mm = bu.len;
+            f.next_db = db;
+            f.confidence = "screening-estimate";
+            f.severity = std::clamp((db + 40.0) / 30.0, 0.0, 1.0);
+            f.geom = std::move(bu.geom);
+
+            const std::string& where = b_.copper_names[bu.cu];
+            std::string names;
+            for (size_t i = 0; i < bu.nets.size() && i < 4; ++i)
+                names += (i ? ", " : "") + b_.net_name(bu.nets[i]);
+            if (bu.nets.size() > 4)
+                names += " +" + std::to_string(bu.nets.size() - 4) + " more";
+            f.title = std::to_string(bu.nets.size()) + " nets running together on " +
+                      where + ": " + names;
+
+            // Composed, not snprintf'd: net names have no length limit, and
+            // a fixed buffer would quietly cut the sentence that explains the
+            // number rather than fail.
+            auto num = [](double v, int dp) {
+                char c[32]; std::snprintf(c, sizeof c, "%.*f", dp, v); return std::string(c);
+            };
+            const size_t n_pairs = bu.nets.size() * (bu.nets.size() - 1) / 2;
+            f.detail =
+                "NEXT (saturated) ~ " + num(db, 1) + " dB into " +
+                b_.net_name(bu.victim) + ", which is what its " +
+                std::to_string(bu.n_aggressors) + " neighbour" +
+                (bu.n_aggressors == 1 ? "" : "s") +
+                " put there together — not what any one of them does (the "
+                "loudest single pair is " + num(tline::to_db(bu.worst_pair_k), 1) +
+                " dB, and " + b_.net_name(bu.aggressor) + " is the loudest). These " +
+                std::to_string(bu.nets.size()) + " nets form one run-together group "
+                "over " + num(bu.len, 1) + " mm — each adjacent to the next, so the "
+                "outer members of a wide group are neighbours by the chain rather "
+                "than directly. The figure above is not the group's: it is what one "
+                "victim gets from ITS own neighbours, which is the number a pair "
+                "cannot report. Reported as " + std::to_string(n_pairs) +
+                " separate pairs, every figure is an understatement, and several of "
+                "them can sit under the " + num(p_.report_floor_db, 0) +
+                " dB floor while their sum does not. The neighbours are summed in "
+                "POWER, which assumes they are uncorrelated and that their runs "
+                "coincide along this one — an upper bound where they do not, and "
+                "an UNDERSTATEMENT if they switch together, as the lines of a bus do.";
+            f.remediation =
+                "Treat the group, not the pairs: widen the pitch across the "
+                "whole bundle, split it across layers or a plane, or put a "
+                "stitched guard trace between the aggressor and the rest. "
+                "Re-spacing one pair only moves the noise to its neighbour.";
+
+            int sw = -1;
+            for (int n : bu.nets) if (sw_nets_.count(n)) { sw = n; break; }
+            if (sw >= 0) {
+                f.severity = std::min(1.0, f.severity + 0.15);
+                f.title += " [SW aggressor]";
+                f.detail += " " + b_.net_name(sw) +
+                            " in this bundle is an identified switch node "
+                            "(dv/dt aggressor) — severity boosted.";
+            }
+            f.severity_label = f.severity > 0.66 ? "high"
+                              : f.severity > 0.33 ? "medium"
+                              : f.severity > 0.1  ? "low" : "info";
+            // The bundle's clearance companion: one finding for the whole
+            // group, naming the tightest pair in it. Ranks just below its
+            // bundle, for the same reason the per-pair one does — a dense
+            // board violates 3W everywhere and the quantified coupling has to
+            // stay on top of the ranking.
+            if (bu.w3_count > 0) {
+                Finding w3;
+                w3.rule = "3w";
+                w3.severity = std::max(0.0, f.severity - 0.05);
+                w3.severity_label = w3.severity > 0.66 ? "high"
+                                   : w3.severity > 0.33 ? "medium" : "low";
+                w3.confidence = "exact";
+                w3.net_a = bu.w3_a; w3.net_b = bu.w3_b;
+                w3.cu_a = w3.cu_b = bu.cu;
+                w3.members = bu.nets;
+                w3.coupled_len_mm = bu.w3_len;
+                w3.min_sep_mm = bu.w3_sep;
+                w3.geom = f.geom;
+                w3.title = "3W violation in the " + std::to_string(bu.nets.size()) +
+                           "-net bundle on " + where + ": " +
+                           b_.net_name(bu.w3_a) + " <-> " + b_.net_name(bu.w3_b);
+                w3.detail =
+                    std::to_string(bu.w3_count) + " of the " +
+                    std::to_string(n_pairs) + " pairs in this bundle sit closer "
+                    "than 2x trace width. The tightest is " + num(bu.w3_sep, 3) +
+                    " mm against " + num(2.0 * bu.w3_maxw, 3) + " mm over a " +
+                    num(bu.w3_len, 1) + " mm run. Reported once for the group: "
+                    "the pitch is a property of the bundle, and opening one gap "
+                    "closes the next.";
+                w3.remediation = "Keep centre spacing >= 3x trace width across "
+                                 "the whole group (Johnson & Graham).";
+                out.push_back(std::move(w3));
+            }
+            ++bundles_found_;
             out.push_back(std::move(f));
         }
     }
@@ -3580,6 +3849,8 @@ class Screener {
     size_t collinear_merged_ = 0;
     size_t dropped_by_cap_ = 0;
     size_t diff_pairs_recognized_ = 0;
+    size_t bundles_found_ = 0;
+    size_t absorbed_into_bundles_ = 0;
     std::set<std::string> unverifiable_planes_;
     struct SwCandidate {
         int net;
@@ -3610,6 +3881,7 @@ inline nlohmann::json to_json(const Finding& f) {
                      {"netB", f.net_b},
                      {"cuA", f.cu_a},
                      {"cuB", f.cu_b}};
+    if (!f.members.empty()) j["members"] = f.members;
     if (f.next_db) j["nextDb"] = *f.next_db;
     if (f.solve) j["solve"] = *f.solve;
     if (f.emit) j["emit"] = *f.emit;
