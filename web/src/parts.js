@@ -544,9 +544,13 @@ export function measuredFrom(hit) {
   if (c !== undefined) out.cF = c
   if (esr !== undefined) out.esrOhm = esr
   if (esrF !== undefined) out.esrFreqHz = esrF
-  // Kelvin's magnetic rows carry inductance; a capacitor's ESL is not published
-  // in this catalogue, so it is deliberately absent rather than derived from the
-  // SRF here — that derivation belongs where the SRF's own conditions are known.
+  // ESL, where the catalogue has one. It is the quantity the package table was
+  // standing in for, and standing in badly: within a single 0402 the real spread
+  // is 120 to 1392 pH against a flat 0.4 nH guess (ABT #1122). Absent for parts
+  // whose record carries no equivalent circuit, which leaves the estimate in
+  // place and flagged rather than inventing a number.
+  const esl = num(r.esl)
+  if (esl !== undefined) out.eslH = esl
   //
   // Semiconductors: Coss is the one the screener was missing outright. The
   // commutation-loop finding computes a loop inductance and then stops at "with
