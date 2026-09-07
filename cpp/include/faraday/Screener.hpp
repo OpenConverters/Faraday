@@ -1975,6 +1975,49 @@ class Screener {
                        h.ov, k, have_h, true);
         }
 
+        // A bus that turns a corner is still one bus. The union above only
+        // ever joins conductors that are PARALLEL to each other, so the leg
+        // running north and the leg running east — ninety degrees apart —
+        // could never join, and one object arrived as two findings on the same
+        // four nets. On the PoE board that made a single EEPROM bus three.
+        //
+        // The join is the conductor itself: the same net's copper is
+        // continuous through the corner, so segments of one net that meet at a
+        // point belong to one run. Both ends must already be IN a bundle,
+        // which is what keeps this local — a net leaving the group and
+        // travelling alone across the board has no neighbours out there, so it
+        // cannot bridge two groups that are genuinely separate. MPPT has both
+        // shapes and they must stay told apart: two of its repeated net sets
+        // are corners of one run, the third is the same nets running together
+        // somewhere else entirely.
+        {
+            // 0.01 mm buckets, neighbourhood-searched: a routing vertex is
+            // shared exactly, but nothing downstream should depend on two
+            // doubles being bit-identical.
+            std::map<std::tuple<int, int, long long, long long>, std::vector<size_t>> ends;
+            auto key = [](int cu, int net, double x, double y) {
+                return std::make_tuple(cu, net, std::llround(x * 100.0),
+                                       std::llround(y * 100.0));
+            };
+            for (size_t cu = 0; cu < n_cu; ++cu)
+                for (const detail::SegRef& r : refs[cu]) {
+                    const size_t g = gid((int)cu, r.id);
+                    if (seg_aggressors[g] == 0) continue;   // not in any bundle
+                    ends[key((int)cu, r.net, r.x1, r.y1)].push_back(g);
+                    ends[key((int)cu, r.net, r.x2, r.y2)].push_back(g);
+                }
+            for (const auto& [k, here] : ends) {
+                const auto [cu, net, ix, iy] = k;
+                for (long long dx = -1; dx <= 1; ++dx)
+                    for (long long dy = -1; dy <= 1; ++dy) {
+                        auto it = ends.find({cu, net, ix + dx, iy + dy});
+                        if (it == ends.end()) continue;
+                        for (size_t a : here)
+                            for (size_t b : it->second) unite(a, b);
+                    }
+            }
+        }
+
         // ---- collect the bundles ------------------------------------------
         // Two nets running together are a pair and read perfectly well as one:
         // a bundle is what a pair cannot say, so three distinct nets is where

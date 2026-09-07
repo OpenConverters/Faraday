@@ -2475,3 +2475,77 @@ TEST_CASE("bundle: the field solver is still reachable from a group",
     // and it is the cross-section of the pair the headline names, not a guess
     CHECK(bu->net_a != bu->net_b);
 }
+
+TEST_CASE("bundle: a bus that turns a corner is still one bus",
+          "[screener][bundle]") {
+    // Segments are united when they run PARALLEL, so the leg heading east and
+    // the leg heading north can never meet that test — one object arrived as
+    // two findings on the same nets. On the PoE board a single EEPROM bus came
+    // out three times. The join is the conductor itself: the same net's copper
+    // is continuous through the corner.
+    std::string s =
+        "(kicad_pcb"
+        " (layers (0 \"F.Cu\" signal) (31 \"B.Cu\" signal))"
+        " (net 0 \"\") (net 99 \"GND\")"
+        " (zone (net 99) (net_name \"GND\") (layer \"B.Cu\")"
+        "   (filled_polygon (layer \"B.Cu\")"
+        "     (pts (xy 0 0) (xy 60 0) (xy 60 60) (xy 0 60))))";
+    for (int i = 1; i <= 4; ++i) {          // four nets east, then all four north
+        const std::string n = std::to_string(i);
+        const std::string y = std::to_string(10.0 + i * 0.4);
+        const std::string x = std::to_string(30.0 + i * 0.4);
+        s += " (net " + n + " \"D" + n + "\")"
+             " (segment (start 5 " + y + ") (end " + x + " " + y + ")"
+             " (width 0.2) (layer \"F.Cu\") (net " + n + "))"
+             " (segment (start " + x + " " + y + ") (end " + x + " 45)"
+             " (width 0.2) (layer \"F.Cu\") (net " + n + "))";
+    }
+    s += ")";
+    auto fs = screen(s, "default-2layer");
+    int bundles = 0;
+    const faraday::Finding* bu = nullptr;
+    for (const auto& f : fs) if (f.rule == "coupled-bundle") { ++bundles; bu = &f; }
+    REQUIRE(bundles == 1);            // one bus, not one per leg
+    REQUIRE(bu != nullptr);
+    CHECK(bu->members.size() == 4);
+    CHECK(bu->coupled_len_mm > 30.0); // and it speaks for both legs
+}
+
+TEST_CASE("bundle: the same nets running together elsewhere stay separate",
+          "[screener][bundle]") {
+    // The corner join must not become "same nets anywhere = same object". The
+    // nets here FAN OUT in between, into corridors 20 mm apart, so the middle
+    // segments couple to nothing, sit in no bundle, and cannot bridge the two
+    // ends. (A first version of this fixture kept the four nets together right
+    // across the middle. That is one continuous bus and correctly came out as
+    // ONE finding — the fixture was wrong, not the rule.)
+    std::string s =
+        "(kicad_pcb"
+        " (layers (0 \"F.Cu\" signal) (31 \"B.Cu\" signal))"
+        " (net 0 \"\") (net 99 \"GND\")"
+        " (zone (net 99) (net_name \"GND\") (layer \"B.Cu\")"
+        "   (filled_polygon (layer \"B.Cu\")"
+        "     (pts (xy 0 0) (xy 120 0) (xy 120 90) (xy 0 90))))";
+    for (int i = 1; i <= 4; ++i) {
+        const std::string n = std::to_string(i);
+        const std::string ya = std::to_string(10.0 + i * 0.4);   // tight group
+        const std::string ym = std::to_string(i * 20.0);         // its own corridor
+        const std::string yb = std::to_string(70.0 + i * 0.4);   // tight again
+        s += " (net " + n + " \"D" + n + "\")"
+             " (segment (start 5 " + ya + ") (end 30 " + ya + ")"
+             " (width 0.2) (layer \"F.Cu\") (net " + n + "))"
+             " (segment (start 30 " + ya + ") (end 45 " + ym + ")"
+             " (width 0.2) (layer \"F.Cu\") (net " + n + "))"
+             " (segment (start 45 " + ym + ") (end 75 " + ym + ")"
+             " (width 0.2) (layer \"F.Cu\") (net " + n + "))"
+             " (segment (start 75 " + ym + ") (end 90 " + yb + ")"
+             " (width 0.2) (layer \"F.Cu\") (net " + n + "))"
+             " (segment (start 90 " + yb + ") (end 115 " + yb + ")"
+             " (width 0.2) (layer \"F.Cu\") (net " + n + "))";
+    }
+    s += ")";
+    auto fs = screen(s, "default-2layer");
+    int bundles = 0;
+    for (const auto& f : fs) if (f.rule == "coupled-bundle") ++bundles;
+    CHECK(bundles == 2);   // two places the nets run together, two objects
+}

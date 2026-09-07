@@ -45,8 +45,16 @@ TEST_CASE("real: HackRF One (KiCad v6, 4-layer RF) imports and screens", "[real]
     CHECK(planes[2]["isPlane"] == true);   // In2.Cu: 77% GND pour
     CHECK(planes[0]["isPlane"] == false);
     CHECK(planes[3]["isPlane"] == false);
-    CHECK(report["findings"].size() == 200);  // cap reached — big board
-    CHECK(report["meta"]["droppedByFindingCap"].get<int>() > 0);
+    // 168, and the 200 cap is no longer reached: nothing on this board is
+    // discarded any more. It used to be — the coupling rule reported per net
+    // pair, so a bus arrived as one finding per pair and per straight leg, and
+    // the overflow went over the cap. Grouping those into one object per bus
+    // (376 pairs absorbed into 53 bundles here) leaves the whole review
+    // visible. Fewer findings, MORE of the board reported.
+    CHECK(report["findings"].size() == 168);
+    CHECK(report["meta"]["droppedByFindingCap"].get<int>() == 0);
+    CHECK(report["meta"]["bundlesFound"].get<int>() == 53);
+    CHECK(report["meta"]["pairsAbsorbedIntoBundles"].get<int>() == 376);
     // Differential pairs (USB DP/DM and 9 others) are recognized as
     // intentional coupling. They are info-grade, so on a board this dense
     // they correctly rank BELOW the finding cap and never appear as defects —
