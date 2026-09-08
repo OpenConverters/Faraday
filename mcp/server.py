@@ -28,8 +28,11 @@ import json
 import os
 import shutil
 import subprocess
+import tempfile
 import time
 import uuid
+import zipfile
+from contextlib import contextmanager
 from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
@@ -466,6 +469,97 @@ def faraday_capabilities() -> CallToolResult:
          "units": "mm for geometry, dB for coupling"})
 
 
+# --- zips ------------------------------------------------------------------
+# faraday_cli walks a DIRECTORY (recursively, because an ODB++ job is a tree)
+# but it has no zip reader: handed an archive it slurps the bytes, finds a NUL
+# in the first 8 kB and refuses it as binary. Every caller here has been
+# promised "a directory or one zip" since this tool existed, so the archive is
+# opened on this side, where zipfile is already in the standard library.
+#
+# THE CASE THAT MADE IT URGENT. An Altium project zip was refused with "this is
+# a native CAD database (.PcbDoc) — export ODB++ or Gerber X2 and drop that",
+# while the very same archive carried `Project Outputs/.../odb/` — a complete
+# ODB++ job, already exported, four copper layers, 124 findings when pointed at
+# directly. The advice was not merely unhelpful, it was wrong: the user had
+# done the thing they were being told to do. The engine was never the problem;
+# nothing had unzipped the file.
+#
+# The whole tree is handed over, .PcbDoc and spreadsheets and all: import_board_set
+# looks for an ODB++ matrix first and skips binary members before sniffing the
+# rest, so the export is found wherever in the project it happens to sit. Picking
+# a subdirectory here would mean re-implementing that search in Python, worse.
+
+ZIP_MAGIC = b"PK\x03\x04"
+# What a board zip may cost once opened. A zip bomb is 42 kB on disk and
+# petabytes expanded, and this runs on the machine holding the boards.
+MAX_UNZIPPED_BYTES = 2 * 1024 * 1024 * 1024
+MAX_ZIP_MEMBERS = 20000
+
+
+def _is_zip(path: Path) -> bool:
+    """By CONTENT. An artifact:// fetch names its temp file from the URL, so the
+    extension is whatever the orchestrator chose — often nothing at all."""
+    try:
+        with path.open("rb") as handle:
+            return handle.read(4) == ZIP_MAGIC
+    except OSError:
+        return False
+
+
+def _safe_extract(archive: zipfile.ZipFile, dest: Path) -> int:
+    """Extract every member UNDER dest, refusing any that would escape it.
+
+    zipfile.extractall sanitises paths, but silently — a member named
+    ../../etc/x lands somewhere unexpected and nothing says so. A board zip has
+    no business containing one, so it is an error here rather than a repair.
+    """
+    total = 0
+    members = archive.infolist()
+    if len(members) > MAX_ZIP_MEMBERS:
+        raise ValueError(f"this zip holds {len(members)} entries, over the "
+                         f"{MAX_ZIP_MEMBERS} a board export should ever need")
+    root = dest.resolve()
+    for member in members:
+        target = (dest / member.filename).resolve()
+        if not target.is_relative_to(root):
+            raise ValueError(f"refusing {member.filename!r}: it points outside the archive")
+        total += member.file_size
+        if total > MAX_UNZIPPED_BYTES:
+            raise ValueError(
+                f"this zip expands past the "
+                f"{MAX_UNZIPPED_BYTES // (1024 * 1024)} MB limit — pass the "
+                f"exported job as a directory instead")
+    archive.extractall(dest)
+    return len(members)
+
+
+@contextmanager
+def board_tree(source: Path, reference: str):
+    """The path to hand the CLI: a zip becomes a directory, anything else passes through.
+
+    The extracted copy is removed on the way out. A directory or a single file
+    the user already had is never touched, let alone deleted.
+    """
+    if not _is_zip(source):
+        yield source
+        return
+    workdir = Path(tempfile.mkdtemp(prefix="faraday-zip-"))
+    try:
+        try:
+            with zipfile.ZipFile(source) as archive:
+                _safe_extract(archive, workdir)
+        except zipfile.BadZipFile as error:
+            raise ValueError(f"{display_name(reference)} starts like a zip but "
+                             f"cannot be read as one: {error}") from error
+        # A single top-level directory is the usual shape ("Project/…"); descend
+        # into it so relative member names in the report read as the exporter
+        # wrote them rather than gaining a wrapper nobody chose.
+        entries = list(workdir.iterdir())
+        yield entries[0] if len(entries) == 1 and entries[0].is_dir() else workdir
+    finally:
+        shutil.rmtree(workdir, ignore_errors=True)
+
+
 @mcp.tool(
     title="Review a board",
     description=(
@@ -496,7 +590,8 @@ def review_board(board: str, stackup: str | None = None,
     out_dir.mkdir(parents=True, exist_ok=True)
     report_path = out_dir / "report.json"
 
-    with resolved(board, "FARADAY", "board") as source:
+    with resolved(board, "FARADAY", "board") as fetched, \
+            board_tree(fetched, board) as source:
         cmd = [str(_cli()), str(source), "-o", str(report_path)]
         if stackup:
             cmd += ["--stackup", stackup]
