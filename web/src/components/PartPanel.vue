@@ -26,8 +26,12 @@ const props = defineProps({
   // distributor call just paid for vanished on the first ✕ and the part went
   // back to reading as unknown.
   sourced: { type: Object, default: () => ({}) },
+  // Parts the reader has already identified in this session, keyed by refdes.
+  // Same reason as `sourced`, one step earlier: choosing a part from a list is
+  // an answer, and it used to be forgotten the moment the panel closed.
+  chosen: { type: Object, default: () => ({}) },
 })
-const emit = defineEmits(['close', 'adopt', 'goto', 'sourced'])
+const emit = defineEmits(['close', 'adopt', 'goto', 'sourced', 'chosen'])
 const basic = inject('basic', ref(true))
 
 // ---- the board's half ------------------------------------------------------
@@ -68,6 +72,13 @@ const error = ref('')
 const busy = ref(false)
 const ident = ref(null)         // identify() result
 const valueHits = ref(null)     // candidatesByValue() result
+// The size-less matches are hidden by default because nothing about them can
+// be checked against this footprint — but they are a real answer when the
+// alternative is none, so they are one click away rather than gone.
+const showUnknown = ref(false)
+const shownRows = computed(() =>
+  showUnknown.value ? (valueHits.value?.unknownCase ?? [])
+                    : (valueHits.value?.rows ?? []))
 const original = ref(null)      // { family, row } — the part the record and cross-ref are about
 const viewing = ref(null)       // { family, row } whose record is on screen (original by default)
 const record = ref(null)
@@ -105,6 +116,7 @@ function reset() {
   searchHits.value = null; mfrs.value = []; marked.value = new Set()
   xref.value = null; xrefErr.value = ''; xrefBusy.value = false; searchedAll.value = false
   sourcing.value = false; answer.value = null; sourceErr.value = ''
+  showUnknown.value = false
 }
 
 async function start() {
@@ -112,6 +124,7 @@ async function start() {
   if (!comp.value) return
   busy.value = true
   try {
+    if (await restoreChosen()) return
     if (candidates.value.length) {
       // The likeliest families FIRST, because a shard is a download and a hit
       // there costs one. But a miss in three catalogues is not an answer — a
@@ -176,12 +189,30 @@ async function runSearch() {
   } catch (e) { error.value = String(e.message || e) } finally { busy.value = false }
 }
 
-async function choose(hit) {
+async function choose(hit, { announce = true } = {}) {
   original.value = hit
   viewing.value = hit
   xref.value = null; xrefErr.value = ''
+  // Say so upward. Picking a part IS the answer to "which part is this?", and
+  // it used to live and die inside this panel: the board never turned green,
+  // and closing the modal threw the choice away, so the next click offered the
+  // same search over again as though nothing had been decided.
+  if (announce && hit?.row?.mpn) {
+    emit('chosen', { refdes: props.refdes, family: hit.family, row: hit.row })
+  }
   await Promise.all([loadRecord(hit), loadMfrs(hit)])
   await runXref()
+}
+
+// A part the reader has already identified outranks anything we would work out
+// again, so it is restored before the catalogue is asked — including for a
+// component that carries no part number at all, where the identify path below
+// never runs.
+async function restoreChosen() {
+  const c = props.chosen?.[props.refdes]
+  if (!c?.row) return false
+  await choose({ family: c.family, row: c.row }, { announce: false })
+  return true
 }
 
 async function loadRecord(hit) {
@@ -451,7 +482,7 @@ watch(() => props.refdes, start, { immediate: true })
           <!-- no part number: the value and package, matched -->
           <div v-if="valueHits && !original" class="byvalue" data-testid="part-by-value">
             <p>
-              <b>{{ valueHits.rows.length }}</b> catalogue part(s) match
+              <b>{{ shownRows.length }}</b> catalogue part(s) match
               <b class="mono">{{ si(value.si, value.unit) }}</b>
               <template v-if="value.ratedV"> ≥ {{ value.ratedV }} V</template>
               <template v-if="pkg"> in <b class="mono">{{ pkg.code }}</b></template>
@@ -463,14 +494,20 @@ watch(() => props.refdes, start, { immediate: true })
                 v-if="valueHits.byLand">, {{ valueHits.byLand }} against the room this
                 footprint's pads actually leave ({{ valueHits.land.lMm.toFixed(1) }} ×
                 {{ valueHits.land.wMm.toFixed(1) }} mm)</template><template
-                v-if="valueHits.unknownCase.length">, {{ valueHits.unknownCase.length }} publish
-                no size at all and are not shown</template><template
+                v-if="valueHits.unknownCase.length && !showUnknown">, {{ valueHits.unknownCase.length }}
+                publish no size at all and are not shown</template><template
                 v-if="valueHits.differs.length">, {{ valueHits.differs.length }} do not
                 fit</template>).</span>
-              Pick one to read its record and cross-reference from it — the board does not say which part it is.
+              <template v-if="shownRows.length">Pick one to read its record and
+                cross-reference from it — the board does not say which part it is.</template>
+              <template v-else-if="valueHits.unknownCase.length && !showUnknown">Nothing
+                that fits this footprint, but {{ valueHits.unknownCase.length }} part(s) of the
+                right value publish no size at all — they are below.</template>
+              <template v-else>Nothing in the catalogue matches this value and footprint.
+                Look the part number up below if the board did not print it.</template>
             </p>
             <ul class="hits">
-              <li v-for="r in valueHits.rows.slice(0, 25)" :key="keyOf(r)">
+              <li v-for="r in shownRows.slice(0, 25)" :key="keyOf(r)">
                 <button class="lnk mono" @click="choose({ family: valueHits.family, row: r })">{{ r.mpn }}</button>
                 <span class="dim"> {{ r.manufacturer }}<template v-if="r.v_rated"> · {{ si(r.v_rated, 'V') }}</template><template
                   v-if="r.technology"> · {{ r.technology }}</template><template
@@ -479,12 +516,18 @@ watch(() => props.refdes, start, { immediate: true })
                   v-if="r.power_rating"> · {{ si(r.power_rating, 'W') }}</template></span>
               </li>
             </ul>
-            <p v-if="valueHits.rows.length > 25" class="dim">
-              first 25 of {{ valueHits.rows.length }} shown — narrow it with the part-number search below</p>
-            <p v-if="valueHits.unknownCase.length" class="dim">
+            <p v-if="shownRows.length > 25" class="dim">
+              first 25 of {{ shownRows.length }} shown — narrow it with the part-number search below</p>
+            <p v-if="valueHits.unknownCase.length && !showUnknown" class="dim">
               {{ valueHits.unknownCase.length }} value match(es) publish no body size and no case
               code, so there is nothing to compare against this footprint:
-              <button class="lnk" @click="valueHits.rows = valueHits.unknownCase">show them anyway</button>
+              <button class="lnk" data-testid="show-unsized"
+                      @click="showUnknown = true">show them anyway</button>
+            </p>
+            <p v-else-if="showUnknown" class="dim">
+              Showing the {{ valueHits.unknownCase.length }} match(es) that publish no body size —
+              nothing here has been checked against this footprint.
+              <button class="lnk" @click="showUnknown = false">back to the ones that fit</button>
             </p>
           </div>
 

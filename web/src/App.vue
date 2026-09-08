@@ -87,6 +87,11 @@ const partIndex = ref(null)      // { ref: {state, …} } once swept
 // distributor call to see again — so it is kept here, beside the board it
 // belongs to, and handed back when the same part is opened.
 const sourcedParts = ref({})
+// Parts the reader identified by hand, keyed by refdes. A board rarely says
+// which exact part a footprint holds, so choosing one from the catalogue is
+// often the only answer there is — and it used to live inside the part panel
+// and die with it.
+const chosenParts = ref({})
 // The catalogue summary is read once and then in the way. Hidden per sweep, not
 // per board: asking again is a new answer and deserves to be seen.
 const catBarHidden = ref(false)
@@ -122,6 +127,7 @@ function retally() {
                  `${n('candidates')} with candidates`,
                  `${n('none')} unmatched`,
                  `${n('unlookupable')} unnamed by the board`]
+  if (n('chosen')) parts.splice(1, 0, `${n('chosen')} you identified`)
   if (n('sourced')) parts.splice(1, 0, `${n('sourced')} sourced from the web`)
   sweepNote.value = `${vals.length} parts: ` + parts.join(', ') + '.'
 }
@@ -166,6 +172,21 @@ async function adoptMeasured() {
   } catch (e) {
     measuredNote.value = 'the catalogue values could not be applied: ' + String(e.message || e)
   }
+}
+
+function rememberChosen({ refdes, family, row }) {
+  if (!refdes || !row?.mpn) return
+  chosenParts.value = { ...chosenParts.value, [refdes]: { family, row } }
+  // The overlay asked "which part is this?" and has now been told. It is not
+  // an "exact" match — nothing matched a part number, a person decided — so it
+  // says so, and the tally counts it separately from what the catalogue found
+  // on its own.
+  if (partIndex.value?.[refdes]) {
+    partIndex.value = { ...partIndex.value,
+                        [refdes]: { ...partIndex.value[refdes], state: 'chosen',
+                                    family, row, hit: { family, row } } }
+  }
+  retally()
 }
 
 function rememberSourced({ mpn, refdes, answer }) {
@@ -635,6 +656,9 @@ watch(fileName, () => {
   valuesCard.value = 'full'
   catBarHidden.value = false
   hiddenNotices.value = new Set()
+  // a different board's refdes L1 is a different part
+  chosenParts.value = {}
+  sourcedParts.value = {}
 })
 
 // The component near-field map: a different regime from the far-field
@@ -1250,9 +1274,9 @@ function toggleRule(rule) {
                    @toggle-rule="toggleRule" @close="glossaryOpen = false" />
 
     <PartPanel v-if="partRef && report" :report="report" :refdes="partRef"
-               :findings="findings" :sourced="sourcedParts"
+               :findings="findings" :sourced="sourcedParts" :chosen="chosenParts"
                @close="partRef = ''" @adopt="adoptValue" @goto="gotoFinding"
-               @sourced="rememberSourced" />
+               @sourced="rememberSourced" @chosen="rememberChosen" />
 
     <StackupPanel v-if="stackupOpen" :initial="customStackup"
                   :copper-hint="suggestCopper"

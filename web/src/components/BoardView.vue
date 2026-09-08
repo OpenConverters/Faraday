@@ -140,6 +140,10 @@ const catColors = pal => ({
   // not in the catalogue, but the librarian read it and staged it: a different
   // answer from "none", and the part must stop reading as unknown
   sourced:      { fill: 'rgba(111,159,196,0.26)', line: pal.cool },
+  // the reader said which part this is. Answered, so it reads as answered —
+  // its own state rather than "exact", because a person deciding is not the
+  // catalogue matching a part number and the tally must not claim it was.
+  chosen:       { fill: pal.low(0.30),  line: pal.heat.low },
 })
 // intentional coupling and identified aggressors read as their own thing, not
 // as heat: diff pairs cool blue-grey, switch nodes copper (the board's own hue)
@@ -498,7 +502,9 @@ function draw() {
       let fill = pal.wash
       let line = p.side === 'bottom' ? 'rgba(93,158,199,0.75)' : pal.washLine(0.6)
       if (props.partIndex) {
-        const c = cat[idx?.state ?? 'pending']
+        // an unknown state must not take the board down with it: a new state
+        // added upstream reads as "not answered yet" until it has a colour
+        const c = cat[idx?.state] ?? cat.pending
         fill = c.fill
         line = c.line
       }
