@@ -17,11 +17,28 @@
         }
       }
       * { box-sizing: border-box; }
+      /* THE BOARD MUST FILL THE FRAME, and that needs an unbroken height chain.
+         BoardView's canvas is `height: 100%` of a `.boardwrap` that sets no
+         height of its own — correct, because in the web app it sits in a pane
+         the viewport has already sized. In a widget nothing had: #app was
+         auto-height, `.split` used `align-items: start` so the board pane did
+         not stretch, and `.boardpane` had no height either. A chain of autos
+         ending in `height: 100%` resolves to nothing, so the drawing collapsed
+         to a sliver at the top of a 460 px frame and the rest of the widget was
+         blank. Every link below is a height the next one can actually resolve
+         against. */
+      html, body { height: 100%; }
       body {
         margin: 0; background: transparent; color: var(--fg);
         font: 13px/1.45 ui-sans-serif, system-ui, -apple-system, "Segoe UI", sans-serif;
       }
-      #app { padding: 10px 12px 12px; }
+      #app { padding: 10px 12px 12px; height: 100%; }
+      /* The wrap is the column: a fixed-size header, then a split that takes
+         whatever is left. min-height:0 on the split is not optional — a grid
+         item defaults to min-content, which would let the findings list push
+         the row taller than the frame instead of scrolling inside it. */
+      .wrap { display: flex; flex-direction: column; height: 100%; min-height: 0; }
+      .head { flex: 0 0 auto; }
       .pad { padding: 14px 2px; }
       .muted { color: var(--muted); }
       .err { background: rgba(255,93,85,.12); border-radius: 6px; padding: 8px 10px; }
@@ -39,11 +56,29 @@
       .chip.high { color: var(--high); border-color: var(--high); }
       .chip.medium { color: var(--medium); border-color: var(--medium); }
       .chip.low { color: var(--low); border-color: var(--low); }
-      /* The board is the point: give it the room and let the list scroll beside it. */
-      .split { display: grid; grid-template-columns: 1fr 300px; gap: 10px; align-items: start; }
-      @media (max-width: 820px) { .split { grid-template-columns: 1fr; } }
-      .boardpane { min-width: 0; border: 1px solid var(--line); border-radius: 6px; overflow: hidden; }
-      .list { list-style: none; margin: 0; padding: 0; max-height: 620px; overflow-y: auto; }
+      /* The board is the point: give it the room and let the list scroll beside it.
+         `align-items: stretch` (the default, stated here because the previous
+         `start` is exactly what broke it) makes both panes as tall as the row. */
+      .split {
+        display: grid; grid-template-columns: 1fr 300px; gap: 10px;
+        align-items: stretch; flex: 1 1 auto; min-height: 0;
+      }
+      /* Narrow: the board keeps most of the height and the list takes a strip
+         under it, rather than the two splitting a short frame evenly. */
+      @media (max-width: 820px) {
+        .split { grid-template-columns: 1fr; grid-template-rows: 3fr 2fr; }
+      }
+      .boardpane {
+        min-width: 0; min-height: 0; border: 1px solid var(--line);
+        border-radius: 6px; overflow: hidden;
+      }
+      /* Scrolls WITHIN the pane the grid gave it. The old `max-height: 620px`
+         was taller than the 460 px frame it had to live in, so the list ran off
+         the bottom of the widget and took the layout with it. */
+      .list {
+        list-style: none; margin: 0; padding: 0;
+        height: 100%; min-height: 0; overflow-y: auto;
+      }
       .item {
         padding: 6px 8px; border-bottom: 1px solid var(--line); cursor: pointer;
         border-left: 3px solid transparent;

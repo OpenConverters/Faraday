@@ -814,7 +814,13 @@ watch(() => props.drawingShield, on => {
 </template>
 
 <style scoped>
-.boardwrap { position: relative; min-height: 0; overflow: hidden; }
+/* height:100% is the link the canvas below depends on. The canvas is sized in
+   PERCENT, so every ancestor up to a real height must resolve — an auto-height
+   wrap makes `height: 100%` mean nothing and the board draws as a sliver. In
+   the web app the surrounding pane already had a height and this was invisible;
+   in the MCP widget nothing did, and the board collapsed. Harmless where the
+   parent is auto (it resolves to auto, as before), decisive where it is not. */
+.boardwrap { position: relative; height: 100%; min-height: 0; overflow: hidden; }
 canvas { width: 100%; height: 100%; display: block; touch-action: none; }
 
 .chips {
