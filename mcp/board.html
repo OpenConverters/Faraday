@@ -95,7 +95,7 @@
       }
       .item {
         padding: 6px 8px; border-bottom: 1px solid var(--line); cursor: pointer;
-        border-left: 3px solid transparent;
+        border-left: 4px solid transparent;
       }
       .item:hover { background: var(--card); }
       .item.chosen { background: var(--chosen); border-left-color: var(--accent); }
@@ -104,9 +104,36 @@
       .item.low { border-left-color: var(--low); }
       .itemhead { display: flex; gap: 6px; align-items: baseline; }
       .fid { font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 11px; color: var(--muted); }
-      .sev { font-size: 10.5px; font-weight: 650; text-transform: uppercase; letter-spacing: .04em; }
-      .sev.high { color: var(--high); } .sev.medium { color: var(--medium); }
-      .sev.low { color: var(--low); } .sev.info { color: var(--info); }
+      /* SEVERITY HAS TO BE READABLE ACROSS A LIST, not decoded from a 10 px word.
+         A tinted badge in the finding's own hue: the colour carries it at a glance
+         and the word still says it outright for anyone who does not separate these
+         reds and greens. The tints come from the --heat-*-rgb tokens the canvas
+         already draws the copper with, so a badge and the trace it points at are
+         the same colour by construction rather than by two people picking hexes. */
+      .sev {
+        font-size: 10px; font-weight: 700; text-transform: uppercase;
+        letter-spacing: .05em; padding: 1px 5px; border-radius: 3px;
+        border: 1px solid transparent; white-space: nowrap;
+      }
+      .sev.high {
+        color: var(--heat-high); background: rgba(var(--heat-high-rgb), .15);
+        border-color: rgba(var(--heat-high-rgb), .45);
+      }
+      .sev.medium {
+        color: var(--heat-med); background: rgba(var(--heat-med-rgb), .15);
+        border-color: rgba(var(--heat-med-rgb), .45);
+      }
+      .sev.low {
+        color: var(--heat-low); background: rgba(var(--heat-low-rgb), .15);
+        border-color: rgba(var(--heat-low-rgb), .45);
+      }
+      .sev.info { color: var(--muted); background: var(--card); border-color: var(--line); }
+      /* A severity the widget did not recognise must LOOK unrecognised rather than
+         silently blending in — that is how the float-instead-of-label bug hid. */
+      .sev:not(.high):not(.medium):not(.low):not(.info) {
+        color: var(--fg); background: var(--card); border-style: dashed;
+        border-color: var(--muted);
+      }
       .rule { font-size: 11px; color: var(--muted); }
       .title { font-size: 12px; margin-top: 2px; }
       .nets { font-size: 11px; color: var(--muted); margin-top: 2px; word-break: break-all; }

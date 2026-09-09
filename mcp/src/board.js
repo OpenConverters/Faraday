@@ -40,10 +40,61 @@ const Widget = defineComponent({
     // numbers as {value, unit} — and `subject.document` is the engine's own report, which is
     // what BoardView draws from. They are the same findings in the same order, built from one
     // list server-side, so the drawing cannot disagree with the list beside it.
-    const findings = ref([]);                       // contract shape — the list, the selection
+    //
+    // KNOWING THAT AND SPEAKING ONLY ONE OF THEM was the bug. The list is fed from
+    // the CONTRACT shape when the payload is complete and from the ENGINE report
+    // when it is truncated — and on any real board it is truncated, because a
+    // 109-finding review reports 15. Everything below then read the wrong field on
+    // the shape it actually had:
+    //
+    //   contract          engine report
+    //   severity: "high"  severity: 0.58  (a score) + severityLabel: "high"
+    //   summary           title
+    //   involves[]        netA / netB, as INDICES into board.nets
+    //
+    // `class="item ${f.severity}"` became `item 0.5846643665323331`, which matches
+    // no rule, so the severity border was transparent and the coloured word was a
+    // raw float — the severity of every issue invisible on exactly the boards that
+    // have enough issues to need sorting. The sort was equally blind: every
+    // SEVERITY_ORDER lookup missed, so `high` and `info` came back in report order.
+    //
+    // So normalise once, at the boundary, and let one vocabulary out of it.
+    const findings = ref([]);                       // NORMALISED shape — the list, the selection
     const drawn = computed(() => report.value?.findings ?? []);   // engine shape — the drawing
+
+    /** Net names by index, for resolving the engine's netA/netB. */
+    const netNames = computed(() =>
+      (report.value?.board?.nets ?? []).map((n) => n?.name ?? ""));
+
+    /**
+     * One finding, in one vocabulary, whichever shape it arrived in.
+     *
+     * Detection is on `severityLabel`, the field only the engine report has —
+     * NOT on typeof severity, because "is this a number?" would quietly mis-read a
+     * contract payload whose severity was ever numeric, and because a field that
+     * exists in exactly one of the two shapes is an unambiguous witness.
+     */
+    function normalise(f) {
+      if (f.severityLabel === undefined) return f;          // already the contract shape
+      const names = netNames.value;
+      const nets = ["netA", "netB"]
+        .map((k) => f[k])
+        .map((i) => (typeof i === "number" ? (i >= 0 ? names[i] : null) : i || null))
+        .filter(Boolean);
+      return {
+        ...f,
+        severity: f.severityLabel,
+        // The score is not thrown away — it is what the engine ranked on, and the
+        // tooltip is the honest place for it.
+        score: typeof f.severity === "number" ? f.severity : null,
+        summary: f.title ?? f.rule ?? f.id,
+        involves: nets.map((name) => ({ kind: "net", name })),
+      };
+    }
+
     const ordered = computed(() => [...findings.value].sort(
-      (a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9)));
+      (a, b) => (SEVERITY_ORDER[a.severity] ?? 9) - (SEVERITY_ORDER[b.severity] ?? 9)
+                || (b.score ?? 0) - (a.score ?? 0)));
 
     /** The nets a finding is about, by name. The engine references them by index. */
     const netsOf = (f) => (f.involves ?? []).filter((i) => i.kind === "net").map((i) => i.name);
@@ -117,7 +168,10 @@ const Widget = defineComponent({
       // fetched report is the complete set and is what belongs on the copper.
       const total = Object.values(sc.counts ?? {}).reduce((a, b) => a + b, 0);
       const truncated = total > (sc.reported ?? (sc.findings ?? []).length);
-      findings.value = truncated ? (document.findings ?? sc.findings ?? []) : (sc.findings ?? []);
+      // Normalised at the boundary — see normalise(). report.value is assigned
+      // above, so netNames is already resolvable when the engine shape arrives.
+      findings.value = (truncated ? (document.findings ?? sc.findings ?? [])
+                                  : (sc.findings ?? [])).map(normalise);
       counts.value = sc.counts ?? {};
       review.value = sc.review ?? "";
       dropped.value = sc.dropped ?? [];
@@ -164,7 +218,13 @@ const Widget = defineComponent({
             }, [
               h("div", { class: "itemhead" }, [
                 h("span", { class: "fid" }, f.id),
-                h("span", { class: `sev ${f.severity}` }, f.severity),
+                // The engine's numeric score rides in the tooltip: it is what the
+                // ranking used, and hiding it entirely would make two findings of the
+                // same label look interchangeable when the list order says they are not.
+                h("span", { class: `sev ${f.severity}`,
+                            title: f.score !== null && f.score !== undefined
+                              ? `severity score ${Number(f.score).toFixed(3)}` : undefined },
+                  f.severity),
                 h("span", { class: "rule" }, f.rule),
               ]),
               h("div", { class: "title" }, f.summary),
