@@ -4,17 +4,31 @@
     <meta charset="utf-8" />
     <title>Faraday board review</title>
     <style>
+      /* KEYED OFF data-theme, NOT prefers-color-scheme.
+         A widget sits on an opaque origin inside a sandboxed iframe, so
+         prefers-color-scheme here answers for the MACHINE — wrong the moment the
+         reader picks the theme their machine is not wearing. board.js sets
+         data-theme from the MCP host context instead, and this follows it, so the
+         widget's chrome and the board it frames always agree.
+
+         Dark on bare :root and light under the attribute, matching tokens.css —
+         the two files describe one widget and must not disagree about which way
+         round the default is.
+
+         The severity colours are NOT redefined here: they are the same three
+         --heat-* tokens the canvas draws findings with, so a chip and the copper
+         it points at cannot end up different reds. */
       :root {
-        --fg: #1c1f24; --muted: #6b7280; --line: #d7dbe0; --card: rgba(0,0,0,.04);
-        --accent: #1d6fd8; --high: #b3261e; --medium: #a4680a; --low: #1a7f4b; --info: #6b7280;
-        --chosen: rgba(29,111,216,.12);
+        --fg: #e7e9ee; --muted: #9aa3b0; --line: #333a44; --card: rgba(255,255,255,.06);
+        --accent: #5aa9ff; --chosen: rgba(90,169,255,.16);
       }
-      @media (prefers-color-scheme: dark) {
-        :root {
-          --fg: #e7e9ee; --muted: #9aa3b0; --line: #333a44; --card: rgba(255,255,255,.06);
-          --accent: #5aa9ff; --high: #ff7a70; --medium: #e0a83a; --low: #52c98a; --info: #9aa3b0;
-          --chosen: rgba(90,169,255,.16);
-        }
+      :root[data-theme="light"] {
+        --fg: #1c1f24; --muted: #6b7280; --line: #d7dbe0; --card: rgba(0,0,0,.04);
+        --accent: #1d6fd8; --chosen: rgba(29,111,216,.12);
+      }
+      :root {
+        --high: var(--heat-high); --medium: var(--heat-med);
+        --low: var(--heat-low); --info: var(--tin);
       }
       * { box-sizing: border-box; }
       /* THE BOARD MUST FILL THE FRAME, and that needs an unbroken height chain.

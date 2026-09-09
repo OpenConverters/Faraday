@@ -13,6 +13,14 @@
 import { createApp, defineComponent, h, ref, computed } from "vue";
 import { App } from "@modelcontextprotocol/ext-apps";
 import BoardView from "../../web/src/components/BoardView.vue";
+// THE PALETTE, or the board draws in nothing. BoardView paints to a canvas, and a
+// canvas cannot inherit CSS — theme.js reads ~30 tokens back with getComputedStyle
+// and hands them to fillStyle. Without this import every one of those reads
+// returned "", Canvas 2D silently IGNORES an invalid fillStyle, and the board came
+// out dark on black with no layers and every finding the same colour. Tokens only,
+// not the web app's style.css: that file's `body`/`*` rules would fight this
+// widget's own shell.
+import "../../web/src/tokens.css";
 
 const app = new App({ name: "Faraday board", version: "0.1.0" });
 
@@ -168,5 +176,30 @@ const Widget = defineComponent({
   },
 });
 
+/**
+ * Wear the skin the HOST is wearing.
+ *
+ * A widget lives on an opaque origin in a sandboxed iframe: it cannot see the page
+ * around it, and `prefers-color-scheme` inside it answers for the MACHINE — which
+ * is the wrong answer the moment the reader picks the theme the machine is not
+ * wearing. The MCP host sends its theme as host context for exactly this reason,
+ * and Moebius has been sending it all along with nothing in the pool reading it.
+ *
+ * Setting `data-theme` is all it takes: tokens.css keys the light palette off
+ * `:root[data-theme="light"]`, and theme.js's own MutationObserver watches that
+ * same attribute — so the board repaints itself with no extra wiring here. It also
+ * carries `color-scheme`, which palette() reads to decide which way "hotter"
+ * points on the risk ramp: white-hot over a dark board, ember-dark over a pale one.
+ */
+function wearHostTheme(theme) {
+  // Default to dark rather than to the machine: dark is what tokens.css defines on
+  // bare :root, so an absent or unknown value lands on a palette that exists.
+  document.documentElement.dataset.theme = theme === "light" ? "light" : "dark";
+}
+
 createApp(Widget).mount("#app");
+// Handler before connect(): the host may push context during the handshake, and a
+// late listener misses it — the same reason ontoolresult is registered up top.
+app.onhostcontextchanged = (ctx) => wearHostTheme(ctx?.theme);
 await app.connect();
+wearHostTheme(app.getHostContext()?.theme);
