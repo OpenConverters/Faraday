@@ -3215,7 +3215,7 @@ class Screener {
             // are a gap, which is why the finding states the inference instead
             // of hiding it: either the clamp is 22 mm from the pin, or there
             // is no clamp at the pin at all.
-            f.confidence = "heuristic (clamp role inferred; distance exact)";
+            f.confidence = "heuristic";
             f.coupled_len_mm = w.d_mm;
             f.net_a = -1;
             char buf[640];

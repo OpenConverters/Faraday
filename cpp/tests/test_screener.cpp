@@ -2096,8 +2096,11 @@ TEST_CASE("ESD: a clamp far from its pin is volts, and the number says how many"
     REQUIRE(d != nullptr);
     CHECK((*d)["coupledLenMm"].get<double>() == Approx(15.0).margin(0.2));
     // the distance is exact; the part's ROLE is an inference, and the
-    // finding says so rather than asserting D1 is a TVS
-    CHECK((*d)["confidence"].get<std::string>().find("inferred") != std::string::npos);
+    // finding says so rather than asserting D1 is a TVS. It says so in the
+    // DETAIL: confidence is one of the contract's tiers, and a tier with a
+    // parenthetical made every review carrying this finding unreadable to
+    // Moebius, which refuses an unknown tier rather than guessing one.
+    CHECK((*d)["confidence"] == "heuristic");
     CHECK((*d)["detail"].get<std::string>().find("not actually a clamp") !=
           std::string::npos);
     // 15 mm x 0.8 nH/mm x 30 A/ns = 360 V, stated in the title

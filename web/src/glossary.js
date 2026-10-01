@@ -173,7 +173,7 @@ export const RULES = [
     what: 'The nearest clamp-shaped part (a diode-class part between the net and the return) sits millimetres of track away from the connector pin it would protect, with the resulting overshoot in volts.',
     physics: 'V_at_the_pin = V_clamp + L·di/dt. An IEC 61000-4-2 contact discharge is ~30 A/ns, and track is ~0.8 nH/mm, so every millimetre between pin and clamp is ~24 V the clamp never sees — and anything tapped off in between sees all of it. The part\'s ROLE is inferred from shape: if it is not a clamp, the pin has no protection near the connector, which is the same gap read the other way.',
     fix: 'Put the clamp at the connector pin, before any branch or stub, with the shortest possible track between them.',
-    confidence: 'heuristic (clamp role inferred; distance exact)',
+    confidence: 'heuristic',
   },
   {
     id: 'esd-clamp-return',
