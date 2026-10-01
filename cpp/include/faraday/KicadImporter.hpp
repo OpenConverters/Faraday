@@ -14,6 +14,7 @@
 
 #include <algorithm>
 #include <cmath>
+#include <iterator>
 #include <optional>
 
 namespace faraday {
@@ -253,10 +254,31 @@ inline BoardIR import_kicad(const std::string& text,
         comp.y = at->number_at(2);
         comp.rot_deg = at->children().size() > 3 ? at->number_at(3) : 0.0;
         // v8/9: (property "Reference" "R5" ...); v6/7: (fp_text reference "R5" ...)
+        //
+        // The manufacturer's ordering code, when the designer gave the symbol
+        // a field for it. KiCad has no standard one, so the spellings real
+        // boards use are listed, best first ("MPN" on glasgow and moteus,
+        // "PartNumber" on bms-c1) — never a distributor's stock code (LCSC
+        // "C21120" names a listing, not a part). An empty field, or KiCad's
+        // "~" for one, is absence and stays absent.
+        static const char* const kPartNumberFields[] = {
+            "MPN", "Manufacturer_Part_Number", "Manufacturer Part Number",
+            "PartNumber", "Part Number"};
+        size_t pn_rank = std::size(kPartNumberFields);
         for (const SExpr* p : f->find_all("property"))
             if (p->children().size() > 2) {
-                if (p->atom_at(1) == "Reference") comp.reference = p->atom_at(2);
-                if (p->atom_at(1) == "Value") comp.value = p->atom_at(2);
+                const std::string& key = p->atom_at(1);
+                if (key == "Reference") comp.reference = p->atom_at(2);
+                if (key == "Value") comp.value = p->atom_at(2);
+                for (size_t r = 0; r < pn_rank; ++r)
+                    if (key == kPartNumberFields[r]) {
+                        const std::string& pn = p->atom_at(2);
+                        if (!pn.empty() && pn != "~") {
+                            comp.part_number = pn;
+                            pn_rank = r;
+                        }
+                        break;
+                    }
             }
         for (const SExpr* t : f->find_all("fp_text"))
             if (t->children().size() > 2) {

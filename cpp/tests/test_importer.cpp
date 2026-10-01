@@ -104,6 +104,42 @@ TEST_CASE("board json carries the components the viewer draws and looks up",
     }
 }
 
+// A KiCad symbol field holding the manufacturer's ordering code is the one
+// thing a catalogue can be asked about by name. KiCad has no standard field,
+// so the spellings real boards use are read, best first, and nothing else:
+// a distributor stock code (LCSC) is not a part number.
+TEST_CASE("importer: a kicad part-number field becomes the part number", "[importer]") {
+    auto board = [](const std::string& props) {
+        return std::string(R"((kicad_pcb (version 20240108)
+          (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+          (net 0 "") (net 1 "A")
+          (footprint "Capacitor_SMD:C_0402_1005Metric" (layer "F.Cu") (at 1 2)
+            (property "Reference" "C1") (property "Value" "100n"))") +
+            props + R"(
+            (pad "1" smd rect (at -0.5 0) (size 0.5 0.5) (layers "F.Cu") (net 1 "A"))
+            (pad "2" smd rect (at 0.5 0) (size 0.5 0.5) (layers "F.Cu") (net 1 "A")))
+        ))";
+    };
+    auto pn = [&](const std::string& props) {
+        BoardIR b = import_kicad(board(props), std::nullopt, ImportPurpose::ComponentsOnly);
+        REQUIRE(b.components.size() == 1);
+        CHECK(b.components[0].value == "100n");   // the value is untouched
+        return b.components[0].part_number;
+    };
+    CHECK(pn(R"((property "MPN" "TMK105BJ104KV-F"))") == "TMK105BJ104KV-F");
+    CHECK(pn(R"((property "PartNumber" "CL10B104KC8NNNC"))") == "CL10B104KC8NNNC");
+    // MPN outranks PartNumber whichever comes first in the file
+    CHECK(pn(R"((property "PartNumber" "B") (property "MPN" "A"))") == "A");
+    CHECK(pn(R"((property "MPN" "A") (property "PartNumber" "B"))") == "A");
+    // an empty field, or KiCad's "~", is absence — and a lower-ranked field
+    // that does carry one is then the answer
+    CHECK(pn(R"((property "MPN" "~"))").empty());
+    CHECK(pn(R"((property "MPN" "") (property "PartNumber" "B"))") == "B");
+    // a distributor's stock code is not a part number
+    CHECK(pn(R"((property "LCSC" "C15725"))").empty());
+    CHECK(pn("").empty());
+}
+
 TEST_CASE("importer: no stackup and no user stackup -> loud refusal", "[importer]") {
     std::string txt = R"((kicad_pcb (version 20221018)
       (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
