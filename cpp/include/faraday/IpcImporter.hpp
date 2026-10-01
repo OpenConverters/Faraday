@@ -85,7 +85,8 @@ inline std::optional<double> find_permittivity(const XmlNode& n) {
 
 // user_stackup overrides whatever the file carries, exactly as for KiCad.
 inline BoardIR import_ipc2581(const std::string& text,
-                              std::optional<Stackup> user_stackup = std::nullopt) {
+                              std::optional<Stackup> user_stackup = std::nullopt,
+                              ImportPurpose purpose = ImportPurpose::Screening) {
     XmlNode root = parse_xml(text);
     if (root.name != "IPC-2581")
         throw BoardError("ipc2581: root element is <" + root.name +
@@ -121,8 +122,15 @@ inline BoardIR import_ipc2581(const std::string& text,
     std::vector<const XmlNode*> stack_layers;
     for (const auto* sg : cad->descendants("StackupLayer")) stack_layers.push_back(sg);
 
-    if (user_stackup) {
-        board.stackup = std::move(*user_stackup);
+    if (user_stackup || purpose == ImportPurpose::ComponentsOnly) {
+        // A components-only import reads the copper NAMES exactly as a
+        // user-stackup import does, and never the file's dielectric — which
+        // can refuse (no permittivity) over a number a parts list never uses.
+        if (user_stackup) board.stackup = std::move(*user_stackup);
+        else {
+            board.stackup = Stackup{{}, "none: imported for components only"};
+            board.components_only = true;
+        }
         // copper names still come from the file, in stack order when available
         for (const auto* sl : stack_layers) {
             std::string ref = sl->attr_or("layerOrGroupRef", "");
@@ -179,7 +187,7 @@ inline BoardIR import_ipc2581(const std::string& text,
         throw BoardError("ipc2581: no conductor layers found");
 
     size_t n_cu_stack = board.stackup.copper_indices().size();
-    if (n_cu_stack != board.copper_names.size())
+    if (!board.components_only && n_cu_stack != board.copper_names.size())
         throw BoardError("ipc2581: stackup has " + std::to_string(n_cu_stack) +
                          " copper layers but the board has " +
                          std::to_string(board.copper_names.size()));

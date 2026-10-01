@@ -410,6 +410,11 @@ class Screener {
   public:
     Screener(const BoardIR& board, ScreenerParams params = {})
         : b_(board), p_(params) {
+        if (board.components_only)
+            throw BoardError(
+                "this board was imported for its components only and carries "
+                "no stackup — it cannot be screened. Import it again with a "
+                "stackup (ImportPurpose::Screening).");
         build_layer_models();
         build_sw_nets();
         build_routed_lengths();

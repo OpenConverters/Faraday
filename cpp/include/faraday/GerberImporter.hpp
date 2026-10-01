@@ -446,7 +446,8 @@ inline std::string file_stem_upper(const std::string& name) {
 
 inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
                                  std::optional<Stackup> user_stackup,
-                                 const LayerMap& stated_layers = {}) {
+                                 const LayerMap& stated_layers = {},
+                                 ImportPurpose purpose = ImportPurpose::Screening) {
     std::vector<GerberLayer> coppers;
     std::optional<GerberLayer> profile;
     std::vector<Drill> drills;
@@ -592,6 +593,9 @@ inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
     }
     if (user_stackup) {
         b.stackup = *user_stackup;   // builtin_stackup already stamps "user:"
+    } else if (purpose == ImportPurpose::ComponentsOnly) {
+        b.stackup = Stackup{{}, "none: imported for components only"};
+        b.components_only = true;
     } else {
         throw StackupNeeded(
             "gerber: no stackup — a Gerber set carries no layer thicknesses "
@@ -1373,7 +1377,8 @@ inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
         }
     }
 
-    if ((size_t)b.stackup.copper_indices().size() != coppers.size())
+    if (!b.components_only &&
+        (size_t)b.stackup.copper_indices().size() != coppers.size())
         throw BoardError(
             "gerber: the chosen stackup has " +
             std::to_string(b.stackup.copper_indices().size()) +

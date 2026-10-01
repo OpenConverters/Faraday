@@ -35,6 +35,19 @@ struct StackupNeeded : BoardError {
     int copper_count;
 };
 
+// Why a board is being imported. A stackup decides every impedance and
+// coupling number a SCREEN produces, so for a screen its absence is a question
+// the caller must answer (StackupNeeded). A bill of materials depends on no
+// dielectric at all — the parts on a board are the same whatever it is
+// laminated from — so asking for one there would make the caller invent a
+// stackup only to throw it away, which is exactly the kind of number Faraday
+// refuses to assume.
+//
+// ComponentsOnly imports the copper, pads and components and leaves the
+// stackup EMPTY (no layers, source "none"), and marks the board so: the
+// Screener refuses such a board outright rather than screening on nothing.
+enum class ImportPurpose { Screening, ComponentsOnly };
+
 // ---- Stackup ----
 
 enum class LayerKind { Copper, Dielectric };
@@ -222,6 +235,9 @@ struct BoardIR {
     // Plausible.hpp). Impossible boards throw; these are the merely odd ones,
     // carried into the report so the reader sees them.
     std::vector<std::string> plausibility_notes;
+    // Imported with ImportPurpose::ComponentsOnly: no stackup was asked for,
+    // so `stackup` is empty and nothing may screen this board.
+    bool components_only = false;
 
     const std::string& net_name(int id) const {
         static const std::string unknown = "?";
@@ -290,6 +306,31 @@ inline std::vector<std::pair<std::string, std::string>> parts_without_values(
 
 // ---- JSON (for the web viewer / report) ----
 
+// The pads and the parts, each in ONE place: the report's board carries them
+// for the viewer, and faraday_cli --components-out writes exactly the same two
+// arrays for a bill of materials — the BOM and the board cannot disagree
+// about what a component is called or where it sits.
+inline nlohmann::json pads_json(const BoardIR& b) {
+    nlohmann::json out = nlohmann::json::array();
+    for (const auto& p : b.pads)
+        out.push_back({{"component", p.component}, {"pin", p.pin},
+                       {"net", p.net},
+                       {"x", p.x}, {"y", p.y}, {"w", p.w}, {"h", p.h},
+                       {"th", p.through_hole}, {"cu", p.cu}});
+    return out;
+}
+
+inline nlohmann::json components_json(const BoardIR& b) {
+    nlohmann::json out = nlohmann::json::array();
+    for (const auto& c : b.components)
+        out.push_back({{"ref", c.reference},
+                       {"footprint", c.footprint},
+                       {"partNumber", c.part_number},
+                       {"value", c.value},
+                       {"x", c.x}, {"y", c.y}, {"rot", c.rot_deg}});
+    return out;
+}
+
 inline nlohmann::json to_json(const BoardIR& b) {
     nlohmann::json j;
     j["stackupSource"] = b.stackup.source;
@@ -331,25 +372,14 @@ inline nlohmann::json to_json(const BoardIR& b) {
         }
         j["zones"].push_back(zj);
     }
-    j["pads"] = nlohmann::json::array();
-    for (const auto& p : b.pads)
-        j["pads"].push_back({{"component", p.component}, {"pin", p.pin},
-                             {"net", p.net},
-                             {"x", p.x}, {"y", p.y}, {"w", p.w}, {"h", p.h},
-                             {"th", p.through_hole}, {"cu", p.cu}});
+    j["pads"] = pads_json(b);
     // The parts themselves. Pads already name their component, but the
     // viewer needs the part's own facts — value, footprint, placement — to
     // draw it as a body and to ask a parts catalogue about it. What the
     // export did not carry stays empty here (an Altium ODB++ job carries a
     // part number and no value at all): the viewer says so rather than
     // inventing one.
-    j["components"] = nlohmann::json::array();
-    for (const auto& c : b.components)
-        j["components"].push_back({{"ref", c.reference},
-                                   {"footprint", c.footprint},
-                                   {"partNumber", c.part_number},
-                                   {"value", c.value},
-                                   {"x", c.x}, {"y", c.y}, {"rot", c.rot_deg}});
+    j["components"] = components_json(b);
     j["bbox"] = {b.bbox_x1, b.bbox_y1, b.bbox_x2, b.bbox_y2};
     j["bboxFromOutline"] = b.bbox_from_outline;
     j["approximatedArcs"] = b.approximated_arcs;

@@ -114,6 +114,7 @@ if(FARADAY_BUILD_TESTS)
     add_executable(test_faraday
         tests/test_sexpr.cpp
         tests/test_importer.cpp
+        tests/test_components_only.cpp
         tests/test_tline.cpp
         tests/test_screener.cpp
         tests/test_real_boards.cpp

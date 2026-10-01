@@ -80,7 +80,8 @@ inline XY get_xy(const SExpr& parent, std::string_view child) {
 }  // namespace detail
 
 inline BoardIR import_kicad(const std::string& text,
-                            std::optional<Stackup> user_stackup = std::nullopt) {
+                            std::optional<Stackup> user_stackup = std::nullopt,
+                            ImportPurpose purpose = ImportPurpose::Screening) {
     using detail::XY;
     SExpr root = SExpr::parse(text);
     if (root.name() != "kicad_pcb")
@@ -127,6 +128,12 @@ inline BoardIR import_kicad(const std::string& text,
     const SExpr* file_stackup = setup ? setup->find("stackup") : nullptr;
     if (user_stackup) {
         b.stackup = std::move(*user_stackup);
+    } else if (purpose == ImportPurpose::ComponentsOnly) {
+        // Not even the file's own stackup: parsing it can refuse (a
+        // multi-sublayer dielectric), and a parts list must not fail on a
+        // dielectric it never reads.
+        b.stackup = Stackup{{}, "none: imported for components only"};
+        b.components_only = true;
     } else if (file_stackup) {
         b.stackup = detail::parse_file_stackup(*file_stackup);
     } else {
@@ -138,7 +145,7 @@ inline BoardIR import_kicad(const std::string& text,
             (int)b.copper_names.size());
     }
     size_t n_cu_stack = b.stackup.copper_indices().size();
-    if (n_cu_stack != b.copper_names.size())
+    if (!b.components_only && n_cu_stack != b.copper_names.size())
         throw BoardError("stackup has " + std::to_string(n_cu_stack) +
                          " copper layers but the board has " +
                          std::to_string(b.copper_names.size()));

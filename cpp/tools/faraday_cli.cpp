@@ -3,6 +3,7 @@
 //              [--spice deck.cir] [--manifest deck.json]
 //              [--chassis-gap-mm X] [--chassis-eps-r X] [--return-net NAME]
 //              [--parts-out parts.csv] [--values values.csv]
+//              [--components-out components.json]
 //              [--layer-map L1=1,L2=2,...[,OUTLINE=profile]]
 // Screens the board and prints the ranked findings; writes the full report
 // JSON (board geometry + findings + meta) for the web viewer.
@@ -47,6 +48,12 @@ int main(int argc, char** argv) {
     // writes part numbers and no values at all, so without this a board full
     // of real capacitors has no PDN and no input branch.
     std::string parts_out, values_in;
+    // --components-out: the board's parts and their pads, and NOTHING else —
+    // a bill of materials. It needs no stackup (no part on a board depends on
+    // its dielectric), so the board is imported for its components only and
+    // the screen never runs: the flags that ask for screening output are
+    // refused alongside it rather than silently ignored.
+    std::string components_out;
     faraday::spice::ExportOptions spice_opt;
     // --switch-net NAME (repeatable): screen NAME as a switch node, recorded
     // with switchNodeSource "user" — the CLI face of candidate promotion
@@ -101,6 +108,7 @@ int main(int argc, char** argv) {
             spice_opt.return_net = argv[++i];
         else if (a == "--parts-out" && i + 1 < argc) parts_out = argv[++i];
         else if (a == "--values" && i + 1 < argc) values_in = argv[++i];
+        else if (a == "--components-out" && i + 1 < argc) components_out = argv[++i];
         else board_paths.push_back(a);
     }
     std::string dir_root;   // non-empty → paths become relative to it
@@ -128,6 +136,27 @@ int main(int argc, char** argv) {
         return 2;
     }
 
+    if (!components_out.empty()) {
+        std::vector<std::string> clash;
+        if (!out_path.empty()) clash.push_back("-o");
+        if (!fail_on.empty()) clash.push_back("--fail-on");
+        if (!baseline_path.empty()) clash.push_back("--baseline");
+        if (!fail_on_regression.empty()) clash.push_back("--fail-on-regression");
+        if (!fix_out.empty()) clash.push_back("--fix-stitching");
+        if (!spice_out.empty()) clash.push_back("--spice");
+        if (!manifest_out.empty()) clash.push_back("--manifest");
+        if (!parts_out.empty()) clash.push_back("--parts-out");
+        if (!user_switch_nets.empty()) clash.push_back("--switch-net");
+        if (!clash.empty()) {
+            std::string names;
+            for (const auto& c : clash) names += (names.empty() ? "" : ", ") + c;
+            std::cerr << "faraday: --components-out lists the parts and does not "
+                         "screen the board, so it cannot be combined with "
+                      << names << " — run the screen separately\n";
+            return 2;
+        }
+    }
+
     try {
         std::vector<faraday::gerber::NamedFile> files;
         for (const auto& p : board_paths)
@@ -145,8 +174,10 @@ int main(int argc, char** argv) {
         std::optional<faraday::Stackup> user =
             faraday::resolve_stackup(stackup_name);
         faraday::BoardFormat fmt;
-        faraday::BoardIR board =
-            faraday::import_board_set(files, std::move(user), &fmt, stated_layers);
+        faraday::BoardIR board = faraday::import_board_set(
+            files, std::move(user), &fmt, stated_layers,
+            components_out.empty() ? faraday::ImportPurpose::Screening
+                                   : faraday::ImportPurpose::ComponentsOnly);
         std::cout << "format: " << faraday::format_name(fmt) << "\n";
 
         // Values the export did not carry, before anything reads them.
@@ -161,6 +192,19 @@ int main(int argc, char** argv) {
                           << " skipped — the board already carried a value, "
                              "which always wins)";
             std::cout << "\n";
+        }
+        if (!components_out.empty()) {
+            nlohmann::json doc{{"format", faraday::format_name(fmt)},
+                               {"copperNames", board.copper_names},
+                               {"components", faraday::components_json(board)},
+                               {"pads", faraday::pads_json(board)}};
+            std::ofstream co(components_out);
+            if (!co) throw std::runtime_error("cannot write " + components_out);
+            co << doc.dump(1);
+            std::cout << "components: " << board.components.size() << " part(s), "
+                      << board.pads.size() << " pad(s) -> " << components_out
+                      << " (no screen: a parts list needs no stackup)\n";
+            return 0;
         }
         if (!parts_out.empty()) {
             const auto parts = faraday::parts_without_values(board);

@@ -250,7 +250,8 @@ inline bool is_odb_set(const std::vector<NamedFile>& files) {
 }
 
 inline BoardIR import_odb(const std::vector<NamedFile>& files,
-                          std::optional<Stackup> user_stackup) {
+                          std::optional<Stackup> user_stackup,
+                          ImportPurpose purpose = ImportPurpose::Screening) {
     // locate the tree root via matrix/matrix
     std::string root;
     const std::string* matrix = nullptr;
@@ -352,6 +353,9 @@ inline BoardIR import_odb(const std::vector<NamedFile>& files,
                 std::to_string(b.stackup.copper_indices().size()) +
                 " copper layers but the job has " +
                 std::to_string(coppers.size()));
+    } else if (purpose == ImportPurpose::ComponentsOnly) {
+        b.stackup = Stackup{{}, "none: imported for components only"};
+        b.components_only = true;
     } else {
         throw StackupNeeded(
             "odb: no stackup — ODB++ carries no dielectric thicknesses. This "

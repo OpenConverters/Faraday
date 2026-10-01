@@ -228,6 +228,20 @@ TEST_CASE("a set without a stackup names the copper count", "[gerber]") {
                       Catch::Matchers::ContainsSubstring("default-2layer"));
 }
 
+// A parts list needs no dielectric: the same set that is refused for a screen
+// lists its pads for a BOM, identical to what a screening import produces.
+TEST_CASE("a set without a stackup still lists its pads for a parts list",
+          "[gerber][components-only]") {
+    BoardIR parts = import_board_set(fixture_set(), std::nullopt, nullptr, {},
+                                     ImportPurpose::ComponentsOnly);
+    CHECK(parts.components_only);
+    CHECK(parts.stackup.layers.empty());
+    BoardIR screened = import_board_set(fixture_set(), builtin_stackup("default-2layer"));
+    CHECK(pads_json(parts) == pads_json(screened));
+    CHECK(components_json(parts) == components_json(screened));
+    CHECK(parts.copper_names == screened.copper_names);
+}
+
 TEST_CASE("a lone gerber file gets told it needs the set", "[gerber]") {
     CHECK_THROWS_WITH(import_board(TOP),
                       Catch::Matchers::ContainsSubstring("SET"));

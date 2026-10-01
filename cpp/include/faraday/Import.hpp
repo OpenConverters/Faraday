@@ -93,13 +93,14 @@ inline void gate_plausibility(BoardIR& b) {
 
 inline BoardIR import_board(const std::string& text,
                             std::optional<Stackup> user_stackup = std::nullopt,
-                            BoardFormat* detected = nullptr) {
+                            BoardFormat* detected = nullptr,
+                            ImportPurpose purpose = ImportPurpose::Screening) {
     BoardFormat f = detect_format(text);
     if (detected) *detected = f;
     BoardIR b;
     switch (f) {
-        case BoardFormat::Kicad: b = import_kicad(text, std::move(user_stackup)); break;
-        case BoardFormat::Ipc2581: b = import_ipc2581(text, std::move(user_stackup)); break;
+        case BoardFormat::Kicad: b = import_kicad(text, std::move(user_stackup), purpose); break;
+        case BoardFormat::Ipc2581: b = import_ipc2581(text, std::move(user_stackup), purpose); break;
         case BoardFormat::Hyp: b = import_hyp(text); break;
         default: throw BoardError("import_board: unreachable");
     }
@@ -113,11 +114,12 @@ inline BoardIR import_board(const std::string& text,
 inline BoardIR import_board_set(const std::vector<gerber::NamedFile>& files,
                                 std::optional<Stackup> user_stackup = std::nullopt,
                                 BoardFormat* detected = nullptr,
-                                const gerber::LayerMap& stated_layers = {}) {
+                                const gerber::LayerMap& stated_layers = {},
+                                ImportPurpose purpose = ImportPurpose::Screening) {
     if (files.empty()) throw BoardError("import_board_set: no files");
     if (odb::is_odb_set(files)) {
         if (detected) *detected = BoardFormat::Odb;
-        BoardIR b = odb::import_odb(files, std::move(user_stackup));
+        BoardIR b = odb::import_odb(files, std::move(user_stackup), purpose);
         gate_plausibility(b);
         return b;
     }
@@ -128,20 +130,21 @@ inline BoardIR import_board_set(const std::vector<gerber::NamedFile>& files,
     for (const auto& f : files)
         if (!looks_binary(f.text)) text_files.push_back(f);
     if (text_files.empty())
-        return import_board(files[0].text, std::move(user_stackup), detected);
+        return import_board(files[0].text, std::move(user_stackup), detected, purpose);
     bool any_gerber = false;
     for (const auto& f : text_files)
         any_gerber = any_gerber || gerber::looks_gerber(f.text) ||
                      gerber::looks_excellon(f.text);
     if (text_files.size() == 1 && !any_gerber)
-        return import_board(text_files[0].text, std::move(user_stackup), detected);
+        return import_board(text_files[0].text, std::move(user_stackup), detected, purpose);
     if (!any_gerber)
         throw BoardError(
             "multiple files, none of them Gerber and no ODB++ matrix/matrix — "
             "Faraday takes one KiCad/HyperLynx/IPC-2581 file, a Gerber X2 "
             "set, or an ODB++ job (zip or directory).");
     if (detected) *detected = BoardFormat::GerberSet;
-    BoardIR b = gerber::import_gerber_set(text_files, std::move(user_stackup), stated_layers);
+    BoardIR b = gerber::import_gerber_set(text_files, std::move(user_stackup), stated_layers,
+                                          purpose);
     gate_plausibility(b);
     return b;
 }
