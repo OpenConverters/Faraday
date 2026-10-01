@@ -10,6 +10,11 @@ chat (ABT #664).
     list_findings(review, ...)      filter a completed review by severity, rule or net
     explain_finding(review, id)     one finding in full: mechanism, numbers, remediation
     faraday_capabilities()          what it reads, what it screens, what a stackup is for
+    extract_bom(board)              the board's parts as a BOM — no stackup, no catalogue
+    crossref_board(board, ...)      every part identified and cross-referenced, exactly as
+                                    the web app does it (parts.js + Kelvin, in node);
+                                    compact per line, full detail kept under a handle
+    crossref_line(crossref, ref)    one cross-referenced line in full
 
 THE BOARD DOES NOT LEAVE THE MACHINE. Faraday's whole premise is local analysis, so this
 server is an ADDITIONAL entry point, not a replacement: it reads a path on the host it runs
@@ -24,11 +29,13 @@ Run:
 
 from __future__ import annotations
 
+import hashlib
 import json
 import os
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import uuid
 import zipfile
@@ -103,11 +110,16 @@ SEVERITIES = ("high", "medium", "low", "info")
 # Listed rather than derived because nothing in a report enumerates the rules that did NOT
 # fire, and "what do you screen for" is the question faraday_capabilities exists to answer.
 # smoke.py asserts every rule a corpus review produces is in here, so the list cannot drift
-# silently when the engine grows one — it caught pdn-antiresonance on its first run.
-RULES = ("3w", "cap-via-stub", "commutation-loop", "connector-ground-spread", "coupled-run",
-         "critical-mesh-ground", "dangling-stub", "decoupling-distance", "diff-pair",
-         "diff-skew", "edge-radiation", "no-reference-plane", "pdn-antiresonance",
-         "plane-cavity-mode", "plane-crossing", "sparse-reference", "switch-node", "via-stub")
+# silently when the engine grows one — it caught pdn-antiresonance on its first run. It did NOT
+# catch coupled-bundle, the esd-*, filter-* and y-cap-return rules, which a corpus review fires
+# only some of, or none; so it now also compares this list with every `rule = "..."` literal
+# in cpp/include/faraday.
+RULES = ("3w", "cap-via-stub", "commutation-loop", "connector-ground-spread", "coupled-bundle",
+         "coupled-run", "critical-mesh-ground", "dangling-stub", "decoupling-distance",
+         "diff-pair", "diff-skew", "edge-radiation", "esd-clamp-distance", "esd-clamp-return",
+         "esd-unprotected-pin", "filter-bypass", "filter-io-coupling", "no-reference-plane",
+         "pdn-antiresonance", "plane-cavity-mode", "plane-crossing", "sparse-reference",
+         "switch-node", "via-stub", "y-cap-return")
 # A review is milliseconds, but its report is the object every other tool reads, so it is kept
 # rather than recomputed: a finding id must mean the same thing in explain_finding as it did in
 # the list the caller is reading from.
@@ -782,6 +794,609 @@ def explain_finding(review: str, finding: str) -> CallToolResult:
         # for exactly this finding and got it.
         _findings_payload(review, (_meta_of(review) or {}).get("board") or review,
                           report, [match], dropped=_dropped(report.get("meta") or {})))
+
+
+# --- the parts on the board -------------------------------------------------
+# A bill of materials is a `bom` result under the pipeline contract: N positions, one answer
+# each, every line carrying its reference designator. Both tools below answer in it, so the
+# extracted BOM and its cross-reference read line for line against each other — and against
+# Kirchhoff's select_parts and Heaviside's cross_reference, which answer in the same branch.
+#
+# The parts come from `faraday_cli --components-out`, which imports the board for its
+# components ONLY: a parts list depends on no dielectric, so neither tool asks for a stackup
+# (the screen still does; nothing here screens).
+
+def _board_parts(board: str) -> dict:
+    """The board's components and pads, as the engine reads them.
+
+    {format, copperNames, components: [{ref, footprint, partNumber, value, x, y, rot}],
+     pads: [{component, pin, net, x, y, w, h, th, cu}]} — the same two arrays a review's
+    report carries for the board widget, written by the same serialiser.
+    """
+    with resolved(board, "FARADAY", "board") as fetched, \
+            board_tree(fetched, board) as source, \
+            tempfile.TemporaryDirectory(prefix="faraday-bom-") as work:
+        out = Path(work) / "components.json"
+        proc = subprocess.run([str(_cli()), str(source), "--components-out", str(out)],
+                              capture_output=True, text=True, timeout=REVIEW_TIMEOUT_S)
+        if proc.returncode != 0 or not out.exists():
+            raise ValueError((proc.stderr or proc.stdout or "").strip()
+                             or f"faraday_cli exited {proc.returncode} with no message")
+        return json.loads(out.read_text(encoding="utf-8"))
+
+
+def _duplicate_refs(components: list[dict]) -> list[str]:
+    seen: dict[str, int] = {}
+    for c in components:
+        seen[c.get("ref") or ""] = seen.get(c.get("ref") or "", 0) + 1
+    return [f"{ref or '(no reference)'} appears {n} times on the board"
+            for ref, n in seen.items() if n > 1]
+
+
+def _bom_brief(line: dict) -> str:
+    bits = [f"  {line['ref']:<8}"]
+    bits.append(line["mpn"] if line.get("mpn") else "(no part number)")
+    if line.get("value"):
+        bits.append(f"value {line['value']}")
+    if (line.get("specs") or {}).get("footprint"):
+        bits.append(line["specs"]["footprint"])
+    return "  ".join(bits)
+
+
+@mcp.tool(
+    title="List a board's parts",
+    description=(
+        "The board's components as a bill of materials: reference designator, value, "
+        "footprint and the part number the layout export carries (Altium's ODB++ and KiCad "
+        "MPN fields). Needs no stackup and asks no catalogue. Lines without a part number "
+        "say so; nothing is invented."
+    ),
+    structured_output=False,
+)
+def extract_bom(board: str, top: int = 40) -> CallToolResult:
+    """The parts on a board, line by line.
+
+    Args:
+        board: the layout — a .kicad_pcb / .hyp / IPC-2581 .xml, or an ODB++ / Gerber
+            directory or zip (an Altium project zip with its ODB++ export inside works).
+            A local path, file://, artifact://<id> or an https:// URL.
+        top: how many lines to name in the digest; the payload always carries all of them.
+    """
+    doc = _board_parts(board)
+    components = doc.get("components") or []
+    with_pads = {p.get("component") for p in doc.get("pads") or []}
+    lines = []
+    for c in components:
+        pn = (c.get("partNumber") or "").strip() or None
+        # `exact` here means what the contract says it means — the part on the line IS the
+        # original — because nothing has been substituted: the export names the part. An
+        # `unsourced` line is one whose part the export never named, which is not a lookup
+        # that failed; no lookup happened.
+        line: dict = {"ref": c.get("ref") or "(no reference)",
+                      "status": "exact" if pn else "unsourced",
+                      "mpn": pn}
+        if c.get("value"):
+            line["value"] = c["value"]
+        if c.get("footprint"):
+            line["specs"] = {"footprint": c["footprint"]}
+        notes = []
+        if not pn:
+            notes.append("the export carries no part number for this position"
+                         + (" — only its value" if c.get("value") else ""))
+        if c.get("ref") not in with_pads:
+            notes.append("it has no pads on the board (a mechanical item or a placeholder, "
+                         "not something a catalogue sells)")
+        if notes:
+            line["notes"] = "; ".join(notes)
+        lines.append(line)
+
+    sourced = sum(1 for line in lines if line["mpn"])
+    diagnostics = _duplicate_refs(components)
+    if len(lines) > sourced:
+        diagnostics.append(
+            f"{len(lines) - sourced} of {len(lines)} position(s) carry no part number in the "
+            f"export; crossref_board can still identify those with a value by value and "
+            f"package")
+    payload: dict = {
+        "mode": "bom", "lines": lines, "total": len(lines), "sourced": sourced,
+        "caveat": ("Extracted from the layout file, not sourced: 'exact' means the export "
+                   "itself names the part on that line, as written by the CAD tool. Nothing "
+                   "has been checked against a catalogue — crossref_board does that."),
+    }
+    if diagnostics:
+        payload["diagnostics"] = diagnostics
+    shown = lines[:max(1, int(top))]
+    digest = (f"{len(lines)} component(s) on {display_name(board)} ({doc.get('format')}): "
+              f"{sourced} carry a part number, {len(lines) - sourced} do not.\n"
+              + "\n".join(_bom_brief(line) for line in shown)
+              + (f"\n  … {len(lines) - len(shown)} more lines in the payload"
+                 if len(lines) > len(shown) else "")
+              + "\nAs a BOM line elsewhere: ref_des = ref, original_mpn = mpn (only where one "
+                "is stated), description = value + footprint.")
+    return _result(digest, payload)
+
+
+# --- the cross-reference worker ---------------------------------------------
+# crossref_board identifies and cross-references parts with the Faraday WEB APP's own code —
+# web/src/parts.js and Kelvin's crossref.js — run in node by mcp/crossref.mjs. See that file
+# for why: a Python copy would disagree with the board in the browser within a release.
+#
+# The worker is long-lived (catalogue shards are tens of MB and load once), and it is
+# restarted when any file it loaded changes on disk. It reports that list itself, from its
+# module-resolution hook, so the restart check covers exactly what is running and cannot
+# drift from a list kept by hand on this side.
+
+_xref_proc: subprocess.Popen | None = None
+_xref_lock = threading.Lock()
+_xref_id = 0
+_xref_files: list[str] = []
+_xref_fingerprint: str | None = None
+
+
+def _files_fingerprint(files: list[str]) -> str:
+    digest = hashlib.sha256()
+    for f in sorted(files):
+        digest.update(Path(f).read_bytes())
+    return digest.hexdigest()[:16]
+
+
+def _shard_dir() -> str:
+    shard_dir = os.environ.get("KELVIN_SHARD_DIR", "").strip()
+    if not shard_dir:
+        raise ValueError(
+            "KELVIN_SHARD_DIR is not set -- crossref_board runs the web app's parts pipeline "
+            "over Kelvin's catalogue, and needs the directory holding its manifest.json, "
+            "<family>.kidx shards and <family>.ndjson records (the same set the web app is "
+            "served under /kelvin/).")
+    if not (Path(shard_dir) / "manifest.json").exists() or not list(Path(shard_dir).glob("*.kidx")):
+        raise ValueError(f"KELVIN_SHARD_DIR={shard_dir} holds no manifest.json and .kidx shards")
+    return shard_dir
+
+
+def _xref_start() -> tuple[subprocess.Popen, dict]:
+    node = shutil.which("node")
+    if not node:
+        raise RuntimeError("node is not on PATH -- crossref_board runs the web app's own "
+                           "JavaScript in it")
+    proc = subprocess.Popen(
+        [node, str(Path(__file__).parent / "crossref.mjs"), "--shards", _shard_dir()],
+        stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=None, text=True, bufsize=1)
+    hello = proc.stdout.readline()
+    handshake = json.loads(hello) if hello else {}
+    if not handshake.get("ready"):
+        proc.kill()
+        raise RuntimeError("the cross-reference worker did not start (see its stderr above)")
+    # The worker hashed what it loaded; hash the same files again here. A difference means
+    # they changed while it was starting, and it is not running what is on disk.
+    if _files_fingerprint(handshake["files"]) != handshake.get("fingerprint"):
+        proc.kill()
+        raise RuntimeError("the cross-reference worker's sources changed while it started; "
+                           "try again")
+    return proc, handshake
+
+
+def _xref(request: dict) -> dict:
+    """One round-trip with the worker; (re)started when it died or its sources changed."""
+    global _xref_proc, _xref_id, _xref_files, _xref_fingerprint
+    with _xref_lock:
+        alive = _xref_proc is not None and _xref_proc.poll() is None
+        if alive and _files_fingerprint(_xref_files) != _xref_fingerprint:
+            _xref_proc.terminate()
+            try:
+                _xref_proc.wait(timeout=10)
+            except subprocess.TimeoutExpired:                   # pragma: no cover
+                _xref_proc.kill()
+            alive = False
+        if not alive:
+            _xref_proc, hello = _xref_start()
+            _xref_files, _xref_fingerprint = hello["files"], hello["fingerprint"]
+        _xref_id += 1
+        try:
+            _xref_proc.stdin.write(json.dumps({**request, "id": _xref_id}) + "\n")
+            _xref_proc.stdin.flush()
+            line = _xref_proc.stdout.readline()
+        except (BrokenPipeError, ValueError) as error:
+            _xref_proc = None
+            raise RuntimeError(f"the cross-reference worker died mid-request: {error}") from error
+        if not line:
+            _xref_proc = None
+            raise RuntimeError("the cross-reference worker closed its output (it died)")
+        reply = json.loads(line)
+    if not reply.get("ok"):
+        raise ValueError(reply.get("error") or "cross-reference failed")
+    return reply["result"]
+
+
+# What a contract `candidate` may carry. Anything else Kelvin attaches keeps its meaning under
+# an underscore, which the contract reserves for pipeline-internal fields.
+CANDIDATE_FIELDS = ("mpn", "manufacturer", "specs", "status", "grade", "penalty", "direction",
+                    "footprint", "params", "notes", "margins", "row", "sortKey", "evidence",
+                    "record")
+
+
+def _ranked_candidate(c: dict) -> dict:
+    """One Kelvin cross-reference verdict as the contract's `candidate`."""
+    out: dict = {"mpn": c.get("mpn")}
+    for key, value in c.items():
+        if key == "mpn" or value is None:
+            continue
+        out[key if key in CANDIDATE_FIELDS or key.startswith("_") else f"_{key}"] = value
+    if isinstance(out.get("specs"), dict):
+        out["specs"] = {k: v for k, v in out["specs"].items() if v is not None}
+    return out
+
+
+def _row_candidate(row: dict, match: str, family: str) -> dict:
+    """A catalogue row the board MIGHT be — not ranked, and not a verdict.
+
+    No `status`: the contract's statuses are the ranker's judgement, and nothing judged this
+    row. It matched a part-number substring or the board's value and package, which is a
+    different and weaker fact, carried in `_match`.
+    """
+    specs = {k: v for k, v in row.items() if k not in ("mpn", "manufacturer") and v is not None}
+    out = {"mpn": row.get("mpn") or "(unnamed)", "specs": specs, "_match": match,
+           "_family": family}
+    if row.get("manufacturer") is not None:
+        out["manufacturer"] = row["manufacturer"]
+    return out
+
+
+_MATCH_WORDS = {
+    "exact": "identified by its part number",
+    "substring": "only partial part-number matches",
+    "value-package": "identified only by value and package",
+    "none": "not in the catalogue",
+    "unlookupable": "the board does not say what it is",
+    "not-a-part": "not a catalogue part",
+}
+
+
+_IDENTIFIED_EXACTLY = "identified exactly as"
+
+
+def _crossref_line(w: dict) -> tuple[dict, str, list[str]]:
+    """One worker line as a contract `bomLine`, its digest row, and its diagnostics."""
+    line: dict = {"ref": w["ref"], "status": "unsourced", "mpn": None}
+    if w.get("value"):
+        line["value"] = w["value"]
+    specs = {k: w[k] for k in ("footprint", "package") if w.get(k)}
+    if specs:
+        line["specs"] = specs
+    ident = {"match": w["match"]}
+    for key in ("family", "query", "tried", "families", "outsideSuggestedFamilies",
+                "parsedValue"):
+        if w.get(key) not in (None, [], ""):
+            ident[key] = w[key]
+    line["_identification"] = ident
+    diags: list[str] = []
+    notes: list[str] = []
+    match = w["match"]
+    board_said = w.get("partNumber") or w.get("value") or "nothing"
+
+    if match == "exact":
+        orig = w.get("original") or {}
+        line["originalMpn"] = orig.get("mpn")
+        line["kind"] = w["family"]
+        line["_originalManufacturer"] = orig.get("manufacturer")
+        notes.append(f"{_IDENTIFIED_EXACTLY} {orig.get('mpn')} ({orig.get('manufacturer')}, "
+                     f"{w['family']}) from '{w.get('query')}'"
+                     + (" — outside the families its refdes and footprint suggest"
+                        if w.get("outsideSuggestedFamilies") else ""))
+        x = w.get("xref") or {}
+        if w.get("xrefError"):
+            notes.append(f"the cross-reference failed: {w['xrefError']}")
+            diags.append(f"{w['ref']}: cross-reference failed: {w['xrefError']}")
+        elif x.get("skipped"):
+            notes.append(f"not cross-referenced: {x['skipped']}")
+        else:
+            ranked = x.get("ranked") or []
+            line["candidates"] = [_ranked_candidate(c) for c in ranked]
+            line["_crossref"] = {k: x[k] for k in ("poolTotal", "poolScored", "origVerified",
+                                                   "missingKeys", "targetsFromCatalogue")
+                                 if k in x}
+            line["_crossref"]["targets"] = len(x.get("targets") or [])
+            if not ranked:
+                line["status"] = "no_substitute"
+                notes.append(f"no candidate from {len(x.get('targets') or [])} target "
+                             f"manufacturer(s) survived the ranker's pre-gate "
+                             f"({x.get('poolTotal', 0)} in the pool)")
+            else:
+                best = ranked[0]
+                line["status"] = best.get("status") or "no_substitute"
+                if line["status"] in ("recommended", "partial"):
+                    line["mpn"] = best.get("mpn")
+                    line["manufacturer"] = best.get("manufacturer")
+            if x.get("origVerified") is False:
+                notes.append(f"the original's own record does not state "
+                             f"{', '.join(x.get('missing') or [])}, so no candidate can be "
+                             f"'recommended'")
+            if x.get("unknownTargets"):
+                notes.append(f"not a manufacturer of {w['family']} parts in the catalogue: "
+                             f"{', '.join(x['unknownTargets'])}")
+        digest = f"{w['ref']}: {orig.get('mpn')} ({orig.get('manufacturer')}) -> " + (
+            f"{line['mpn']} ({line.get('manufacturer')}) {line['status']}"
+            + (f"/{(x.get('ranked') or [{}])[0].get('grade')}"
+               if (x.get("ranked") or [{}])[0].get("grade") else "")
+            if line.get("mpn") else
+            (f"no substitute ({len(line.get('candidates') or [])} ranked)"
+             if line["status"] == "no_substitute" else "not cross-referenced"))
+    else:
+        if w.get("partNumber"):
+            line["originalMpn"] = w["partNumber"]
+        cands = []
+        for h in w.get("near") or []:
+            cands.append(_row_candidate(h["row"], "substring", h["family"]))
+        by_value = w.get("byValue") or {}
+        for row in by_value.get("rows") or []:
+            cands.append(_row_candidate(row, "value-package", by_value["family"]))
+        if cands:
+            line["candidates"] = cands
+        if match == "value-package":
+            line["kind"] = by_value["family"]
+        if match in ("substring", "value-package"):
+            bits = []
+            if w.get("near"):
+                bits.append(f"{w.get('nearTotal')} catalogue part(s) contain "
+                            f"{' or '.join(repr(t) for t in w.get('tried') or [])}")
+            if by_value.get("matched"):
+                bits.append(f"{by_value['matched']} {by_value['family']}(s) match its value "
+                            f"and package")
+            notes.append("not cross-referenced — the board does not say which part this is: "
+                         + "; ".join(bits) + " (listed as candidates, unranked)")
+        else:
+            notes.append(f"{_MATCH_WORDS[match]}: {w.get('why')}")
+        if w.get("lookupError"):
+            notes.append(f"a catalogue lookup failed: {w['lookupError']}")
+            diags.append(f"{w['ref']}: catalogue lookup failed: {w['lookupError']}")
+        digest = f"{w['ref']}: {board_said} — {_MATCH_WORDS[match]}"
+        if match in ("substring", "value-package"):
+            digest += f" ({len(cands)} candidate(s) listed, not cross-referenced)"
+    line["notes"] = "; ".join(notes)
+    return line, digest, diags
+
+
+# --- what a whole-board cross-reference carries inline ----------------------
+# Every line in full is too much for one answer: a 189-part board came back at 691,751
+# characters — 636 ranked candidates at ~900 characters each, two thirds of it spec tables,
+# parameter verdicts and ranker notes — and clients refuse a result that size outright (see
+# review_board: the model then sees nothing). So the payload carries every LINE but a compact
+# form of each, and the full lines are stored on disk under a handle, the way review_board
+# keeps its report: crossref_line(crossref, ref) returns one line exactly as the ranker left
+# it. Nothing is recomputed to answer that, so the detail cannot disagree with the summary.
+#
+# What the compact form keeps, per line: the identification (match, family), the original,
+# the best substitute and its status, every ranked candidate's mpn / manufacturer / status /
+# grade / penalty / direction; for the BEST candidate also the checks that did not pass and
+# the ranker's notes. What it holds back: the candidates' spec tables, the checks that passed
+# (counted in `_paramsPassed`), the alternates' notes, and unranked catalogue rows beyond
+# INLINE_ROWS per line. `caveat` says so in every payload.
+
+CROSSREF_INLINE_ROWS = 3        # unranked catalogue rows per line
+CROSSREF_INLINE_RANKED = 2      # ranked candidates per line: the best + one alternate
+_IDENT_INLINE = ("match", "family", "parsedValue")
+
+
+def _inline_ranked(c: dict, best: bool) -> dict:
+    out: dict = {"mpn": c["mpn"]}
+    for key in ("manufacturer", "status", "grade"):
+        if c.get(key) is not None:
+            out[key] = c[key]
+    if best:
+        if c.get("direction") is not None:
+            out["direction"] = c["direction"]
+        if isinstance(c.get("penalty"), (int, float)):
+            out["penalty"] = round(float(c["penalty"]), 3)
+        params = c.get("params") or []
+        failing = [p for p in params if p.get("verdict") != "pass"]
+        if failing:
+            out["params"] = failing
+        out["_paramsPassed"] = len(params) - len(failing)
+        if c.get("notes"):
+            out["notes"] = c["notes"]
+    return out
+
+
+def _inline_line(line: dict) -> dict:
+    """A stored cross-reference line, compacted for the payload (see the block above)."""
+    out = {k: v for k, v in line.items()
+           if k not in ("candidates", "_identification", "_crossref", "notes")}
+    # The identification sentence restates originalMpn, _originalManufacturer and kind, which
+    # the line already carries; the rest of the notes are what only the notes say.
+    notes = [n for n in (line.get("notes") or "").split("; ")
+             if n and not n.startswith(_IDENTIFIED_EXACTLY)]
+    if notes:
+        out["notes"] = "; ".join(notes)
+    ident = line.get("_identification") or {}
+    out["_identification"] = {k: ident[k] for k in _IDENT_INLINE if k in ident}
+    if ident.get("family") and ident["family"] == line.get("kind"):
+        del out["_identification"]["family"]         # `kind` already says it
+    if ident.get("outsideSuggestedFamilies"):
+        out["_identification"]["outsideSuggestedFamilies"] = True
+    if ident.get("query") and ident["query"] != line.get("originalMpn"):
+        out["_identification"]["query"] = ident["query"]
+    if "_crossref" in line and line["status"] == "no_substitute":
+        out["_crossref"] = {k: line["_crossref"][k] for k in ("poolTotal", "targets")
+                            if k in line["_crossref"]}
+    cands = line.get("candidates") or []
+    if not cands:
+        return out
+    if "status" in cands[0]:                       # ranked by Kelvin
+        out["candidates"] = [_inline_ranked(c, i == 0)
+                             for i, c in enumerate(cands[:CROSSREF_INLINE_RANKED])]
+        if len(cands) > CROSSREF_INLINE_RANKED:
+            out["_candidatesHeldBack"] = len(cands) - CROSSREF_INLINE_RANKED
+    else:                                          # unranked catalogue rows
+        out["candidates"] = [
+            {k: c[k] for k in ("mpn", "manufacturer", "_match") if k in c}
+            for c in cands[:CROSSREF_INLINE_ROWS]]
+        if len(cands) > CROSSREF_INLINE_ROWS:
+            out["_rowsHeldBack"] = len(cands) - CROSSREF_INLINE_ROWS
+    return out
+
+
+def _crossref_dir(crossref: str) -> Path:
+    return REVIEW_ROOT / f"crossref-{crossref}"
+
+
+@mcp.tool(
+    title="Cross-reference a board's parts",
+    description=(
+        "Identify every component on a board in the Kelvin catalogue and rank substitutes "
+        "for each — deterministic, no LLM, exactly what the Faraday web app does when a "
+        "board is loaded: part-number match first (exact or partial), value and package "
+        "otherwise, then Kelvin's own cross-reference ranker. Each line says how sure the "
+        "identification is; parts the catalogue cannot identify are reported, not dropped."
+    ),
+    structured_output=False,
+)
+def crossref_board(board: str, target_manufacturers: list[str] | None = None,
+                   same_type: bool = True, max_results: int = 5,
+                   top: int = 30) -> CallToolResult:
+    """Every part on the board, identified and cross-referenced.
+
+    Args:
+        board: the layout, as for extract_bom (no stackup needed).
+        target_manufacturers: substitutes only from these vendors (matched to the
+            catalogue's own spelling, accents and case ignored). Omitted: every vendor but
+            the original's own, as the web app's parts panel does.
+        same_type: keep substitutes of the original's own type (technology / device type).
+        max_results: ranked substitutes kept per line (the panel shows 12; the payload is
+            per line, so a board of 200 parts carries 200 times this).
+        top: how many lines to name in the digest; the payload carries every line.
+    """
+    doc = _board_parts(board)
+    max_results = max(1, min(int(max_results), 12))
+    result = _xref({"op": "crossref_board", "components": doc.get("components") or [],
+                    "pads": doc.get("pads") or [],
+                    "targets": [t for t in (target_manufacturers or []) if t and t.strip()],
+                    "sameType": bool(same_type), "maxResults": max_results,
+                    "listed": max_results})
+    lines, digests, diagnostics = [], [], list(result.get("diagnostics") or [])
+    for w in result["lines"]:
+        line, digest, diags = _crossref_line(w)
+        lines.append(line)
+        digests.append(digest)
+        diagnostics += diags
+
+    matches: dict[str, int] = {}
+    for w in result["lines"]:
+        matches[w["match"]] = matches.get(w["match"], 0) + 1
+    statuses: dict[str, int] = {}
+    for line in lines:
+        statuses[line["status"]] = statuses.get(line["status"], 0) + 1
+    sourced = sum(1 for line in lines if line["mpn"])
+    targets = [t for t in (target_manufacturers or []) if t and t.strip()]
+    crossref = uuid.uuid4().hex[:12]
+    caveat = (
+        "Deterministic catalogue cross-reference (Kelvin's ranker), run the way the "
+        "Faraday web app runs it. Only lines identified EXACTLY by part number were "
+        "cross-referenced; a line matched by value and package, or by a partial part "
+        "number, lists the catalogue parts it might be — unranked — because the board "
+        "does not say which one it is. 'mpn' on a line is the best-ranked substitute when "
+        f"Kelvin rates it recommended or partial; each line keeps at most {max_results} "
+        "ranked candidates. COMPACT: held back from this payload are every candidate's "
+        "spec table; the best candidate's passed checks (counted in _paramsPassed — its "
+        "`params` lists only the checks that did not pass); the alternates' checks, notes, "
+        "penalty and direction; ranked candidates beyond the best "
+        f"{CROSSREF_INLINE_RANKED} (counted in _candidatesHeldBack); unranked catalogue rows "
+        f"beyond {CROSSREF_INLINE_ROWS} per line (counted in _rowsHeldBack); and the "
+        "identification's search trail and pool statistics. "
+        f"crossref_line(crossref='{crossref}', ref=<ref>) returns any line in full.")
+    payload: dict = {"mode": "bom", "lines": [_inline_line(line) for line in lines],
+                     "total": len(lines), "sourced": sourced, "caveat": caveat}
+    if len(targets) == 1:
+        payload["targetManufacturer"] = targets[0]
+    if diagnostics:
+        payload["diagnostics"] = diagnostics
+
+    # The full lines, kept for crossref_line. Same order, same statuses: the payload above is
+    # a projection of exactly this list.
+    out_dir = _crossref_dir(crossref)
+    out_dir.mkdir(parents=True, exist_ok=True)
+    (out_dir / "crossref.json").write_text(json.dumps({
+        "crossref": crossref, "board": str(board), "targets": targets,
+        "sameType": bool(same_type), "maxResults": max_results,
+        "full": {**payload, "lines": lines,
+                 "caveat": caveat.split(" COMPACT:")[0]},
+    }), encoding="utf-8")
+
+    order = ("exact", "value-package", "substring", "none", "unlookupable", "not-a-part")
+    head = (f"{len(lines)} component(s) on {display_name(board)}: "
+            + ", ".join(f"{matches[m]} {_MATCH_WORDS[m]}" for m in order if matches.get(m))
+            + f".\nCross-reference: {sourced} line(s) carry a substitute ("
+            + ", ".join(f"{n} {s}" for s, n in sorted(statuses.items())) + ")"
+            + (f", targets {', '.join(targets)}" if targets
+               else ", targets: every vendor but the original's own")
+            + ".")
+    shown = digests[:max(1, int(top))]
+    return _result(
+        head + "\n" + "\n".join("  " + d for d in shown)
+        + (f"\n  … {len(digests) - len(shown)} more lines in the payload"
+           if len(digests) > len(shown) else "")
+        + ("\n" + "\n".join(f"  ! {d}" for d in diagnostics[:10]) if diagnostics else "")
+        + f"\n(crossref {crossref} — crossref_line(crossref, ref) returns one line in full: "
+          f"spec tables, every check, every note)",
+        payload)
+
+
+@mcp.tool(
+    title="One cross-referenced line in full",
+    description=(
+        "One line of a completed crossref_board, exactly as the ranker left it: every "
+        "candidate's spec table, every parameter check and every note. crossref_board's "
+        "payload is compact on purpose; this is where its detail lives."
+    ),
+    structured_output=False,
+)
+def crossref_line(crossref: str, ref: str) -> CallToolResult:
+    """One position of a stored cross-reference.
+
+    Args:
+        crossref: the id crossref_board returned.
+        ref: the reference designator, e.g. 'C12'.
+    """
+    path = _crossref_dir(crossref) / "crossref.json"
+    if not path.exists():
+        raise ValueError(
+            f"no cross-reference {crossref!r} -- it was never run here, or its directory was "
+            f"removed from {REVIEW_ROOT}. Run crossref_board again.")
+    stored = json.loads(path.read_text(encoding="utf-8"))
+    full = stored["full"]
+    found = [line for line in full["lines"] if line["ref"] == ref]
+    if not found:
+        refs = [line["ref"] for line in full["lines"]]
+        raise ValueError(f"no line {ref!r} in cross-reference {crossref} — it holds "
+                         f"{len(refs)} line(s): {', '.join(refs[:20])}"
+                         + (" …" if len(refs) > 20 else ""))
+    # A reference designator should be unique; when the board repeats one, every line that
+    # carries it is returned rather than the first silently standing for all of them.
+    payload: dict = {"mode": "bom", "lines": found, "total": len(found),
+                     "sourced": sum(1 for line in found if line["mpn"]),
+                     "caveat": full["caveat"]}
+    if full.get("targetManufacturer"):
+        payload["targetManufacturer"] = full["targetManufacturer"]
+    line = found[0]
+    cands = line.get("candidates") or []
+    listing = []
+    for c in cands:
+        bits = [f"  {c['mpn']} ({c.get('manufacturer')})"]
+        if c.get("status"):
+            bits.append(f"{c['status']}/{c.get('grade')} penalty {c.get('penalty')}")
+            off = [f"{p['name']} {p['verdict']}" for p in c.get("params") or []
+                   if p.get("verdict") != "pass"]
+            if off:
+                bits.append("; ".join(off))
+        else:
+            bits.append(f"unranked, matched by {c.get('_match')}")
+        listing.append("  ".join(bits) + "".join(f"\n      - {n}" for n in c.get("notes") or []))
+    return _result(
+        f"{ref} on {display_name(stored['board'])}: {line['status']}"
+        + (f", original {line['originalMpn']}" if line.get("originalMpn") else "")
+        + (f" -> {line['mpn']} ({line.get('manufacturer')})" if line.get("mpn") else "")
+        + (f" [{len(found)} lines carry this reference]" if len(found) > 1 else "")
+        + f"\n{line.get('notes') or ''}"
+        + ("\n" + "\n".join(listing) if listing else "\n  (no candidates)"),
+        payload)
 
 
 # --- the MCP Apps UI resource -----------------------------------------------
