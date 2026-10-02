@@ -117,11 +117,19 @@ A review takes **tens of milliseconds**, so these are ordinary blocking tools �
 does not.) The report is still kept on disk per review, because a finding id has to mean the
 same thing in `explain_finding` as it did in the list the caller is reading from.
 
-Two refusals are deliberate:
+One assumption is made, and said first; one refusal is deliberate:
 
-- **A board with no stackup is refused, not assumed.** The dielectric decides every impedance
-  and coupling number in the report, so the engine names the copper count and the builtin that
-  fits (`default-2layer`) rather than guessing. The tool passes that message through verbatim.
+- **A board with no stackup is reviewed on an assumed one, loudly.** `review_board`'s
+  `stackup` defaults to `auto` (CLI `--stackup auto`): the file's own stackup if it carries
+  one, else the builtin `default-<N>layer` for the N copper layers the importer counted off the
+  board. The layer count is a fact of the board; the dielectric is assumed, and it decides every
+  impedance and coupling number in the report — so the engine stamps the source
+  `assumed:default-<N>layer (N copper layers counted; the file carries no stackup)`, the
+  digest's FIRST line is `ASSUMED STACKUP: screened on …`, and the payload's `caveat` repeats
+  it. An explicit stackup (`default-<N>layer`, a custom stackup `.json` path) wins over the
+  file and is never reported as assumed; a copper count with no builtin is refused, naming the
+  count. `stackup='none'` restores the refusal (the engine names the copper count and the
+  builtin that fits).
 - **An unknown rule or severity names the real ones.** A filter that silently matches nothing
   reads exactly like a clean board.
 
@@ -167,6 +175,8 @@ against the contract (Draft 2020-12).
 Screens a real corpus board (the MPPT converter, 88 nets, 1023 segments) with the real engine
 and asserts the answers are the engine's: that a converter board finds its commutation loop,
 that the severity tally matches the findings, that the dropped-by-cap count is reported, that
+a board with no stackup is reviewed on the assumed `default-2layer` with the assumption in the
+digest's first line and the caveat (and refused under `stackup='none'`), that
 filters refuse unknown rules and severities by naming the real ones, that a review persists
 and an unknown one is refused rather than answered empty, that capabilities names exactly the
 rules the engine's source can fire — then extracts and cross-references the parts of

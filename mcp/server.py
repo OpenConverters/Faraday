@@ -405,9 +405,8 @@ def _findings_payload(review: str, board: str, report: dict, findings: list[dict
         # Geometry screening, never a compliance statement. Explicit for the same reason the
         # contract makes it explicit on a verdict: silence would read as 'established defect'.
         "provisional": True,
-        **({"caveat": f"{held_back} further finding(s) are not in this payload — "
-                      f"list_findings(review='{review}') returns them, filtered."}
-           if held_back > 0 else {}),
+        **({"caveat": " ".join(caveats)} if (caveats := _payload_caveats(
+            report, review, held_back)) else {}),
         # counts describes the REVIEW; `reported` describes this payload. They differ when a
         # payload is truncated, and that difference is how the widget knows to draw from the
         # report rather than from a list that names five findings on a board with two hundred.
@@ -416,6 +415,35 @@ def _findings_payload(review: str, board: str, report: dict, findings: list[dict
         "dropped": dropped or [],
         "findings": [_contract_finding(f, names, copper) for f in findings],
     }
+
+
+def _stackup_assumed(report: dict) -> str:
+    """The engine's stackup source when the dielectric was ASSUMED, else ''.
+
+    review_board passes --stackup auto: a board whose file carries no stackup is screened on
+    default-<N>layer for the N copper layers the importer counted, and the engine stamps the
+    source "assumed:default-<N>layer (N copper layers counted; the file carries no stackup)".
+    Every impedance, coupling and dB figure rests on that dielectric, so it is said first.
+    """
+    source = str((report.get("board") or {}).get("stackupSource")
+                 or (report.get("meta") or {}).get("stackupSource") or "")
+    return source if source.startswith("assumed:") else ""
+
+
+def _stackup_warning(source: str) -> str:
+    return (f"ASSUMED STACKUP: screened on {source}. Every impedance, coupling and dB figure "
+            f"rests on this assumed dielectric — pass the real stackup to review_board to "
+            f"replace it.")
+
+
+def _payload_caveats(report: dict, review: str, held_back: int) -> list[str]:
+    caveats = []
+    if assumed := _stackup_assumed(report):
+        caveats.append(_stackup_warning(assumed))
+    if held_back > 0:
+        caveats.append(f"{held_back} further finding(s) are not in this payload — "
+                       f"list_findings(review='{review}') returns them, filtered.")
+    return caveats
 
 
 def _truncation_note(meta: dict) -> str:
@@ -463,9 +491,11 @@ def faraday_capabilities() -> CallToolResult:
         "radiation, and — for converters — the switch node and the commutation loop whose "
         "enclosed area dominates emissions.\n"
         "Formats (detected from CONTENT, not filename): " + "; ".join(formats) + ".\n"
-        "A stackup is required when the file does not carry one: pass stackup='default-2layer' "
-        "or 'default-<N>layer' matching the board's copper count. Faraday never assumes one — "
-        "the dielectric decides every impedance and coupling number in the report.\n"
+        "A board whose file carries no stackup is screened on default-<N>layer for the N "
+        "copper layers counted off the board, and the review says so first: the dielectric "
+        "is ASSUMED and decides every impedance and coupling number in the report. Pass the "
+        "real stackup (stackup='default-2layer', 'default-<N>layer' or a custom stackup JSON "
+        "path) to replace it, or stackup='none' to have such a board refused instead.\n"
         "The board is read from a path on THIS machine and never leaves it.",
         # A `catalogue` result: what this pipeline can answer about. Rules, formats and
         # stackups are three different KINDS of thing and each item says which it is —
@@ -476,7 +506,7 @@ def faraday_capabilities() -> CallToolResult:
              + [{"name": name, "kind": "format", "detail": detail}
                 for name, detail in formats.items()]
              + [{"name": s, "kind": "stackup"} for s in
-                ("default-2layer", "default-4layer", "default-<N>layer")]
+                ("auto", "none", "default-2layer", "default-4layer", "default-<N>layer")]
              + [{"name": s, "kind": "severity"} for s in SEVERITIES]),
          "units": "mm for geometry, dB for coupling"})
 
@@ -577,12 +607,15 @@ def board_tree(source: Path, reference: str):
     description=(
         "Screen a PCB layout for EMC and crosstalk risk. Takes a path to a layout file, a "
         "Gerber/ODB++ directory or a zip, and returns the ranked findings plus the board "
-        "itself, rendered with every finding pinned to the copper it concerns."
+        "itself, rendered with every finding pinned to the copper it concerns. A board whose "
+        "file carries no stackup is screened on an ASSUMED default-<N>layer stackup for the "
+        "copper layers it has, and the first line of the answer says so; pass the real "
+        "stackup to replace the assumption."
     ),
     meta=UI_BOARD_META,
     structured_output=False,
 )
-def review_board(board: str, stackup: str | None = None,
+def review_board(board: str, stackup: str = "auto",
                  switch_nets: list[str] | None = None, top: int = 15) -> CallToolResult:
     """Screen a layout.
 
@@ -591,8 +624,10 @@ def review_board(board: str, stackup: str | None = None,
             directory or zip. Give a local path, file://, artifact://<id> (resolved against
             FARADAY_ARTIFACT_BASE) or an https:// URL; the bytes never travel through the
             tool arguments.
-        stackup: 'default-2layer' / 'default-<N>layer' — required when the file carries no
-            stackup of its own. Faraday refuses to assume one.
+        stackup: 'auto' (default): the file's own stackup, else an ASSUMED default-<N>layer
+            for the N copper layers counted, stated in the digest's first line and the
+            payload's caveat. 'default-2layer' / 'default-<N>layer' / a custom stackup .json
+            path overrides the file. 'none': refuse a board that carries no stackup.
         switch_nets: nets to screen as switch nodes when the converter's switching node is
             not detected automatically.
         top: how many findings to name in the digest; the widget always gets all of them.
@@ -605,7 +640,7 @@ def review_board(board: str, stackup: str | None = None,
     with resolved(board, "FARADAY", "board") as fetched, \
             board_tree(fetched, board) as source:
         cmd = [str(_cli()), str(source), "-o", str(report_path)]
-        if stackup:
+        if stackup and stackup != "none":
             cmd += ["--stackup", stackup]
         for net in switch_nets or []:
             cmd += ["--switch-net", net]
@@ -635,6 +670,8 @@ def review_board(board: str, stackup: str | None = None,
               f"{board_meta.get('stackupSource')}"
             + _truncation_note(report.get("meta") or {}))
     names = _net_names(report)
+    if assumed := _stackup_assumed(report):
+        head = _stackup_warning(assumed) + "\n" + head
     listing = "\n".join(_finding_brief(f, names) for f in findings[:max(1, int(top))])
     if len(findings) > top:
         listing += f"\n  … {len(findings) - top} more — list_findings(review='{review}') filters them."

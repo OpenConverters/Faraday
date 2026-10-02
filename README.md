@@ -515,9 +515,14 @@ dielectric — anything else is refused with the reason, never repaired.
 
 ## Stackup policy
 
-Z₀ and coupling depend on the stackup. If the board file carries none, Faraday **refuses** rather
-than silently assuming one — pass `--stackup default-2layer|default-4layer` (CLI) or confirm the
-stackup card (GUI). Every report states the stackup it used.
+Z₀ and coupling depend on the stackup. If the board file carries none, Faraday never assumes one
+*silently*. The CLI with no `--stackup` refuses, naming the copper count. `--stackup auto` (the
+default of the MCP `review_board` tool, and what the web app does when you have not entered one)
+screens on the builtin `default-<N>layer` for the N copper layers counted off the board and stamps
+the source `assumed:default-<N>layer (N copper layers counted; the file carries no stackup)` —
+printed as a WARNING by the CLI, first in the MCP digest and caveat, and as the "assumed stackup"
+button in the GUI. An explicit `--stackup default-<N>layer|stackup.json`, or a stackup the file
+carries, always wins. Every report states the stackup it used.
 
 ## Physics references
 

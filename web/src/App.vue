@@ -428,7 +428,11 @@ async function analyze() {
         customStackup.value = saved
         stackupAssumed.value = false
       } else {
-        stackupChoice.value = 'assumed:' + stackupSuggest.value
+        // "auto": the engine assumes default-<N>layer for the copper count it
+        // counted and stamps the source "assumed:default-<N>layer (N copper
+        // layers counted; the file carries no stackup)" — the same string the
+        // CLI and the MCP review report.
+        stackupChoice.value = 'auto'
         stackupAssumed.value = true
       }
       return analyze()                   // stackupSpec() is now set

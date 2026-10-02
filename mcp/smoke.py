@@ -33,7 +33,8 @@ SKIP_HTTP = "--skip-http" in sys.argv
 FAILURES: list[str] = []
 
 # A real 2-layer MPPT converter board: the case Faraday exists for (a switching converter
-# with a commutation loop), and it carries no stackup, which exercises the refusal too.
+# with a commutation loop), and it carries no stackup, which exercises the assumed stackup
+# (and, with stackup='none', the refusal) too.
 BOARD = _REPO / "corpus" / "mppt-1210-hus.kicad_pcb"
 # A KiCad board whose parts carry MPN fields — some in Kelvin's catalogue, some not — and the
 # ODB++ fixture, whose one resistor carries a value and no part number.
@@ -295,16 +296,34 @@ def main() -> int:
         check("the digest says the board stays local", "never leaves" in text(r))
 
         print("review_board without a stackup the file does not carry")
+        r = S.review_board(str(BOARD))
+        assumed = r.structuredContent
+        assumed_source = ("assumed:default-2layer (2 copper layers counted; "
+                          "the file carries no stackup)")
+        check("a board with no stackup is reviewed on the assumed default for its copper",
+              len(assumed["findings"]) > 10, f"{len(assumed['findings'])} findings")
+        check("the digest's FIRST line says the stackup was assumed, and which",
+              text(r).splitlines()[0].startswith("ASSUMED STACKUP")
+              and assumed_source in text(r).splitlines()[0], text(r).splitlines()[0][:120])
+        check("the payload's caveat carries the assumption",
+              assumed_source in assumed.get("caveat", ""), assumed.get("caveat", "")[:120])
+        errors = [f"{'/'.join(map(str, e.absolute_path))}: {e.message[:160]}"
+                  for e in validator.iter_errors(assumed)]
+        check("the assumed-stackup payload validates against the pipeline contract",
+              not errors, "; ".join(errors[:3]) or MOEBIUS_CONTRACT.name)
         try:
-            S.review_board(str(BOARD))
-            check("a board with no stackup is refused, not assumed", False)
+            S.review_board(str(BOARD), stackup="none")
+            check("stackup='none' still refuses a board with no stackup", False)
         except ValueError as error:
-            check("a board with no stackup is refused, not assumed",
+            check("stackup='none' still refuses a board with no stackup",
                   "stackup" in str(error) and "2layer" in str(error), str(error)[:90])
 
         print("review_board(mppt-1210-hus, default-2layer)")
         r = S.review_board(str(BOARD), stackup="default-2layer")
         payload = r.structuredContent
+        check("an explicit stackup is not reported as assumed",
+              "ASSUMED" not in text(r) and "assumed:" not in payload.get("caveat", ""),
+              text(r).splitlines()[0][:90])
         review = payload["review"]
         findings = payload["findings"]               # the contract projection, for consumers
         # The engine's own report is NOT in the payload (860k characters on a real board, which

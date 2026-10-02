@@ -361,7 +361,8 @@ inline BoardIR import_odb(const std::vector<NamedFile>& files,
             "odb: no stackup — ODB++ carries no dielectric thicknesses. This "
             "job has " + std::to_string(coppers.size()) +
             " copper layers; choose default-" + std::to_string(coppers.size()) +
-            "layer or supply one.",
+            "layer, supply one, or pass 'auto' to screen on that "
+            "builtin as an ASSUMED stackup.",
             (int)coppers.size());
     }
 

@@ -162,6 +162,65 @@ TEST_CASE("importer: no stackup and no user stackup -> loud refusal", "[importer
     CHECK_FALSE(b.bbox_from_outline);  // no Edge.Cuts -> geometry bbox, reported
 }
 
+// A stackup-less board under "auto" is screened on default-<N>layer for the N
+// copper layers the importer COUNTED, and the source says it was assumed —
+// loudly, in the one string every report, digest and UI prints.
+static std::string stackupless_kicad(int n_copper) {
+    std::string layers = "(0 \"F.Cu\" signal)";
+    for (int i = 1; i < n_copper - 1; ++i)
+        layers += " (" + std::to_string(i) + " \"In" + std::to_string(i) +
+                  ".Cu\" signal)";
+    layers += " (31 \"B.Cu\" signal)";
+    return "(kicad_pcb (version 20221018)\n (layers " + layers + ")\n"
+           " (net 0 \"\") (net 1 \"A\") (net 2 \"B\")\n"
+           " (segment (start 0 0) (end 10 0) (width 0.3) (layer \"F.Cu\") (net 1))\n"
+           " (segment (start 0 1) (end 10 1) (width 0.3) (layer \"B.Cu\") (net 2))\n)";
+}
+
+TEST_CASE("importer: stackup 'auto' assumes default-<N>layer for the counted "
+          "copper and says so", "[importer][auto-stackup]") {
+    for (int n : {2, 4}) {
+        CAPTURE(n);
+        const std::string txt = stackupless_kicad(n);
+        // still refused without auto: the assumption is opt-in
+        CHECK_THROWS_AS(import_board_spec(txt, ""), StackupNeeded);
+        BoardIR b = import_board_spec(txt, "auto");
+        const std::string ns = std::to_string(n);
+        CHECK(b.copper_names.size() == (size_t)n);
+        CHECK(b.stackup.copper_indices().size() == (size_t)n);
+        CHECK(b.stackup.source ==
+              "assumed:default-" + ns + "layer (" + ns +
+              " copper layers counted; the file carries no stackup)");
+        // the SAME geometry as the builtin the user could have picked
+        const Stackup ref = builtin_stackup("default-" + ns + "layer");
+        REQUIRE(b.stackup.layers.size() == ref.layers.size());
+        for (size_t i = 0; i < ref.layers.size(); ++i)
+            CHECK(b.stackup.layers[i].thickness_mm == Approx(ref.layers[i].thickness_mm));
+        // and the report carries it verbatim
+        CHECK(analyze_board(b)["meta"]["stackupSource"].get<std::string>() ==
+              b.stackup.source);
+    }
+    // the set entry point (Gerber/ODB/single file) behaves the same
+    BoardIR s = import_board_set_spec({{"b.kicad_pcb", stackupless_kicad(4)}}, "auto");
+    CHECK(s.stackup.source.rfind("assumed:default-4layer (4 copper", 0) == 0);
+}
+
+TEST_CASE("importer: 'auto' never overrides a stackup the file or the caller "
+          "supplied", "[importer][auto-stackup]") {
+    // the file's own stackup wins over the assumption
+    BoardIR f = import_board_spec(read_fixture("fixture_2layer.kicad_pcb"), "auto");
+    CHECK(f.stackup.source == "board-file");
+    // an explicit builtin wins over auto
+    BoardIR e = import_board_spec(stackupless_kicad(4), "default-4layer");
+    CHECK(e.stackup.source == "user:default-4layer");
+    // auto cannot be resolved without a board
+    CHECK_THROWS_WITH(resolve_stackup("auto"),
+                      Catch::Matchers::ContainsSubstring("copper count"));
+    // a copper count with no builtin is refused, naming the count
+    CHECK_THROWS_WITH(assumed_stackup(60),
+                      Catch::Matchers::ContainsSubstring("60 copper layer"));
+}
+
 // A vendor's native database is the single most likely wrong file to be
 // dropped, and it must be named as such. Sniffing it for board signatures
 // found "M48" somewhere in 8.9 MB of OLE2 and reported a drill-format error

@@ -207,21 +207,75 @@ inline Stackup stackup_from_json(const nlohmann::json& j) {
     return s;
 }
 
-// One resolver for every stackup spec a caller can hand us: "" -> none,
-// "{...}" -> custom JSON, anything else -> a builtin name.
+// The stackup Faraday ASSUMES for a board whose file carries none, chosen by
+// the copper count the importer counted off the board. The layer count is a
+// fact of the board; only the dielectric is assumed — so the source says
+// exactly that, and every report, digest and UI that prints the source says it
+// too. Assumed only when the caller asked for it (spec "auto"); never silently.
+inline Stackup assumed_stackup(int n_copper) {
+    const std::string n = std::to_string(n_copper);
+    const std::string name = "default-" + n + "layer";
+    Stackup s;
+    try {
+        s = builtin_stackup(name);
+    } catch (const BoardError& e) {
+        throw BoardError("the board file carries no stackup and the board has " +
+                         n + " copper layer(s), for which Faraday has no "
+                         "builtin stackup to assume (" + e.what() +
+                         "); supply the real stackup.");
+    }
+    s.source = "assumed:" + name + " (" + n +
+               " copper layers counted; the file carries no stackup)";
+    return s;
+}
+
+// "auto": the file's own stackup if it carries one, else assumed_stackup(N).
+// It cannot be resolved without the board, so only the import_*_spec entry
+// points below accept it.
+inline bool is_auto_stackup(const std::string& spec) { return spec == "auto"; }
+
+// One resolver for every stackup spec a caller can hand us: "" -> none (the
+// importer refuses a board that carries no stackup), "{...}" -> custom JSON,
+// anything else -> a builtin name.
 inline std::optional<Stackup> resolve_stackup(const std::string& spec) {
     if (spec.empty()) return std::nullopt;
+    if (is_auto_stackup(spec))
+        throw BoardError("stackup 'auto' depends on the board's copper count; "
+                         "import with import_board_spec/import_board_set_spec");
     if (spec[0] == '{') return stackup_from_json(nlohmann::json::parse(spec));
-    // "assumed:default-4layer" — the SAME builtin, but stamped so the report
-    // never claims a dielectric the user chose. The layer count behind it is
-    // read off the board; only the dielectric is assumed, and a reader of the
-    // exported report has to be able to tell those apart.
-    if (spec.rfind("assumed:", 0) == 0) {
-        Stackup s = builtin_stackup(spec.substr(8));
-        s.source = "assumed:" + spec.substr(8);
-        return s;
-    }
     return builtin_stackup(spec);
+}
+
+// Import with a stackup SPEC (as resolve_stackup takes, plus "auto"). Under
+// "auto" an import refused for want of a stackup is redone on the assumed
+// builtin for the copper count the refusal carries; an explicit spec, or a
+// stackup the file carries, always wins over the assumption.
+inline BoardIR import_board_spec(const std::string& text, const std::string& spec,
+                                 BoardFormat* detected = nullptr,
+                                 ImportPurpose purpose = ImportPurpose::Screening) {
+    if (!is_auto_stackup(spec))
+        return import_board(text, resolve_stackup(spec), detected, purpose);
+    try {
+        return import_board(text, std::nullopt, detected, purpose);
+    } catch (const StackupNeeded& e) {
+        return import_board(text, assumed_stackup(e.copper_count), detected, purpose);
+    }
+}
+
+inline BoardIR import_board_set_spec(const std::vector<gerber::NamedFile>& files,
+                                     const std::string& spec,
+                                     BoardFormat* detected = nullptr,
+                                     const gerber::LayerMap& stated_layers = {},
+                                     ImportPurpose purpose = ImportPurpose::Screening) {
+    if (!is_auto_stackup(spec))
+        return import_board_set(files, resolve_stackup(spec), detected,
+                                stated_layers, purpose);
+    try {
+        return import_board_set(files, std::nullopt, detected, stated_layers, purpose);
+    } catch (const StackupNeeded& e) {
+        return import_board_set(files, assumed_stackup(e.copper_count), detected,
+                                stated_layers, purpose);
+    }
 }
 
 }  // namespace faraday

@@ -602,7 +602,8 @@ inline BoardIR import_gerber_set(const std::vector<NamedFile>& files,
             "and no permittivity. This set has " +
             std::to_string(coppers.size()) +
             " copper layers; choose default-" + std::to_string(coppers.size()) +
-            "layer or supply one.",
+            "layer, supply one, or pass 'auto' to screen on that "
+            "builtin as an ASSUMED stackup.",
             (int)coppers.size());
     }
 

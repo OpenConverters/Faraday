@@ -50,12 +50,10 @@ static std::string stackup_needed_json(const faraday::StackupNeeded& e) {
 
 static std::string analyze(std::string board_text, std::string stackup_name) {
     try {
-        // stackup_name: builtin name, or a full custom stackup as JSON
-        std::optional<faraday::Stackup> user =
-            faraday::resolve_stackup(stackup_name);
+        // stackup_name: "auto", a builtin name, or a full custom stackup as JSON
         faraday::BoardFormat fmt;
         faraday::BoardIR board =
-            faraday::import_board(board_text, std::move(user), &fmt);
+            faraday::import_board_spec(board_text, stackup_name, &fmt);
         g_user_switch_nets.clear();   // new board, new session
         g_fmt = fmt;
         nlohmann::json out = faraday::analyze_board(board);
@@ -79,11 +77,9 @@ static std::string analyze_set(std::string request_json) {
         for (const auto& f : j.at("files"))
             files.push_back({f.at("name").get<std::string>(),
                              f.at("text").get<std::string>()});
-        std::optional<faraday::Stackup> user =
-            faraday::resolve_stackup(j.value("stackup", ""));
         faraday::BoardFormat fmt;
-        faraday::BoardIR board =
-            faraday::import_board_set(files, std::move(user), &fmt);
+        faraday::BoardIR board = faraday::import_board_set_spec(
+            files, j.value("stackup", ""), &fmt);
         g_user_switch_nets.clear();   // new board, new session
         g_fmt = fmt;
         nlohmann::json out = faraday::analyze_board(board);
@@ -221,8 +217,7 @@ static std::string diff_reports_js(std::string base_json, std::string cur_json) 
 // new .kicad_pcb (never mutating anything). KiCad boards only.
 static std::string fix_stitching(std::string board_text, std::string stackup) {
     try {
-        std::optional<faraday::Stackup> user = faraday::resolve_stackup(stackup);
-        faraday::BoardIR board = faraday::import_board(board_text, std::move(user));
+        faraday::BoardIR board = faraday::import_board_spec(board_text, stackup);
         faraday::Screener sc(board);
         faraday::fixes::StitchPlan plan = faraday::fixes::propose_stitching(board, sc);
         nlohmann::json out{{"unstitched", plan.unstitched_seen},

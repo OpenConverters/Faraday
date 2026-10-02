@@ -1,5 +1,5 @@
 // faraday_cli: board.kicad_pcb | gerber-dir/ | file1.gbr file2.gbr ...
-//              [--stackup default-<N>layer] [-o report.json]
+//              [--stackup auto|default-<N>layer|stackup.json] [-o report.json]
 //              [--spice deck.cir] [--manifest deck.json]
 //              [--chassis-gap-mm X] [--chassis-eps-r X] [--return-net NAME]
 //              [--parts-out parts.csv] [--values values.csv]
@@ -128,7 +128,7 @@ int main(int argc, char** argv) {
     }
     if (board_paths.empty()) {
         std::cerr << "usage: faraday_cli <board.kicad_pcb|board.hyp|board.xml> "
-                     "[--stackup default-<N>layer|stackup.json] [-o report.json] "
+                     "[--stackup auto|default-<N>layer|stackup.json] [-o report.json] "
                      "[--fail-on high|medium] [--baseline old.json "
                      "[--fail-on-regression high|medium]] "
                      "[--switch-net NAME]...\n"
@@ -171,14 +171,19 @@ int main(int argc, char** argv) {
         if (stackup_name.size() > 5 &&
             stackup_name.compare(stackup_name.size() - 5, 5, ".json") == 0)
             stackup_name = slurp(stackup_name);
-        std::optional<faraday::Stackup> user =
-            faraday::resolve_stackup(stackup_name);
+        // "auto" = the file's own stackup, else ASSUME default-<N>layer for
+        // the N copper layers counted (stamped "assumed:" in the report).
+        // No --stackup at all keeps the refusal.
         faraday::BoardFormat fmt;
-        faraday::BoardIR board = faraday::import_board_set(
-            files, std::move(user), &fmt, stated_layers,
+        faraday::BoardIR board = faraday::import_board_set_spec(
+            files, stackup_name, &fmt, stated_layers,
             components_out.empty() ? faraday::ImportPurpose::Screening
                                    : faraday::ImportPurpose::ComponentsOnly);
         std::cout << "format: " << faraday::format_name(fmt) << "\n";
+        if (board.stackup.source.rfind("assumed:", 0) == 0)
+            std::cout << "WARNING: stackup " << board.stackup.source
+                      << " — every impedance, coupling and dB figure rests on "
+                         "this assumed dielectric\n";
 
         // Values the export did not carry, before anything reads them.
         if (!values_in.empty()) {
