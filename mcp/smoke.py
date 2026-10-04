@@ -104,24 +104,32 @@ def check_http(port: int, review_dir: str) -> None:
                 async with ClientSession(r, w) as session:
                     await session.initialize()
                     names = [t.name for t in (await session.list_tools()).tools]
-                    with_ui = {t.name for t in (await session.list_tools()).tools
+                    with_ui = {t.name: t.meta["ui/resourceUri"]
+                               for t in (await session.list_tools()).tools
                                if (t.meta or {}).get("ui/resourceUri")}
                     resources = (await session.list_resources()).resources
-                    body = (await session.read_resource(resources[0].uri)).contents[0].text
+                    body = {str(r.uri): len((await session.read_resource(r.uri)).contents[0].text)
+                            for r in resources}
                     out = await session.call_tool(
                         "review_board", {"board": str(BOARD), "stackup": "default-2layer"})
                     review = (out.structuredContent or {}).get("review")
                     report = await session.call_tool(
                         "fetch_report", {"review": review, "path": "board"}) if review else None
-                    return names, with_ui, len(body), out, report
+                    return names, with_ui, body, out, report
 
         names, with_ui, widget_len, out, report = asyncio.run(drive())
         check("the HTTP transport serves the whole tool surface", set(names) == TOOLS,
               f"{len(names)}: " + ", ".join(names))
-        check("the board widget is on every tool that returns findings",
-              with_ui == {"review_board", "list_findings", "explain_finding"},
-              ", ".join(sorted(with_ui)))
-        check("the widget is served over MCP", widget_len > 50_000, f"{widget_len:,} chars")
+        board_ui, table_ui = "ui://faraday/board.html", "ui://faraday/crossref-table.html"
+        check("the board widget is on every tool that returns findings, the cross-reference "
+              "table on crossref_board, and nothing else carries a widget",
+              with_ui == {"review_board": board_ui, "list_findings": board_ui,
+                          "explain_finding": board_ui, "crossref_board": table_ui},
+              ", ".join(f"{k}->{v}" for k, v in sorted(with_ui.items())))
+        check("both widgets are served over MCP",
+              set(widget_len) == {board_ui, table_ui}
+              and all(n > 50_000 for n in widget_len.values()),
+              ", ".join(f"{k} {n:,} chars" for k, n in sorted(widget_len.items())))
         sc = out.structuredContent or {}
         board_doc = ((report.structuredContent or {}).get("document") or {}) if report else {}
         check("a review over HTTP returns its findings, and fetch_report the board",
@@ -489,6 +497,12 @@ def main() -> int:
               'src="http' not in widget and "src='http" not in widget)
         check("the widget carries the web app's own board renderer",
               "boardpane" in widget and "faraday" in widget.lower())
+        table = S.crossref_widget()
+        check("the cross-reference table is self-contained HTML with no external fetch",
+              table.lstrip().startswith("<") and "<script" in table
+              and 'src="http' not in table and "src='http" not in table, f"{len(table):,} bytes")
+        check("the table reads crossref_board's `bom` payload",
+              'mode!=="bom"' in table.replace(" ", "") and "_originalManufacturer" in table)
 
         if SKIP_HTTP:
             print("HTTP transport: SKIPPED (--skip-http)")

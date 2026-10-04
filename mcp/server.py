@@ -54,7 +54,9 @@ PORT = 8407     # Hertz 8400, Kirchhoff 8401, Kelvin 8402, Moebius 8404, Heavisi
 # --- MCP Apps ---------------------------------------------------------------
 UI_RESOURCE_MIME = "text/html;profile=mcp-app"
 UI_BOARD_URI = "ui://faraday/board.html"
-UI_BUNDLES = {UI_BOARD_URI: Path(__file__).parent / "dist" / "board.html"}
+UI_CROSSREF_URI = "ui://faraday/crossref-table.html"
+UI_BUNDLES = {UI_BOARD_URI: Path(__file__).parent / "dist" / "board.html",
+              UI_CROSSREF_URI: Path(__file__).parent / "dist" / "crossref-table.html"}
 
 
 def _ui_meta(uri: str) -> dict:
@@ -64,6 +66,7 @@ def _ui_meta(uri: str) -> dict:
 
 
 UI_BOARD_META = _ui_meta(UI_BOARD_URI)
+UI_CROSSREF_META = _ui_meta(UI_CROSSREF_URI)
 
 
 def assert_widgets_resolve() -> None:
@@ -1273,9 +1276,13 @@ def _crossref_dir(crossref: str) -> Path:
         "for each — deterministic, no LLM, exactly what the Faraday web app does when a "
         "board is loaded: part-number match first (exact or partial), value and package "
         "otherwise, then Kelvin's own cross-reference ranker. Each line says how sure the "
-        "identification is; parts the catalogue cannot identify are reported, not dropped."
+        "identification is; parts the catalogue cannot identify are reported, not dropped. "
+        "The result renders for the user as a sortable, filterable table (one row per group "
+        "of positions with the same answer), so a reply should summarise it — totals and the "
+        "lines worth a look — not re-list it."
     ),
     structured_output=False,
+    meta=UI_CROSSREF_META,
 )
 def crossref_board(board: str, target_manufacturers: list[str] | None = None,
                    same_type: bool = True, max_results: int = 5,
@@ -1456,6 +1463,23 @@ def board_widget() -> str:
             f"{bundle} missing -- build the widget first: cd mcp && npm install && npm run build")
     return bundle.read_text(encoding="utf-8")
 
+
+@mcp.resource(
+    UI_CROSSREF_URI,
+    name="faraday-crossref-table",
+    title="Faraday cross-reference",
+    mime_type=UI_RESOURCE_MIME,
+)
+def crossref_widget() -> str:
+    """crossref_board's result as a table: one row per group of positions that got the same
+    answer, sectioned by status, sortable and filterable; selecting a row reports it back to
+    the model. The table is the tool's result drawn as it is, so the reply does not have to
+    re-type it."""
+    bundle = UI_BUNDLES[UI_CROSSREF_URI]
+    if not bundle.exists():                                        # pragma: no cover
+        raise FileNotFoundError(
+            f"{bundle} missing -- build the widget first: cd mcp && npm install && npm run build")
+    return bundle.read_text(encoding="utf-8")
 
 
 def _auth_middleware(app, prefix: str):

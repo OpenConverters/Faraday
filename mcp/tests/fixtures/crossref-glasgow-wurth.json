@@ -1,0 +1,3513 @@
+{
+ "content": [
+  {
+   "type": "text",
+   "text": "272 component(s) on glasgow.kicad_pcb: 68 identified by its part number, 24 identified only by value and package, 2 only partial part-number matches, 134 not in the catalogue, 6 the board does not say what it is, 38 not a catalogue part.\nCross-reference: 65 line(s) carry a substitute (3 no_substitute, 64 partial, 1 recommended, 204 unsourced), targets Würth Elektronik.\n  TP5: SCL — not a catalogue part\n  TP4: SDA — not a catalogue part\n  FID1: Fiducial_0.75mm_Mask1.5mm — not a catalogue part\n  FID2: Fiducial_0.75mm_Mask1.5mm — not a catalogue part\n  C30: TMK105BJ104KV-F — not in the catalogue\n  R22: RC0402FR-132K2L (YAGEO) -> 560112110087 (Würth Elektronik) partial/minor_review\n  R23: RC0402FR-132K2L (YAGEO) -> 560112110087 (Würth Elektronik) partial/minor_review\n  TP6: CLKREF — not a catalogue part\n  R9: RC0402FR-13100KL (YAGEO) -> 560112110019 (Würth Elektronik) partial/minor_review\n  U1: CY7C68013A-56LTXC — not in the catalogue\n  R33: RC0402FR-1349K9L (YAGEO) -> 560112110136 (Würth Elektronik) partial/minor_review\n  D6: ORH-B36G — not in the catalogue\n  D8: NCD0603W1 — not in the catalogue\n  D5: NCD0603R1 — not in the catalogue\n  D4: NCD0603O1 — not in the catalogue\n  D3: ORH-B36G — not in the catalogue\n  D2: NCD0603W1 — not in the catalogue\n  R14: RC0402FR-132K2L (YAGEO) -> 560112110087 (Würth Elektronik) partial/minor_review\n  R15: 1k — identified only by value and package (5 candidate(s) listed, not cross-referenced)\n  R20: RC0402FR-132K2L (YAGEO) -> 560112110087 (Würth Elektronik) partial/minor_review\n  U27: SN74LVC1T45DCKR — not in the catalogue\n  U26: SN74LVC1T45DCKR — not in the catalogue\n  U17: SN74LVC1T45DCKR — not in the catalogue\n  U10: SN74LVC1T45DCKR — not in the catalogue\n  U9: SN74LVC1T45DCKR — not in the catalogue\n  U6: SN74LVC1T45DCKR — not in the catalogue\n  U22: SN74LVC1T45DCKR — not in the catalogue\n  U24: SN74LVC1T45DCKR — not in the catalogue\n  U25: SN74LVC1T45DCKR — not in the catalogue\n  C57: TMK105BJ104KV-F — not in the catalogue\n  … 242 more lines in the payload\n  ! REF** appears 7 times on the board; the sweep answers per reference designator, so those placements share one answer\n(crossref 5d0ec1c45c67 — crossref_line(crossref, ref) returns one line in full: spec tables, every check, every note)"
+  }
+ ],
+ "structuredContent": {
+  "mode": "bom",
+  "lines": [
+   {
+    "ref": "TP5",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "SCL",
+    "specs": {
+     "footprint": "TestPoint:TestPoint_Pad_D1.0mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "TP4",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "SDA",
+    "specs": {
+     "footprint": "TestPoint:TestPoint_Pad_D1.0mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "FID1",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "Fiducial_0.75mm_Mask1.5mm",
+    "specs": {
+     "footprint": "Fiducial:Fiducial_0.75mm_Mask1.5mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "FID2",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "Fiducial_0.75mm_Mask1.5mm",
+    "specs": {
+     "footprint": "Fiducial:Fiducial_0.75mm_Mask1.5mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "C30",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "R22",
+    "status": "partial",
+    "mpn": "560112110087",
+    "originalMpn": "RC0402FR-132K2L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "2k2",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "R23",
+    "status": "partial",
+    "mpn": "560112110087",
+    "originalMpn": "RC0402FR-132K2L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "2k2",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "TP6",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "CLKREF",
+    "specs": {
+     "footprint": "TestPoint:TestPoint_Pad_D1.0mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "R9",
+    "status": "partial",
+    "mpn": "560112110019",
+    "originalMpn": "RC0402FR-13100KL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "100k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "U1",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "CY7C68013A-56LTXC",
+    "value": "CY7C68013A-56LTX",
+    "specs": {
+     "package": "QFN56"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "R33",
+    "status": "partial",
+    "mpn": "560112110136",
+    "originalMpn": "RC0402FR-1349K9L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "49k9",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "D6",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "ORH-B36G",
+    "value": "BLU",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "D8",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "NCD0603W1",
+    "value": "WHT",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "D5",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "NCD0603R1",
+    "value": "RED",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "D4",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "NCD0603O1",
+    "value": "ORA",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "D3",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "ORH-B36G",
+    "value": "BLU",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "D2",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "NCD0603W1",
+    "value": "WHT",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "R14",
+    "status": "partial",
+    "mpn": "560112110087",
+    "originalMpn": "RC0402FR-132K2L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "2k2",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "R15",
+    "status": "unsourced",
+    "mpn": null,
+    "kind": "resistor",
+    "value": "1k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "R20",
+    "status": "partial",
+    "mpn": "560112110087",
+    "originalMpn": "RC0402FR-132K2L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "2k2",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "U27",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "SN74LVC1T45DCKR",
+    "value": "SN74LVC1T45DCKR",
+    "specs": {
+     "package": "SOT363"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U26",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "SN74LVC1T45DCKR",
+    "value": "SN74LVC1T45DCKR",
+    "specs": {
+     "package": "SOT363"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U17",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "SN74LVC1T45DCKR",
+    "value": "SN74LVC1T45DCKR",
+    "specs": {
+     "package": "SOT363"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U10",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "SN74LVC1T45DCKR",
+    "value": "SN74LVC1T45DCKR",
+    "specs": {
+     "package": "SOT363"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U9",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "SN74LVC1T45DCKR",
+    "value": "SN74LVC1T45DCKR",
+    "specs": {
+     "package": "SOT363"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U6",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "SN74LVC1T45DCKR",
+    "value": "SN74LVC1T45DCKR",
+    "specs": {
+     "package": "SOT363"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U22",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "SN74LVC1T45DCKR",
+    "value": "SN74LVC1T45DCKR",
+    "specs": {
+     "package": "SOT363"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U24",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "SN74LVC1T45DCKR",
+    "value": "SN74LVC1T45DCKR",
+    "specs": {
+     "package": "SOT363"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U25",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "SN74LVC1T45DCKR",
+    "value": "SN74LVC1T45DCKR",
+    "specs": {
+     "package": "SOT363"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C57",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "D1",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "NCD0603G1",
+    "value": "GRN",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "J9",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "Conn_01x08",
+    "specs": {
+     "footprint": "Glasgow:PinSocket_1x08_P1.27mm_Vertical_DNP"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "J6",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "Conn_01x08",
+    "specs": {
+     "footprint": "Glasgow:PinSocket_1x08_P1.27mm_Vertical_DNP"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C82",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "LMK107BJ475KAHT",
+    "kind": "capacitor",
+    "value": "4u7",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "C31",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "LMK107BJ475KAHT",
+    "kind": "capacitor",
+    "value": "4u7",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "C53",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "LMK107BJ475KAHT",
+    "kind": "capacitor",
+    "value": "4u7",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "R28",
+    "status": "partial",
+    "mpn": "560112110137",
+    "originalMpn": "RC0402FR-1359KL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "59k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "value",
+     "lifecycle"
+    ],
+    "_alternates": 3
+   },
+   {
+    "ref": "R27",
+    "status": "partial",
+    "mpn": "560112110136",
+    "originalMpn": "RC0402FR-1349K9L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "49k9",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "FID3",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "Fiducial_0.75mm_Mask1.5mm",
+    "specs": {
+     "footprint": "Fiducial:Fiducial_0.75mm_Mask1.5mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "FID8",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "Fiducial_0.5mm_Dia_1mm_Outer",
+    "specs": {
+     "footprint": "Fiducial:Fiducial_0.5mm_Dia_1mm_Outer"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "C59",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "R34",
+    "status": "partial",
+    "mpn": "560112110137",
+    "originalMpn": "RC0402FR-1359KL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "59k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "value",
+     "lifecycle"
+    ],
+    "_alternates": 3
+   },
+   {
+    "ref": "C12",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "AC0402CRNPO9BN9R0",
+    "kind": "capacitor",
+    "value": "9p",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "R16",
+    "status": "unsourced",
+    "mpn": null,
+    "kind": "resistor",
+    "value": "1k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "R17",
+    "status": "partial",
+    "mpn": "560112110019",
+    "originalMpn": "RC0402FR-13100KL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "100k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "R12",
+    "status": "partial",
+    "mpn": "560112110020",
+    "originalMpn": "RC0402FR-1310KL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "10k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "R13",
+    "status": "partial",
+    "mpn": "560112110087",
+    "originalMpn": "RC0402FR-132K2L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "2k2",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "Y1",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "JF4024M00009T8188070",
+    "value": "24M",
+    "specs": {
+     "package": "1210"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U30",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "ICE40HX8K-BG121",
+    "value": "ICE40HX8K-BG121",
+    "specs": {
+     "package": "BGA"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C13",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U16",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "SN74LVC1T45DCKR",
+    "value": "SN74LVC1T45DCKR",
+    "specs": {
+     "package": "SOT363"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U11",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "SN74LVC1T45DCKR",
+    "value": "SN74LVC1T45DCKR",
+    "specs": {
+     "package": "SOT363"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "R21",
+    "status": "partial",
+    "mpn": "560112110087",
+    "originalMpn": "RC0402FR-132K2L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "2k2",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "D9",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "OSK40603C1E",
+    "value": "PNK",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "R11",
+    "status": "partial",
+    "mpn": "560112110087",
+    "originalMpn": "RC0402FR-132K2L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "2k2",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "D7",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "OSK40603C1E",
+    "value": "PNK",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "D10",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "ORH-B36G",
+    "value": "BLU",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "R18",
+    "status": "partial",
+    "mpn": "560112110020",
+    "originalMpn": "RC0402FR-1310KL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "10k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "J7",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "Conn_01x08",
+    "specs": {
+     "footprint": "Glasgow:PinSocket_1x08_P1.27mm_Vertical_DNP"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U14",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TPS73101DBVR",
+    "value": "TPS73101DBV",
+    "specs": {
+     "package": "SOT235"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C29",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C46",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "R19",
+    "status": "partial",
+    "mpn": "560112110020",
+    "originalMpn": "RC0402FR-1310KL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "10k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "U18",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "SN74LVC1T45DCKR",
+    "value": "SN74LVC1T45DCKR",
+    "specs": {
+     "package": "SOT363"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "R40",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "DNP",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "unlookupable"
+   },
+   {
+    "ref": "U19",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "PCA6408APW",
+    "value": "PCA6408APW",
+    "specs": {
+     "package": "TSSOP16"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "R39",
+    "status": "partial",
+    "mpn": "560112110017",
+    "originalMpn": "RC0402FR-1347RL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "47R",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "major_review",
+    "_flags": [
+     "tolerance_pct",
+     "lifecycle"
+    ],
+    "_alternates": 3
+   },
+   {
+    "ref": "R43",
+    "status": "partial",
+    "mpn": "560112110017",
+    "originalMpn": "RC0402FR-1347RL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "47R",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "major_review",
+    "_flags": [
+     "tolerance_pct",
+     "lifecycle"
+    ],
+    "_alternates": 3
+   },
+   {
+    "ref": "U28",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "SN74LVC1T45DCKR",
+    "value": "SN74LVC1T45DCKR",
+    "specs": {
+     "package": "SOT363"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U23",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "SN74LVC1T45DCKR",
+    "value": "SN74LVC1T45DCKR",
+    "specs": {
+     "package": "SOT363"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C22",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "R44",
+    "status": "partial",
+    "mpn": "560112110020",
+    "originalMpn": "RC0402FR-1310KL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "10k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "R36",
+    "status": "partial",
+    "mpn": "560112110020",
+    "originalMpn": "RC0402FR-1310KL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "10k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "R41",
+    "status": "partial",
+    "mpn": "560112110087",
+    "originalMpn": "RC0402FR-132K2L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "2k2",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "C84",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C45",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U5",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "PCA6408APW",
+    "value": "PCA6408APW",
+    "specs": {
+     "package": "TSSOP16"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "R42",
+    "status": "partial",
+    "mpn": "560112110087",
+    "originalMpn": "RC0402FR-132K2L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "2k2",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "R35",
+    "status": "partial",
+    "mpn": "560112110178",
+    "originalMpn": "RC0402FR-1324K3L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "24k3",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "value",
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "R29",
+    "status": "partial",
+    "mpn": "560112110178",
+    "originalMpn": "RC0402FR-1324K3L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "24k3",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "value",
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "R10",
+    "status": "partial",
+    "mpn": "560112110087",
+    "originalMpn": "RC0402FR-132K2L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "2k2",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "TP3",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "3V3",
+    "specs": {
+     "footprint": "TestPoint:TestPoint_Pad_D1.0mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "TP1",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "5V",
+    "specs": {
+     "footprint": "TestPoint:TestPoint_Pad_D1.0mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "R2",
+    "status": "partial",
+    "mpn": "560112110087",
+    "originalMpn": "RC0402FR-132K2L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "2k2",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "D12",
+    "status": "partial",
+    "mpn": "82401444",
+    "originalMpn": "ESD5Z5.0T1G",
+    "_originalManufacturer": "onsemi",
+    "kind": "diode",
+    "value": "ESD5Z5.0T1G",
+    "specs": {
+     "package": "SOD523"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "footprint"
+    ],
+    "_alternates": 2
+   },
+   {
+    "ref": "R45",
+    "status": "partial",
+    "mpn": "560112110017",
+    "originalMpn": "RC0402FR-1347RL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "47R",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "major_review",
+    "_flags": [
+     "tolerance_pct",
+     "lifecycle"
+    ],
+    "_alternates": 3
+   },
+   {
+    "ref": "J10",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "AUX",
+    "specs": {
+     "footprint": "Connector_PinHeader_2.54mm:PinHeader_1x03_P2.54mm_Vertical"
+    },
+    "_match": "unlookupable"
+   },
+   {
+    "ref": "MK1",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "Mounting_Hole_PAD",
+    "specs": {
+     "footprint": "Glasgow:MountingHole_3.5mm_Pad_Via_CrtYd"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "MK2",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "Mounting_Hole_PAD",
+    "specs": {
+     "footprint": "Glasgow:MountingHole_3.5mm_Pad_Via_CrtYd"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "MK4",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "Mounting_Hole_PAD",
+    "specs": {
+     "footprint": "Glasgow:MountingHole_3.5mm_Pad_Via_CrtYd"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "C83",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "LMK107BJ475KAHT",
+    "kind": "capacitor",
+    "value": "4u7",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "MK3",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "Mounting_Hole_PAD",
+    "specs": {
+     "footprint": "Glasgow:MountingHole_3.5mm_Pad_Via_CrtYd"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "J8",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "Conn_01x08",
+    "specs": {
+     "footprint": "Glasgow:PinSocket_1x08_P1.27mm_Vertical_DNP"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "D15",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "NCD0603G1",
+    "value": "GRN",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C55",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "J2",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "87834-2019",
+    "value": "IDC-Header_2x10_P2.54mm",
+    "specs": {
+     "footprint": "Connector_IDC:IDC-Header_2x10_P2.54mm_Vertical"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "R46",
+    "status": "partial",
+    "mpn": "560112110029",
+    "originalMpn": "RC0402FR-1320KL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "20k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "R47",
+    "status": "partial",
+    "mpn": "560112110029",
+    "originalMpn": "RC0402FR-1320KL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "20k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "TP2",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "1V2",
+    "specs": {
+     "footprint": "TestPoint:TestPoint_Pad_D1.0mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "D14",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "NCD0603G1",
+    "value": "GRN",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U31",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TPS73101DBVR",
+    "value": "TPS73101DBV",
+    "specs": {
+     "package": "SOT235"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "D11",
+    "status": "partial",
+    "mpn": "82401444",
+    "originalMpn": "ESD5Z5.0T1G",
+    "_originalManufacturer": "onsemi",
+    "kind": "diode",
+    "value": "ESD5Z5.0T1G",
+    "specs": {
+     "package": "SOD523"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "footprint"
+    ],
+    "_alternates": 2
+   },
+   {
+    "ref": "R1",
+    "status": "partial",
+    "mpn": "560112110087",
+    "originalMpn": "RC0402FR-132K2L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "2k2",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "RN3",
+    "status": "partial",
+    "mpn": "560112110004",
+    "originalMpn": "YC124-JR-1333RL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "33R",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "major_review",
+    "_flags": [
+     "configuration",
+     "footprint"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "RN4",
+    "status": "partial",
+    "mpn": "560112110004",
+    "originalMpn": "YC124-JR-1333RL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "33R",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "major_review",
+    "_flags": [
+     "configuration",
+     "footprint"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "RN5",
+    "status": "partial",
+    "mpn": "560112110006",
+    "originalMpn": "YC124-JR-0710KL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "10k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "major_review",
+    "_flags": [
+     "configuration",
+     "footprint",
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "RN6",
+    "status": "partial",
+    "mpn": "560112110006",
+    "originalMpn": "YC124-JR-0710KL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "10k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "major_review",
+    "_flags": [
+     "configuration",
+     "footprint",
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "RN7",
+    "status": "partial",
+    "mpn": "560112110004",
+    "originalMpn": "YC124-JR-1333RL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "33R",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "major_review",
+    "_flags": [
+     "configuration",
+     "footprint"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "RN8",
+    "status": "partial",
+    "mpn": "560112110004",
+    "originalMpn": "YC124-JR-1333RL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "33R",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "major_review",
+    "_flags": [
+     "configuration",
+     "footprint"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "RN10",
+    "status": "partial",
+    "mpn": "560112110004",
+    "originalMpn": "YC124-JR-1333RL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "33R",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "major_review",
+    "_flags": [
+     "configuration",
+     "footprint"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "RN11",
+    "status": "partial",
+    "mpn": "560112110006",
+    "originalMpn": "YC124-JR-0710KL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "10k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "major_review",
+    "_flags": [
+     "configuration",
+     "footprint",
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "RN12",
+    "status": "partial",
+    "mpn": "560112110006",
+    "originalMpn": "YC124-JR-0710KL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "10k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "major_review",
+    "_flags": [
+     "configuration",
+     "footprint",
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "U4",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "SN74LVC1T45DCKR",
+    "value": "SN74LVC1T45DCKR",
+    "specs": {
+     "package": "SOT363"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U32",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "SN74LVC1T45DCKR",
+    "value": "SN74LVC1T45DCKR",
+    "specs": {
+     "package": "SOT363"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U29",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "SN74LVC1T45DCKR",
+    "value": "SN74LVC1T45DCKR",
+    "specs": {
+     "package": "SOT363"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "D13",
+    "status": "partial",
+    "mpn": "82401444",
+    "originalMpn": "ESD5Z5.0T1G",
+    "_originalManufacturer": "onsemi",
+    "kind": "diode",
+    "value": "ESD5Z5.0T1G",
+    "specs": {
+     "package": "SOD523"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "footprint"
+    ],
+    "_alternates": 2
+   },
+   {
+    "ref": "RN2",
+    "status": "partial",
+    "mpn": "560112110004",
+    "originalMpn": "YC124-JR-1333RL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "33R",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "major_review",
+    "_flags": [
+     "configuration",
+     "footprint"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "RN1",
+    "status": "partial",
+    "mpn": "560112110004",
+    "originalMpn": "YC124-JR-1333RL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "33R",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "major_review",
+    "_flags": [
+     "configuration",
+     "footprint"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "R37",
+    "status": "partial",
+    "mpn": "560112110020",
+    "originalMpn": "RC0402FR-1310KL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "10k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "J1",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TYPE-C-31-M-12",
+    "value": "USB_C_USB2.0",
+    "specs": {
+     "footprint": "Glasgow:USB_C_Receptacle_HRO_TYPE-C-31-M-12"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C11",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "AC0402CRNPO9BN9R0",
+    "kind": "capacitor",
+    "value": "9p",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "R53",
+    "status": "partial",
+    "mpn": "560112110247",
+    "originalMpn": "RC0402FR-075K1L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "5k1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "value",
+     "lifecycle"
+    ],
+    "_alternates": 2
+   },
+   {
+    "ref": "C8",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "FB1",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "BLM15PX601SZ1D",
+    "value": "600R, 0.5A",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U15",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TPD3S014DBVR",
+    "value": "TPD3S014",
+    "specs": {
+     "package": "SOT236"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "R52",
+    "status": "partial",
+    "mpn": "560112110247",
+    "originalMpn": "RC0402FR-075K1L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "5k1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "value",
+     "lifecycle"
+    ],
+    "_alternates": 2
+   },
+   {
+    "ref": "D16",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "CDSOD323-T36S",
+    "value": "CDSOD323-T36S",
+    "specs": {
+     "package": "SOD323"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "D17",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "CDSOD323-T36S",
+    "value": "CDSOD323-T36S",
+    "specs": {
+     "package": "SOD323"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "D18",
+    "status": "no_substitute",
+    "mpn": null,
+    "originalMpn": "BAT54CW",
+    "_originalManufacturer": "Nexperia",
+    "kind": "diode",
+    "value": "BAT54CW",
+    "specs": {
+     "package": "SOT323"
+    },
+    "_match": "exact",
+    "notes": "no candidate from 1 target manufacturer(s) survived the ranker's pre-gate (0 in the pool)"
+   },
+   {
+    "ref": "D19",
+    "status": "no_substitute",
+    "mpn": null,
+    "originalMpn": "BAT54CW",
+    "_originalManufacturer": "Nexperia",
+    "kind": "diode",
+    "value": "BAT54CW",
+    "specs": {
+     "package": "SOT323"
+    },
+    "_match": "exact",
+    "notes": "no candidate from 1 target manufacturer(s) survived the ranker's pre-gate (0 in the pool)"
+   },
+   {
+    "ref": "R26",
+    "status": "partial",
+    "mpn": "560112110020",
+    "originalMpn": "RC0402FR-1310KL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "10k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "U12",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "INA233AIDGSR",
+    "value": "INA233",
+    "specs": {
+     "package": "SSOP10"
+    },
+    "_match": "substring",
+    "_rows": 2
+   },
+   {
+    "ref": "D21",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "SP3012-06UTG",
+    "value": "SP3012-06UTG",
+    "specs": {
+     "package": "DFN14"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "D23",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "SP3012-06UTG",
+    "value": "SP3012-06UTG",
+    "specs": {
+     "package": "DFN14"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C16",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C88",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "D24",
+    "status": "no_substitute",
+    "mpn": null,
+    "originalMpn": "BAT54AW",
+    "_originalManufacturer": "Nexperia",
+    "kind": "diode",
+    "value": "BAT54AW",
+    "specs": {
+     "package": "SOT323"
+    },
+    "_match": "exact",
+    "notes": "no candidate from 1 target manufacturer(s) survived the ranker's pre-gate (0 in the pool)"
+   },
+   {
+    "ref": "R4",
+    "status": "partial",
+    "mpn": "560112110019",
+    "originalMpn": "RC0402FR-13100KL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "100k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "R5",
+    "status": "partial",
+    "mpn": "560112110019",
+    "originalMpn": "RC0402FR-13100KL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "100k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "R57",
+    "status": "partial",
+    "mpn": "560112110087",
+    "originalMpn": "RC0402FR-132K2L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "2k2",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "R58",
+    "status": "partial",
+    "mpn": "560112110087",
+    "originalMpn": "RC0402FR-132K2L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "2k2",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "R38",
+    "status": "partial",
+    "mpn": "560112110017",
+    "originalMpn": "RC0402FR-1347RL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "47R",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "major_review",
+    "_flags": [
+     "tolerance_pct",
+     "lifecycle"
+    ],
+    "_alternates": 3
+   },
+   {
+    "ref": "J5",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "FTS-122-01-L-DV",
+    "value": "PinHeader_2x22_P1.27mm",
+    "specs": {
+     "footprint": "Glasgow:PinHeader_2x22_P1.27mm_Vertical__SMD"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "R3",
+    "status": "partial",
+    "mpn": "560112110019",
+    "originalMpn": "RC0402FR-13100KL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "100k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "TP7",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "3V3",
+    "specs": {
+     "footprint": "TestPoint:TestPoint_Pad_D1.0mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "C87",
+    "status": "recommended",
+    "mpn": "865060243005",
+    "originalMpn": "A765EB157M1ALAE022",
+    "_originalManufacturer": "KEMET",
+    "kind": "capacitor",
+    "value": "150u",
+    "specs": {
+     "footprint": "Capacitor_SMD:CP_Elec_6.3x5.9"
+    },
+    "_match": "exact",
+    "_grade": "drop_in",
+    "_alternates": 4
+   },
+   {
+    "ref": "U2",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "CAT24M01YI−GT3",
+    "value": "CAT24M01X",
+    "specs": {
+     "package": "TSSOP8"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U3",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "BL24C256A-SFRC",
+    "value": "BL24C256A-SFRC",
+    "specs": {
+     "package": "TSSOP8"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "J4",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "22-05-3021",
+    "value": "Conn_01x02",
+    "specs": {
+     "footprint": "Glasgow:Molex_KK-254_1x02_P2.54mm_Horizontal"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U8",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TLV75533PDRVR",
+    "value": "TLV75533PDRVR",
+    "specs": {
+     "package": "DFN6"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U36",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TLV73312PQDRVRQ1",
+    "value": "TLV73312PQDRVR",
+    "specs": {
+     "package": "DFN6"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C86",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "LMK107BJ475KAHT",
+    "kind": "capacitor",
+    "value": "4u7",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "C26",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "LMK107BJ475KAHT",
+    "kind": "capacitor",
+    "value": "4u7",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "C27",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "LMK107BJ475KAHT",
+    "kind": "capacitor",
+    "value": "4u7",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "C28",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "LMK107BJ475KAHT",
+    "kind": "capacitor",
+    "value": "4u7",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "J3",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "87834-2019",
+    "value": "IDC-Header_2x10_P2.54mm",
+    "specs": {
+     "footprint": "Connector_IDC:IDC-Header_2x10_P2.54mm_Vertical"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U7",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "APX811-40UG-7",
+    "value": "APX811-40UG-7",
+    "specs": {
+     "package": "SOT143"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "D20",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "SP3012-06UTG",
+    "value": "SP3012-06UTG",
+    "specs": {
+     "package": "DFN14"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "RN9",
+    "status": "partial",
+    "mpn": "560112110004",
+    "originalMpn": "YC124-JR-1333RL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "33R",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "major_review",
+    "_flags": [
+     "configuration",
+     "footprint"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "U21",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "INA233AIDGSR",
+    "value": "INA233",
+    "specs": {
+     "package": "SSOP10"
+    },
+    "_match": "substring",
+    "_rows": 2
+   },
+   {
+    "ref": "C89",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C90",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "GCM1555C1H102JA16J",
+    "kind": "capacitor",
+    "value": "1n 50V C0G",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "C91",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "GCM1555C1H102JA16J",
+    "kind": "capacitor",
+    "value": "1n 50V C0G",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "D22",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "SP3012-06UTG",
+    "value": "SP3012-06UTG",
+    "specs": {
+     "package": "DFN14"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C56",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "U20",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "DAC081C081CIMK/NOPB",
+    "value": "DAC081C081CIMK",
+    "specs": {
+     "package": "SOT236"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "R55",
+    "status": "partial",
+    "mpn": "560112110020",
+    "originalMpn": "RC0402FR-1310KL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "10k",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "U13",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "DAC081C081CIMK/NOPB",
+    "value": "DAC081C081CIMK",
+    "specs": {
+     "package": "SOT236"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C32",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "SW1",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TC-1109DE-B-F",
+    "value": "RST",
+    "specs": {
+     "footprint": "Glasgow:SW_Tactile_SPST_Angled_TC-1109DE"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "REF**",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "OSHW-Logo2_9.8x8mm_SilkScreen",
+    "specs": {
+     "footprint": "Symbol:OSHW-Logo2_9.8x8mm_SilkScreen"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "REF**",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "null_Logo_SilkS_4mm",
+    "specs": {
+     "footprint": "Glasgow:null_Logo_SilkS_4mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "C54",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C92",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "LMK107BJ475KAHT",
+    "kind": "capacitor",
+    "value": "4u7",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "REF**",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "Tab",
+    "specs": {
+     "footprint": "kikit:Tab"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "REF**",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "Tab",
+    "specs": {
+     "footprint": "kikit:Tab"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "REF**",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "Tab",
+    "specs": {
+     "footprint": "kikit:Tab"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "REF**",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "Tab",
+    "specs": {
+     "footprint": "kikit:Tab"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "FID4",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "Fiducial_0.75mm_Mask1.5mm",
+    "specs": {
+     "footprint": "Fiducial:Fiducial_0.75mm_Mask1.5mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "FID5",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "Fiducial_0.75mm_Mask1.5mm",
+    "specs": {
+     "footprint": "Fiducial:Fiducial_0.75mm_Mask1.5mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "C23",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C77",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C48",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C49",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C52",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C64",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C40",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C68",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C69",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C70",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C71",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C72",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C73",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C74",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C18",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C33",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C78",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "R31",
+    "status": "partial",
+    "mpn": "560112110022",
+    "originalMpn": "RC0402FR-13100RL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "100R",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "C76",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "LMK107BJ475KAHT",
+    "kind": "capacitor",
+    "value": "4u7",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "C24",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C7",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C6",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C9",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C10",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C5",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C1",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "LMK107BJ475KAHT",
+    "kind": "capacitor",
+    "value": "4u7",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "C2",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C3",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C4",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C81",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "R32",
+    "status": "partial",
+    "mpn": "560112110022",
+    "originalMpn": "RC0402FR-13100RL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "100R",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "C38",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C34",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C60",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C65",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C61",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C62",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C66",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C63",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C67",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C35",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C37",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C36",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C25",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "NONO_HANA",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "MECHOKKU",
+    "specs": {
+     "footprint": "Glasgow:nono_hana_lines"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "C42",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C43",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C47",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C41",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "FID6",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "Fiducial_0.75mm_Mask1.5mm",
+    "specs": {
+     "footprint": "Fiducial:Fiducial_0.75mm_Mask1.5mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "C19",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "LMK107BJ475KAHT",
+    "kind": "capacitor",
+    "value": "4u7",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "TP12",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "GND",
+    "specs": {
+     "footprint": "TestPoint:TestPoint_Pad_D1.0mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "TP11",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "SCL",
+    "specs": {
+     "footprint": "TestPoint:TestPoint_Pad_D1.0mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "TP10",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "SDA",
+    "specs": {
+     "footprint": "TestPoint:TestPoint_Pad_D1.0mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "TP8",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "5V",
+    "specs": {
+     "footprint": "TestPoint:TestPoint_Pad_D1.0mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "TP9",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "3V3",
+    "specs": {
+     "footprint": "TestPoint:TestPoint_Pad_D1.0mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "TP13",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "VBUS",
+    "specs": {
+     "footprint": "TestPoint:TestPoint_Pad_D1.0mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "TP14",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "USBGND",
+    "specs": {
+     "footprint": "TestPoint:TestPoint_Pad_D1.0mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "TP16",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "USBDM",
+    "specs": {
+     "footprint": "TestPoint:TestPoint_Pad_D1.0mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "TP15",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "USBDP",
+    "specs": {
+     "footprint": "TestPoint:TestPoint_Pad_D1.0mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "C80",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "LMK107BJ475KAHT",
+    "kind": "capacitor",
+    "value": "4u7",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "C85",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C21",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C79",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "TP17",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "1V2",
+    "specs": {
+     "footprint": "TestPoint:TestPoint_Pad_D1.0mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "R48",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "KDV06FR150ET",
+    "kind": "resistor",
+    "value": "0R15",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "R49",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "KDV06FR150ET",
+    "kind": "resistor",
+    "value": "0R15",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "TP18",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "VDAC",
+    "specs": {
+     "footprint": "TestPoint:TestPoint_Pad_D1.0mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "TP19",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "VDAC",
+    "specs": {
+     "footprint": "TestPoint:TestPoint_Pad_D1.0mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "C75",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C51",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C39",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C50",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C44",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C58",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "R25",
+    "status": "partial",
+    "mpn": "560112116077",
+    "originalMpn": "RC0402FR-074R7L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "4R7",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "major_review",
+    "_flags": [
+     "tolerance_pct",
+     "footprint",
+     "height",
+     "lifecycle"
+    ],
+    "_alternates": 1
+   },
+   {
+    "ref": "R54",
+    "status": "partial",
+    "mpn": "560112116077",
+    "originalMpn": "RC0402FR-074R7L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "4R7",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "major_review",
+    "_flags": [
+     "tolerance_pct",
+     "footprint",
+     "height",
+     "lifecycle"
+    ],
+    "_alternates": 1
+   },
+   {
+    "ref": "R6",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "DNP",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "unlookupable"
+   },
+   {
+    "ref": "R7",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "KDV06FR330ET",
+    "kind": "resistor",
+    "value": "0R33",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "R8",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "DNP",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "unlookupable"
+   },
+   {
+    "ref": "R56",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "KDV06FR330ET",
+    "kind": "resistor",
+    "value": "0R33",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "C17",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C15",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C20",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "TMK105BJ104KV-F",
+    "value": "u1",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "none"
+   },
+   {
+    "ref": "C14",
+    "status": "unsourced",
+    "mpn": null,
+    "originalMpn": "LMK107BJ475KAHT",
+    "kind": "capacitor",
+    "value": "4u7",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "value-package",
+    "_rows": 5
+   },
+   {
+    "ref": "R24",
+    "status": "partial",
+    "mpn": "560112116077",
+    "originalMpn": "RC0402FR-074R7L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "4R7",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "major_review",
+    "_flags": [
+     "tolerance_pct",
+     "footprint",
+     "height",
+     "lifecycle"
+    ],
+    "_alternates": 1
+   },
+   {
+    "ref": "R30",
+    "status": "partial",
+    "mpn": "560112116077",
+    "originalMpn": "RC0402FR-074R7L",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "4R7",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "major_review",
+    "_flags": [
+     "tolerance_pct",
+     "footprint",
+     "height",
+     "lifecycle"
+    ],
+    "_alternates": 1
+   },
+   {
+    "ref": "R59",
+    "status": "partial",
+    "mpn": "560112110078",
+    "originalMpn": "RC0402FR-07470RL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "470",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "value",
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "R60",
+    "status": "partial",
+    "mpn": "560112110078",
+    "originalMpn": "RC0402FR-07470RL",
+    "_originalManufacturer": "YAGEO",
+    "kind": "resistor",
+    "value": "470",
+    "specs": {
+     "package": "0402"
+    },
+    "_match": "exact",
+    "_grade": "minor_review",
+    "_flags": [
+     "value",
+     "lifecycle"
+    ],
+    "_alternates": 4
+   },
+   {
+    "ref": "R50",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "DNP",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "unlookupable"
+   },
+   {
+    "ref": "REF**",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "null_Logo_SilkS_6mm",
+    "specs": {
+     "footprint": "Glasgow:null_Logo_SilkS_6mm"
+    },
+    "_match": "not-a-part"
+   },
+   {
+    "ref": "R51",
+    "status": "unsourced",
+    "mpn": null,
+    "value": "DNP",
+    "specs": {
+     "package": "0603"
+    },
+    "_match": "unlookupable"
+   }
+  ],
+  "total": 272,
+  "sourced": 65,
+  "caveat": "Deterministic catalogue cross-reference (Kelvin's ranker), run the way the Faraday web app runs it. Only lines identified EXACTLY by part number were cross-referenced; a line matched by value and package, or by a partial part number, has catalogue parts it might be — unranked — because the board does not say which one it is. 'mpn' on a line is the best-ranked substitute when Kelvin rates it recommended or partial; each line keeps at most 5 ranked candidates. COMPACT: each line here is a summary — the substitute, its grade (_grade) and the checks it warned or failed on (_flags), the original, the package and how the line was identified (_match). Held back: every candidate's spec table, verdicts and ranker notes, the other ranked candidates (counted in _alternates) and the unranked catalogue rows a line might be (counted in _rows), and the notes that only restate `_match`, which reads: exact = identified by its part number and cross-referenced; substring = only partial part-number matches, value-package = identified only by value and package (both: _rows catalogue parts it might be, not cross-referenced, because the board does not say which); none = not in the catalogue (no part carries its part number, or, with none given, no part of its value fits its footprint); unlookupable = the board gives neither a part number nor a value; not-a-part = a mounting hole, fiducial, test point, logo, jumper or similar. crossref_line(crossref='5d0ec1c45c67', ref=<ref>) returns any line in full.",
+  "targetManufacturer": "Würth Elektronik",
+  "diagnostics": [
+   "REF** appears 7 times on the board; the sweep answers per reference designator, so those placements share one answer"
+  ]
+ }
+}
