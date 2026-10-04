@@ -306,7 +306,8 @@ for await (const line of rl) {
     if (!(Number(req.maxResults) > 0) || !(Number(req.listed) > 0)) {
       throw new Error('crossref_board needs positive maxResults and listed')
     }
-    reply({ id: req.id ?? null, ok: true, result: await crossrefBoard(req) })
+    reply({ id: req.id ?? null, ok: true,
+            result: await engine.withBrowseCache(() => crossrefBoard(req)) })
   } catch (e) {
     reply({ id: req.id ?? null, ok: false, error: String(e.message || e) })
   }

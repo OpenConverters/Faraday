@@ -72,9 +72,44 @@ export async function ensureShard(family) {
   return meta
 }
 
+// ONE BOARD ASKS THE SAME QUESTION MANY TIMES. On the PoE reference board (189 lines) the sweep
+// and the per-part identification made 642 browse calls, of which only 354 were distinct:
+// twenty-four 100 nF capacitors with one part number ask for that part number, and for its
+// Würth candidates, twenty-four times. browse is a pure function of (family, query) over a
+// loaded shard, and a shard never changes once loaded, so within one request the second
+// asking is answered from the first. The engine's JSON TEXT is kept, not the parsed object,
+// and parsed afresh for every caller: a caller that edits the rows it was handed cannot
+// change what the next caller reads. An error is never kept; it is thrown every time.
+//
+// Per request and no longer: the cache is opened by the worker around one crossref_board
+// and dropped when it returns, so it holds one board's worth of answers at most and cannot
+// outlive the shards it was computed from.
+let browseCache = null
+
+export async function withBrowseCache(fn) {
+  if (browseCache) throw new Error('kelvin-node: withBrowseCache does not nest')
+  browseCache = new Map()
+  try {
+    return await fn()
+  } finally {
+    browseCache = null
+  }
+}
+
 export async function browse(family, query = {}) {
   await ensureShard(family)
-  return callJson('browse', family, JSON.stringify(query))
+  const q = JSON.stringify(query)
+  if (!browseCache) return callJson('browse', family, q)
+  const key = `${family}\u0000${q}`
+  let text = browseCache.get(key)
+  if (text === undefined) {
+    text = engine().browse(family, q)
+    if (typeof text === 'string' && text.startsWith('Exception: ')) {
+      throw new Error(text.slice('Exception: '.length))
+    }
+    browseCache.set(key, text)
+  }
+  return JSON.parse(text)
 }
 
 export async function crossReference(category, original, candidates, options = {}) {
