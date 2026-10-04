@@ -19,7 +19,7 @@
  */
 import { App } from "@modelcontextprotocol/ext-apps";
 
-const app = new App({ name: "Faraday cross-reference", version: "0.1.0" });
+const app = new App({ name: "Cross-reference table", version: "0.1.0" });
 
 // The contract's statuses, in the order a reader triages them.
 const STATUS_ORDER = ["recommended", "partial", "no_substitute", "unsourced", "exact"];

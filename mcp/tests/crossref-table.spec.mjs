@@ -2,6 +2,7 @@
 //
 //   cd mcp && npm run build && npx playwright test
 //   CROSSREF_FIXTURE=<a recorded {content, structuredContent}> npx playwright test
+//   CROSSREF_BUNDLE=../../Kelvin/mcp/dist/crossref-table.html (Kelvin ships the same widget)
 //
 // The committed fixture is crossref_board(glasgow.kicad_pcb, target Würth Elektronik), an
 // open-hardware board. CROSSREF_FIXTURE renders any other recorded result the same way.
@@ -12,7 +13,7 @@ import { fileURLToPath } from "node:url";
 import { buildSync } from "esbuild";
 
 const HERE = dirname(fileURLToPath(import.meta.url));
-const BUNDLE = join(HERE, "..", "dist", "crossref-table.html");
+const BUNDLE = process.env.CROSSREF_BUNDLE || join(HERE, "..", "dist", "crossref-table.html");
 const FIXTURE = process.env.CROSSREF_FIXTURE || join(HERE, "fixtures", "crossref-glasgow-wurth.json");
 
 const host = buildSync({
