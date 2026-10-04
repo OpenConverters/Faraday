@@ -47,10 +47,12 @@ UNKNOWN_MPN = "TMK105BJ104KV-F"
 MOEBIUS_CONTRACT = Path(os.environ.get(
     "MOEBIUS_CONTRACT",
     str(Path.home() / "wuerth" / "moebius-orchestrator" / "contracts" / "pipeline_result.json")))
-# What one cross-referenced line may cost in the payload, on average. A 189-part board came
-# back at 691,751 characters before the payload was made compact (~3,700 per line), and
-# clients refuse results around 285k; compact, the same board is ~131k (~700 per line).
-XREF_CHARS_PER_LINE = 800
+# What one cross-referenced line may cost in the payload, on average, serialised the way a
+# client receives it (no whitespace). A 189-part board came back at 691,751 characters in
+# full (~3,700 per line) and at 122,959 in the first compact form (~650 per line) — which
+# Claude Code, the client that reads it in the GUI, saves to a file above ~50k characters
+# instead of handing to the model. At 230 a 189-part board is ~43k and is read in one pass.
+XREF_CHARS_PER_LINE = 230
 BOM_CHARS_PER_LINE = 300
 # Every tool the server exposes. The HTTP check compares against this set, so a tool that is
 # added or lost is noticed rather than counted.
@@ -190,28 +192,32 @@ def check_bom(S, validator) -> None:
           f"{xref['total']} lines")
     hits = [line for line in xref["lines"] if line.get("originalMpn") == KNOWN_MPN]
     check(f"{KNOWN_MPN} is identified exactly, as YAGEO's resistor",
-          bool(hits) and all(line["_identification"]["match"] == "exact"
+          bool(hits) and all(line.get("_match") == "exact"
                              and line.get("_originalManufacturer") == "YAGEO"
                              and line.get("kind") == "resistor" for line in hits),
-          json.dumps(hits[0]["_identification"]) if hits else "not found")
-    ranked = hits[0].get("candidates") or [] if hits else []
-    check(f"{KNOWN_MPN} is cross-referenced: ranked candidates, the best one on the line",
-          bool(ranked) and all(c.get("status") for c in ranked)
-          and hits[0]["status"] == ranked[0]["status"]
-          and (hits[0]["mpn"] == ranked[0]["mpn"]
-               if ranked[0]["status"] in ("recommended", "partial") else True),
-          f"{hits[0]['status']} -> {hits[0]['mpn']}" if hits else "-")
+          json.dumps(hits[0]) if hits else "not found")
+    check(f"{KNOWN_MPN} is cross-referenced: graded, with its alternates counted",
+          bool(hits) and all(line.get("_grade") and "candidates" not in line
+                             and isinstance(line.get("_alternates"), int) for line in hits),
+          f"{hits[0]['status']} -> {hits[0]['mpn']} {hits[0].get('_grade')}" if hits else "-")
     missing = [line for line in xref["lines"] if line.get("originalMpn") == UNKNOWN_MPN]
+    # The stock reason of each identification class is defined once, in the caveat, and a
+    # line names its class in `_match` — so a reason is either the line's own note or the
+    # caveat's definition of its class.
+    def reason(line: dict) -> str:
+        if line.get("notes"):
+            return line["notes"]
+        defined = f"{line.get('_match')} = "
+        return xref["caveat"].split(defined, 1)[1].split(";")[0] if defined in xref["caveat"] else ""
     check(f"{UNKNOWN_MPN} (not in the catalogue) is unsourced, with the reason",
           bool(missing) and all(line["status"] == "unsourced" and line["mpn"] is None
-                                and "not in the catalogue" in line.get("notes", "")
-                                for line in missing),
-          (missing[0].get("notes") or "")[:80] if missing else "not found")
+                                and "not in the catalogue" in reason(line) for line in missing),
+          reason(missing[0])[:80] if missing else "not found")
     check("no line is left without a reason when nothing was sourced",
-          all(line.get("notes") for line in xref["lines"] if line["status"] == "unsourced"))
+          all(reason(line) for line in xref["lines"] if line["status"] == "unsourced"))
     check("`sourced` counts the lines carrying a substitute",
           xref["sourced"] == sum(1 for line in xref["lines"] if line["mpn"]))
-    size = len(json.dumps(xref))
+    size = len(json.dumps(xref, ensure_ascii=False, separators=(",", ":")))
     check(f"the cross-reference payload stays compact (<= {XREF_CHARS_PER_LINE} chars per line)",
           size / max(1, xref["total"]) <= XREF_CHARS_PER_LINE,
           f"{size:,} chars, {size / max(1, xref['total']):.0f}/line")
@@ -227,12 +233,15 @@ def check_bom(S, validator) -> None:
         valid("one line in full", line)
         full = line["lines"][0]["candidates"]
         check("the full line carries every ranked candidate with its spec table and checks",
-              len(full) >= len(ranked) and all(c.get("specs") and c.get("params") for c in full),
+              len(full) == 1 + hits[0].get("_alternates", -1)
+              and all(c.get("specs") and c.get("params") for c in full),
               f"{len(full)} candidates")
+        flagged = [p["name"] for p in full[0]["params"] if p["verdict"] in ("warn", "fail")]
         check("the full line and the compact one agree on the answer",
               line["lines"][0]["status"] == hits[0]["status"]
               and line["lines"][0]["mpn"] == hits[0]["mpn"]
-              and [c["mpn"] for c in full][:len(ranked)] == [c["mpn"] for c in ranked])
+              and full[0].get("grade") == hits[0].get("_grade")
+              and flagged == hits[0].get("_flags", []))
     try:
         S.crossref_line(handle, "NOPE999")
         check("an unknown reference is refused", False)
@@ -255,8 +264,9 @@ def check_bom(S, validator) -> None:
     line = xref["lines"][0] if xref["lines"] else {}
     check("a value that fits no catalogue part is unsourced, with the reason",
           line.get("status") == "unsourced" and line.get("mpn") is None
-          and line["_identification"]["match"] == "none" and line.get("notes"),
-          line.get("notes", "")[:80])
+          and line.get("_match") == "none"
+          and "no part of its value fits its footprint" in xref["caveat"],
+          line.get("_match", "-"))
 
 
 def main() -> int:

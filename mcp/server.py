@@ -1089,6 +1089,7 @@ _MATCH_WORDS = {
 
 
 _IDENTIFIED_EXACTLY = "identified exactly as"
+_UNSAID = "not cross-referenced — the board does not say which part this is"
 
 
 def _crossref_line(w: dict) -> tuple[dict, str, list[str]]:
@@ -1178,8 +1179,7 @@ def _crossref_line(w: dict) -> tuple[dict, str, list[str]]:
             if by_value.get("matched"):
                 bits.append(f"{by_value['matched']} {by_value['family']}(s) match its value "
                             f"and package")
-            notes.append("not cross-referenced — the board does not say which part this is: "
-                         + "; ".join(bits) + " (listed as candidates, unranked)")
+            notes.append(f"{_UNSAID}: " + "; ".join(bits) + " (listed as candidates, unranked)")
         else:
             notes.append(f"{_MATCH_WORDS[match]}: {w.get('why')}")
         if w.get("lookupError"):
@@ -1195,79 +1195,70 @@ def _crossref_line(w: dict) -> tuple[dict, str, list[str]]:
 # --- what a whole-board cross-reference carries inline ----------------------
 # Every line in full is too much for one answer: a 189-part board came back at 691,751
 # characters — 636 ranked candidates at ~900 characters each, two thirds of it spec tables,
-# parameter verdicts and ranker notes — and clients refuse a result that size outright (see
-# review_board: the model then sees nothing). So the payload carries every LINE but a compact
-# form of each, and the full lines are stored on disk under a handle, the way review_board
-# keeps its report: crossref_line(crossref, ref) returns one line exactly as the ranker left
-# it. Nothing is recomputed to answer that, so the detail cannot disagree with the summary.
+# parameter verdicts and ranker notes. So the payload carries every LINE but a compact form of
+# each, and the full lines are stored on disk under a handle, the way review_board keeps its
+# report: crossref_line(crossref, ref) returns one line exactly as the ranker left it. Nothing
+# is recomputed to answer that, so the detail cannot disagree with the summary.
 #
-# What the compact form keeps, per line: the identification (match, family), the original,
-# the best substitute and its status, every ranked candidate's mpn / manufacturer / status /
-# grade / penalty / direction; for the BEST candidate also the checks that did not pass and
-# the ranker's notes. What it holds back: the candidates' spec tables, the checks that passed
-# (counted in `_paramsPassed`), the alternates' notes, and unranked catalogue rows beyond
-# INLINE_ROWS per line. `caveat` says so in every payload.
+# HOW COMPACT IS SET BY THE CLIENT THAT ACTUALLY READS IT, not by the one that refuses it.
+# The first compact form (~650 characters a line; 122,959 for the 189-part PoE adapter board)
+# was sized against clients that refuse results around 285k. Claude Code does not refuse — it
+# writes any tool result above ~50k characters to a file and hands the model a notice
+# instead (measured with Claude Code 2.1.289: 49,054 characters went inline, 50.8 KB was saved). On 2026-10-04
+# that turned a 16-second engine call into a six-minute turn: the model spent five minutes
+# grepping its own saved file seventeen times to rebuild a summary of 189 lines. Claude Code
+# also passes the model this payload, NOT the digest built below, so the payload is the
+# summary and has to be readable in one pass.
+#
+# So a line carries what a reader of the whole board needs and nothing per candidate:
+# ref, status, the substitute, the original (part number, maker, family), the package, how
+# the line was identified (`_match`), the best candidate's grade (`_grade`) and the checks it
+# warned or failed on (`_flags`), how many other ranked candidates and unranked catalogue
+# rows exist (`_alternates`, `_rows`), and the line's own notes — why nothing was sourced,
+# what the original's record lacks (stock sentences are defined once, in `caveat`). The ranker's per-candidate notes, spec tables and verdicts
+# are crossref_line's; `caveat` says so in every payload. ~180 characters a line.
 
-CROSSREF_INLINE_ROWS = 3        # unranked catalogue rows per line
-CROSSREF_INLINE_RANKED = 2      # ranked candidates per line: the best + one alternate
-_IDENT_INLINE = ("match", "family", "parsedValue")
-
-
-def _inline_ranked(c: dict, best: bool) -> dict:
-    out: dict = {"mpn": c["mpn"]}
-    for key in ("manufacturer", "status", "grade"):
-        if c.get(key) is not None:
-            out[key] = c[key]
-    if best:
-        if c.get("direction") is not None:
-            out["direction"] = c["direction"]
-        if isinstance(c.get("penalty"), (int, float)):
-            out["penalty"] = round(float(c["penalty"]), 3)
-        params = c.get("params") or []
-        failing = [p for p in params if p.get("verdict") != "pass"]
-        if failing:
-            out["params"] = failing
-        out["_paramsPassed"] = len(params) - len(failing)
-        if c.get("notes"):
-            out["notes"] = c["notes"]
-    return out
-
-
-def _inline_line(line: dict) -> dict:
+def _inline_line(line: dict, target: str | None) -> dict:
     """A stored cross-reference line, compacted for the payload (see the block above)."""
-    out = {k: v for k, v in line.items()
-           if k not in ("candidates", "_identification", "_crossref", "notes")}
-    # The identification sentence restates originalMpn, _originalManufacturer and kind, which
-    # the line already carries; the rest of the notes are what only the notes say.
+    out: dict = {"ref": line["ref"], "status": line["status"], "mpn": line["mpn"]}
+    # The maker is said once, in targetManufacturer, when the run had a single target.
+    if line.get("manufacturer") is not None and line["manufacturer"] != target:
+        out["manufacturer"] = line["manufacturer"]
+    for key in ("originalMpn", "_originalManufacturer", "kind", "value"):
+        if line.get(key) is not None:
+            out[key] = line[key]
+    specs = line.get("specs") or {}
+    if specs.get("package") or specs.get("footprint"):
+        out["specs"] = {"package": specs["package"]} if specs.get("package") \
+            else {"footprint": specs["footprint"]}
+    out["_match"] = (line.get("_identification") or {}).get("match")
+    # Notes that only restate what the line already says are left to crossref_line: the
+    # identification sentence (originalMpn, _originalManufacturer, kind) and the stock
+    # sentence of each `_match` class, which `caveat` defines once instead of every line
+    # repeating it — on a 272-part board those sentences were a third of the payload. What
+    # stays is what only the note says: a failed cross-reference, a pre-gate nobody passed,
+    # a record that lacks a value.
+    match = out["_match"]
+    stock = (f"{_MATCH_WORDS[match]}:" if match in ("none", "not-a-part", "unlookupable")
+             else _UNSAID if match in ("substring", "value-package") else None)
     notes = [n for n in (line.get("notes") or "").split("; ")
-             if n and not n.startswith(_IDENTIFIED_EXACTLY)]
+             if n and not n.startswith(_IDENTIFIED_EXACTLY)
+             and not (stock and n.startswith(stock))]
     if notes:
         out["notes"] = "; ".join(notes)
-    ident = line.get("_identification") or {}
-    out["_identification"] = {k: ident[k] for k in _IDENT_INLINE if k in ident}
-    if ident.get("family") and ident["family"] == line.get("kind"):
-        del out["_identification"]["family"]         # `kind` already says it
-    if ident.get("outsideSuggestedFamilies"):
-        out["_identification"]["outsideSuggestedFamilies"] = True
-    if ident.get("query") and ident["query"] != line.get("originalMpn"):
-        out["_identification"]["query"] = ident["query"]
-    if "_crossref" in line and line["status"] == "no_substitute":
-        out["_crossref"] = {k: line["_crossref"][k] for k in ("poolTotal", "targets")
-                            if k in line["_crossref"]}
     cands = line.get("candidates") or []
-    if not cands:
-        return out
-    if "status" in cands[0]:                       # ranked by Kelvin
-        out["candidates"] = [_inline_ranked(c, i == 0)
-                             for i, c in enumerate(cands[:CROSSREF_INLINE_RANKED])]
-        if len(cands) > CROSSREF_INLINE_RANKED:
-            out["_candidatesHeldBack"] = len(cands) - CROSSREF_INLINE_RANKED
-    else:                                          # unranked catalogue rows
-        out["candidates"] = [
-            {k: c[k] for k in ("mpn", "manufacturer", "_match") if k in c}
-            for c in cands[:CROSSREF_INLINE_ROWS]]
-        if len(cands) > CROSSREF_INLINE_ROWS:
-            out["_rowsHeldBack"] = len(cands) - CROSSREF_INLINE_ROWS
+    if cands and "status" in cands[0]:             # ranked by Kelvin
+        best = cands[0]
+        if best.get("grade") is not None:
+            out["_grade"] = best["grade"]
+        flags = [p["name"] for p in best.get("params") or []
+                 if p.get("verdict") in ("warn", "fail")]
+        if flags:
+            out["_flags"] = flags
+        if len(cands) > 1:
+            out["_alternates"] = len(cands) - 1
+    elif cands:                                    # unranked catalogue rows
+        out["_rows"] = len(cands)
     return out
 
 
@@ -1328,18 +1319,25 @@ def crossref_board(board: str, target_manufacturers: list[str] | None = None,
         "Deterministic catalogue cross-reference (Kelvin's ranker), run the way the "
         "Faraday web app runs it. Only lines identified EXACTLY by part number were "
         "cross-referenced; a line matched by value and package, or by a partial part "
-        "number, lists the catalogue parts it might be — unranked — because the board "
+        "number, has catalogue parts it might be — unranked — because the board "
         "does not say which one it is. 'mpn' on a line is the best-ranked substitute when "
         f"Kelvin rates it recommended or partial; each line keeps at most {max_results} "
-        "ranked candidates. COMPACT: held back from this payload are every candidate's "
-        "spec table; the best candidate's passed checks (counted in _paramsPassed — its "
-        "`params` lists only the checks that did not pass); the alternates' checks, notes, "
-        "penalty and direction; ranked candidates beyond the best "
-        f"{CROSSREF_INLINE_RANKED} (counted in _candidatesHeldBack); unranked catalogue rows "
-        f"beyond {CROSSREF_INLINE_ROWS} per line (counted in _rowsHeldBack); and the "
-        "identification's search trail and pool statistics. "
+        "ranked candidates. COMPACT: each line here is a summary — the substitute, its grade "
+        "(_grade) and the checks it warned or failed on (_flags), the original, the package and "
+        "how the line was identified (_match). Held back: every candidate's spec table, "
+        "verdicts and ranker notes, the other ranked candidates (counted in _alternates) and "
+        "the unranked catalogue rows a line might be (counted in _rows), and the notes that "
+        "only restate `_match`, which reads: exact = identified by its part number and "
+        "cross-referenced; substring = only partial part-number matches, value-package = "
+        "identified only by value and package (both: _rows catalogue parts it might be, not "
+        "cross-referenced, because the board does not say which); none = not in the catalogue "
+        "(no part carries its part number, or, with none given, no part of its value fits its "
+        "footprint); unlookupable = the board gives neither a part number nor a value; "
+        "not-a-part = a mounting hole, fiducial, test point, logo, jumper or similar. "
         f"crossref_line(crossref='{crossref}', ref=<ref>) returns any line in full.")
-    payload: dict = {"mode": "bom", "lines": [_inline_line(line) for line in lines],
+    payload: dict = {"mode": "bom",
+                     "lines": [_inline_line(line, targets[0] if len(targets) == 1 else None)
+                               for line in lines],
                      "total": len(lines), "sourced": sourced, "caveat": caveat}
     if len(targets) == 1:
         payload["targetManufacturer"] = targets[0]

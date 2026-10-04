@@ -94,12 +94,16 @@ identified **exactly** by part number are cross-referenced; value-and-package or
 part-number matches list catalogue rows unranked, and unidentifiable lines are `unsourced`
 with the reason.
 
-Its payload is **compact on purpose**: a 189-part board came back at 691,751 characters in
-full and is ~131k compact (glasgow, 272 parts: ~141k). Each line keeps its identification,
-the original, the best substitute and its status, the best candidate's failing checks and
-notes (`_paramsPassed` counts the rest), one alternate's mpn/status/grade, and up to 3
-unranked rows; spec tables, passed checks, the alternates' detail and the search trail are
-held back, counted in `_candidatesHeldBack` / `_rowsHeldBack`, and named in `caveat`. The full
+Its payload is **compact on purpose**, sized for the client that reads it: Claude Code hands
+the model a tool's `structuredContent` (not its text digest) and saves anything above ~50k
+characters to a file instead (measured: 49,054 inline, 50.8 KB saved), after which the model
+greps the file piecemeal — six minutes for a 189-part board on 2026-10-04. So each line is a
+summary, ~180–220 characters: ref, status, the substitute, the original (part number, maker,
+family), the package, `_match` (how it was identified), the best candidate's `_grade` and the
+checks it warned or failed on (`_flags`), counts of the other ranked candidates
+(`_alternates`) and unranked catalogue rows (`_rows`), and the notes only the line can say.
+The stock reason of each `_match` class is defined once in `caveat`. That 189-part board is
+~42k characters (it was 122,959 in the first compact form, 691,751 in full). The full
 lines are stored under `FARADAY_REVIEW_DIR/crossref-<id>/`, and `crossref_line(crossref, ref)`
 returns one exactly as the ranker left it — no recomputation, so it cannot disagree with the
 summary. The handle is in the digest and in `caveat` (the contract's `bom` result has no field
