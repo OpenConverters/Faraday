@@ -10,7 +10,7 @@
  * Importing BoardView rather than redrawing means the board in a chat and the board in the
  * browser cannot disagree about what the copper looks like.
  */
-import { createApp, defineComponent, h, ref, computed } from "vue";
+import { createApp, defineComponent, h, ref, computed, nextTick, onMounted, onUpdated } from "vue";
 import { App } from "@modelcontextprotocol/ext-apps";
 import BoardView from "../../web/src/components/BoardView.vue";
 // THE PALETTE, or the board draws in nothing. BoardView paints to a canvas, and a
@@ -22,7 +22,52 @@ import BoardView from "../../web/src/components/BoardView.vue";
 // widget's own shell.
 import "../../web/src/tokens.css";
 
-const app = new App({ name: "Faraday board", version: "0.1.0" });
+// autoResize OFF, and the size reported by hand (reportSize below). The SDK's own
+// observer watches <html> and <body>, and both are `height: 100%` of the frame
+// here — the board's height chain needs them to be — so neither ever changes size
+// when the board arrives: the SDK measured the "Waiting for a board…" line once and
+// never again. A host was told nothing about the 440 px the board needs.
+const app = new App({ name: "Faraday board", version: "0.1.0" }, {}, { autoResize: false });
+
+let lastReported = 0;
+/**
+ * Tell the host the height this widget needs: down to the top of the split, plus
+ * the split's CSS min-height (read back, so board.html owns the number), plus the
+ * #app padding under it. Measured from the layout, not from scrollHeight, because
+ * scrollHeight inside a frame already taller than the content is just the frame —
+ * a host that grew the frame would be told to stay grown, for ever.
+ */
+function reportSize() {
+  const split = document.querySelector(".split");
+  if (!split) return;
+  const floor = parseFloat(getComputedStyle(split).minHeight);
+  if (!(floor > 0)) {
+    throw new Error("Faraday widget: .split has no min-height — board.html must set " +
+                    "the board's floor, or there is no height to report to the host.");
+  }
+  const root = document.getElementById("app");
+  const padBottom = parseFloat(getComputedStyle(root).paddingBottom);
+  const top = split.getBoundingClientRect().top + window.scrollY;
+  const height = Math.ceil(top + floor + padBottom);
+  if (height === lastReported) return;
+  lastReported = height;
+  app.sendSizeChanged({ width: Math.ceil(window.innerWidth), height });
+}
+// Re-reported whenever anything it depends on changes size, in whatever order
+// that happens: the header wraps (chips, the "more not shown" line), the narrow
+// layout stacks the list under the board, and the frame itself is resized by the
+// host. One observer over the body (the frame) and the header (what sits above
+// the board); reportSize dedups, so a resize that changes nothing sends nothing.
+const sizeWatch = new ResizeObserver(() => reportSize());
+sizeWatch.observe(document.body);
+let watchedHead = null;
+function watchHead() {
+  const head = document.querySelector(".head");
+  if (head === watchedHead) return;
+  if (watchedHead) sizeWatch.unobserve(watchedHead);
+  if (head) sizeWatch.observe(head);
+  watchedHead = head;
+}
 
 const SEVERITY_ORDER = { high: 0, medium: 1, low: 2, info: 3 };
 
@@ -178,6 +223,9 @@ const Widget = defineComponent({
       // explain_finding returns exactly one, and the point of that call is to look at it.
       selectedId.value = findings.value.length === 1 ? findings.value[0].id : "";
     };
+
+    onMounted(() => nextTick(() => { watchHead(); reportSize(); }));
+    onUpdated(() => nextTick(() => { watchHead(); reportSize(); }));
 
     return () => {
       if (error.value) return h("div", { class: "err" }, error.value);

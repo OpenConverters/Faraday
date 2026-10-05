@@ -79,13 +79,36 @@
       }
       /* Narrow: the board keeps most of the height and the list takes a strip
          under it, rather than the two splitting a short frame evenly. */
+      /* A FLOOR UNDER THE BOARD. The frame is the host's, and a host can hand us
+         any height — Moebius once restored a remembered "0px" and clamped it to its
+         220 px minimum, which left a 120 px pane for a drawing with a row of layer
+         chips on top of it. Below ~420 px a PCB is not readable, so the split never
+         shrinks under that; the widget reports the height it needs (board.js,
+         reportSize) and a host that honours size-changed grows the frame to fit.
+         reportSize READS this min-height back, so the number lives here once. */
+      .split { min-height: 440px; }
       @media (max-width: 820px) {
-        .split { grid-template-columns: 1fr; grid-template-rows: 3fr 2fr; }
+        .split { grid-template-columns: 1fr; grid-template-rows: 3fr 2fr; min-height: 720px; }
       }
       .boardpane {
-        min-width: 0; min-height: 0; border: 1px solid var(--line);
+        min-width: 0; min-height: 420px; border: 1px solid var(--line);
         border-radius: 6px; overflow: hidden;
       }
+      /* THE LAYER CHIPS GO ABOVE THE CANVAS, NOT OVER IT. BoardView floats them
+         absolutely over the top-left of the drawing, which works in the web app's
+         full-height pane. In a widget pane the chips wrap onto two rows and cover
+         the very copper they switch, and in a short frame they covered all of it.
+         So here the wrap is a column: chips first, then the canvas taking what is
+         left. flex-basis 0 + min-height 0 matters — a canvas's intrinsic height is
+         its pixel-buffer attribute, which BoardView sets from clientHeight × DPR,
+         so an auto basis would let every redraw grow the canvas by the DPR. The
+         selectors carry .boardpane so they outrank BoardView's scoped rules. */
+      .boardpane .boardwrap { display: flex; flex-direction: column; }
+      .boardpane .boardwrap > .chips {
+        position: static; order: -1; flex: 0 0 auto;
+        padding: 8px 8px 6px; border-bottom: 1px solid var(--line);
+      }
+      .boardpane .boardwrap > canvas { flex: 1 1 0; min-height: 0; height: auto; }
       /* Scrolls WITHIN the pane the grid gave it. The old `max-height: 620px`
          was taller than the 460 px frame it had to live in, so the list ran off
          the bottom of the widget and took the layout with it. */

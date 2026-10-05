@@ -671,7 +671,11 @@ function onPointerMove(e) {
   // pointer/grab assignment below was overriding the CSS class (user: "it
   // looks like a hand and it is weird")
   const hit = hitTest(sx, sy)
-  hover.value = hit ? { x: sx, y: sy, ...tooltipFor(hit) } : null
+  // The tooltip is positioned in the WRAP's box, the pointer was measured in the
+  // canvas's: add the canvas's offset, or a host that lays the chips out above
+  // the canvas (the MCP widget) gets every tooltip a chip-row too high.
+  const cv = canvas.value
+  hover.value = hit ? { x: sx + cv.offsetLeft, y: sy + cv.offsetTop, ...tooltipFor(hit) } : null
   canvas.value.style.cursor =
     hit?.findingId !== undefined || (hit && (hit.kind === 'finding' || hit.kind === 'part'))
       ? 'pointer' : 'grab'
