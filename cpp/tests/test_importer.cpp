@@ -294,6 +294,49 @@ TEST_CASE("importer: arcs are chord-approximated and counted", "[importer]") {
     CHECK(b.segments.size() == 2);
 }
 
+TEST_CASE("importer: KiCad 10 names each item's net and has no net table",
+          "[importer]") {
+    // v10 writes (net "/SNS_HI") where v9 wrote (net 7 "/SNS_HI") beside a
+    // (net 7 "/SNS_HI") table entry. "5" is a net NAME here, not a code.
+    std::string txt = R"((kicad_pcb (version 20260206)
+      (layers (0 "F.Cu" signal) (2 "B.Cu" signal))
+      (footprint "R_0603" (layer "F.Cu") (at 10 10)
+        (property "Reference" "R1")
+        (pad "1" smd rect (at -1 0) (size 1 1) (layers "F.Cu") (net "/SNS_HI"))
+        (pad "2" smd rect (at 1 0) (size 1 1) (layers "F.Cu") (net "5"))
+        (pad "3" smd rect (at 3 0) (size 1 1) (layers "F.Cu")))
+      (segment (start 0 1) (end 10 1) (width 0.3) (layer "F.Cu") (net "/SNS_HI"))
+      (segment (start 0 2) (end 10 2) (width 0.3) (layer "F.Cu") (net "5"))
+      (segment (start 0 3) (end 10 3) (width 0.3) (layer "F.Cu") (net ""))
+      (via (at 5 1) (size 0.6) (drill 0.3) (layers "F.Cu" "B.Cu") (net "/SNS_HI"))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
+    REQUIRE(b.segments.size() == 3);
+    REQUIRE(b.pads.size() == 3);
+    CHECK(b.net_name(b.segments[0].net) == "/SNS_HI");
+    CHECK(b.net_name(b.segments[1].net) == "5");
+    CHECK(b.segments[2].net == 0);  // the unconnected net keeps KiCad's id
+    CHECK(b.segments[0].net > 0);
+    CHECK(b.segments[1].net > 0);
+    CHECK(b.segments[0].net != b.segments[1].net);
+    CHECK(b.vias[0].net == b.segments[0].net);
+    CHECK(b.pads[0].net == b.segments[0].net);
+    CHECK(b.pads[1].net == b.segments[1].net);
+    CHECK(b.pads[2].net == -1);
+    CHECK(b.nets.size() == 3);
+
+    // ids follow the names, not the order the file lists its items in
+    std::string head = R"((kicad_pcb (version 20260206)
+      (layers (0 "F.Cu" signal) (2 "B.Cu" signal)))";
+    std::string hi = R"((segment (start 0 1) (end 10 1) (width 0.3) (layer "F.Cu") (net "/SNS_HI")))";
+    std::string five = R"((segment (start 0 2) (end 10 2) (width 0.3) (layer "F.Cu") (net "5")))";
+    BoardIR fwd = import_kicad(head + hi + five + ")", builtin_stackup("default-2layer"));
+    BoardIR rev = import_kicad(head + five + hi + ")", builtin_stackup("default-2layer"));
+    CHECK(rev.net_name(rev.segments[0].net) == "5");
+    CHECK(rev.segments[0].net == fwd.segments[1].net);
+    CHECK(rev.segments[1].net == fwd.segments[0].net);
+}
+
 TEST_CASE("importer: KiCad 5 legacy — custom copper names, module, zone-layer fill",
           "[importer]") {
     // v5 power-board style: renamed copper layers typed signal/power, (module)

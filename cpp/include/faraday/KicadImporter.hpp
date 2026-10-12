@@ -15,7 +15,9 @@
 #include <algorithm>
 #include <cmath>
 #include <iterator>
+#include <map>
 #include <optional>
+#include <set>
 
 namespace faraday {
 
@@ -164,6 +166,34 @@ inline BoardIR import_kicad(const std::string& text,
         b.nets.push_back({static_cast<int>(n->number_at(1)),
                           n->children().size() > 2 ? n->atom_at(2) : ""});
 
+    // KiCad 10 dropped net codes: there is no net table, and every item names
+    // its net instead — (net "/SNS_HI"). Every older file has a table, if only
+    // (net 0 ""), so its absence is what tells the two apart (a net may be
+    // NAMED "5"). The ids the IR needs are given here: 0 stays the unconnected
+    // net, as KiCad had it, and the rest are numbered in name order, so they
+    // do not move when the file is re-saved with its items in another order.
+    const bool nets_by_name = b.nets.empty();
+    std::map<std::string, int> net_ids;
+    if (nets_by_name) {
+        std::set<std::string> names;
+        auto collect = [&](const SExpr& node) {
+            if (const SExpr* n = node.find("net")) names.insert(n->atom_at(1));
+        };
+        for (const char* kind : {"segment", "arc", "via", "zone"})
+            for (const SExpr* s : root.find_all(kind)) collect(*s);
+        for (const char* kind : {"footprint", "module"})
+            for (const SExpr* f : root.find_all(kind))
+                for (const SExpr* p : f->find_all("pad")) collect(*p);
+        names.erase("");
+        b.nets.push_back({0, ""});
+        net_ids[""] = 0;
+        for (const std::string& name : names) {
+            int id = static_cast<int>(b.nets.size());
+            b.nets.push_back({id, name});
+            net_ids[name] = id;
+        }
+    }
+
     auto cu_of = [&](const SExpr& node) -> int {
         int cu = b.copper_ordinal(node.value_of("layer"));
         if (cu < 0)
@@ -171,9 +201,11 @@ inline BoardIR import_kicad(const std::string& text,
                              node.value_of("layer") + "'");
         return cu;
     };
-    auto net_of = [](const SExpr& node) -> int {
+    auto net_of = [&](const SExpr& node) -> int {
         const SExpr* n = node.find("net");
-        return n ? static_cast<int>(n->number_at(1)) : -1;
+        if (!n) return -1;
+        return nets_by_name ? net_ids.at(n->atom_at(1))
+                            : static_cast<int>(n->number_at(1));
     };
 
     // ---- tracks ----
