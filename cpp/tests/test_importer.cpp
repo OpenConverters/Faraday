@@ -337,6 +337,40 @@ TEST_CASE("importer: KiCad 10 names each item's net and has no net table",
     CHECK(rev.segments[1].net == fwd.segments[0].net);
 }
 
+TEST_CASE("importer: a pad keeps the hole drilled through it", "[importer]") {
+    std::string txt = R"((kicad_pcb
+      (layers (0 "F.Cu" signal) (31 "B.Cu" signal))
+      (net 0 "") (net 1 "A")
+      (footprint "J" (layer "F.Cu") (at 10 10)
+        (property "Reference" "J1")
+        (pad "1" thru_hole circle (at 0 0) (size 1.7 1.7) (drill 1.0) (layers "*.Cu") (net 1 "A"))
+        (pad "2" thru_hole oval (at 3 0) (size 1.2 2.4) (drill oval 0.6 1.7) (layers "*.Cu") (net 1 "A"))
+        (pad "3" thru_hole oval (at 6 0 90) (size 1.2 2.4) (drill oval 0.6 1.7 (offset 0.1 0)) (layers "*.Cu") (net 1 "A"))
+        (pad "" np_thru_hole circle (at 9 0) (size 3.2 3.2) (drill 3.2) (layers "*.Cu" "*.Mask"))
+        (pad "5" smd rect (at 12 0) (size 1 1) (layers "F.Cu") (net 1 "A")))
+    ))";
+    BoardIR b = import_kicad(txt, builtin_stackup("default-2layer"));
+    REQUIRE(b.pads.size() == 5);
+    CHECK(b.pads[0].drill_w == Approx(1.0));
+    CHECK(b.pads[0].drill_h == Approx(1.0));
+    CHECK_FALSE(b.pads[0].non_plated);
+    CHECK(b.pads[1].drill_w == Approx(0.6));
+    CHECK(b.pads[1].drill_h == Approx(1.7));
+    // turned a quarter with its pad: the slot's long side lies along x
+    CHECK(b.pads[2].w == Approx(2.4));
+    CHECK(b.pads[2].drill_w == Approx(1.7));
+    CHECK(b.pads[2].drill_h == Approx(0.6));
+    CHECK(b.pads[3].non_plated);
+    CHECK(b.pads[3].drill_w == Approx(3.2));
+    CHECK(b.pads[4].drill_w == 0.0);
+    CHECK(b.pads[4].drill_h == 0.0);
+
+    auto pj = pads_json(b);
+    CHECK(pj[1]["drillH"].get<double>() == Approx(1.7));
+    CHECK(pj[3]["npth"].get<bool>());
+    CHECK_FALSE(pj[0]["npth"].get<bool>());
+}
+
 TEST_CASE("importer: KiCad 5 legacy — custom copper names, module, zone-layer fill",
           "[importer]") {
     // v5 power-board style: renamed copper layers typed signal/power, (module)

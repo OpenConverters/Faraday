@@ -342,6 +342,20 @@ inline BoardIR import_kicad(const std::string& text,
             pad.h = swap ? w : h;
             const std::string& ptype = p->atom_at(2);  // thru_hole|smd|connect|np_thru_hole
             pad.through_hole = (ptype == "thru_hole" || ptype == "np_thru_hole");
+            pad.non_plated = (ptype == "np_thru_hole");
+            // (drill 0.8), (drill oval 0.6 1.7), either with a trailing
+            // (offset ...) list. A slot turns with its pad.
+            if (const SExpr* dr = p->find("drill")) {
+                const auto& dc = dr->children();
+                size_t i = (dc.size() > 1 && dc[1].is_atom() && dc[1].atom() == "oval") ? 2 : 1;
+                if (dc.size() > i && dc[i].is_atom()) {
+                    double dw = dr->number_at(i);
+                    double dh = (dc.size() > i + 1 && dc[i + 1].is_atom())
+                                    ? dr->number_at(i + 1) : dw;
+                    pad.drill_w = swap ? dh : dw;
+                    pad.drill_h = swap ? dw : dh;
+                }
+            }
             pad.cu = -1;
             if (!pad.through_hole) {
                 const SExpr* pl = p->find("layers");

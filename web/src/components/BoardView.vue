@@ -469,6 +469,7 @@ function draw() {
     ctx.fillStyle = col
     for (const p of b.pads) {
       if (p.cu !== cu && !(p.th && cu === 0)) continue
+      if (p.npth) continue  // a bare hole has no copper to draw
       const [px, py] = toScreen(p.x, p.y)
       ctx.fillRect(px - (p.w * view.scale) / 2, py - (p.h * view.scale) / 2,
                    p.w * view.scale, p.h * view.scale)
@@ -483,6 +484,21 @@ function draw() {
     ctx.fillStyle = pal.inkInv
     ctx.beginPath(); ctx.arc(vx, vy, (v.drill / 2) * view.scale, 0, 7); ctx.fill()
   }
+  // pad holes: a round drill or a slot, cut through every layer. A hole with
+  // no plating has no pad around it to show where it is, so it gets a rim.
+  let holes = 0
+  for (const p of board.value.pads) {
+    if (!(p.drillW > 0 && p.drillH > 0)) continue
+    const [px, py] = toScreen(p.x, p.y)
+    const w = p.drillW * view.scale, h = p.drillH * view.scale
+    ctx.beginPath()
+    ctx.roundRect(px - w / 2, py - h / 2, w, h, Math.min(w, h) / 2)
+    ctx.fillStyle = pal.inkInv
+    ctx.fill()
+    if (p.npth) { ctx.strokeStyle = pal.ink; ctx.lineWidth = 1; ctx.stroke() }
+    holes++
+  }
+  el.dataset.holes = String(holes)
 
   // parts: a body over the pads, the reference on it once there is room
   let drawn = 0

@@ -190,6 +190,12 @@ struct Pad {
     // diode polarity and IC pin roles derivable EXACTLY instead of being
     // inferred from pad counts (Franz's Stromanalyse needs conduction paths).
     std::string pin;
+    // The drilled hole, mm, along the same axes as w and h (a slot has two
+    // different sides). 0 x 0 is a pad whose source names no hole: an SMD pad,
+    // or a format whose importer does not read drills.
+    double drill_w = 0.0, drill_h = 0.0;
+    // A mounting or locating hole: drilled, but with no copper and no barrel.
+    bool non_plated = false;
 };
 
 struct Component {
@@ -316,7 +322,9 @@ inline nlohmann::json pads_json(const BoardIR& b) {
         out.push_back({{"component", p.component}, {"pin", p.pin},
                        {"net", p.net},
                        {"x", p.x}, {"y", p.y}, {"w", p.w}, {"h", p.h},
-                       {"th", p.through_hole}, {"cu", p.cu}});
+                       {"th", p.through_hole}, {"cu", p.cu},
+                       {"drillW", p.drill_w}, {"drillH", p.drill_h},
+                       {"npth", p.non_plated}});
     return out;
 }
 
